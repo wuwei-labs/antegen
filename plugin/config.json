@@ -1,0 +1,6 @@
+{
+  "libpath": "../target/debug/libclockwork_plugin.dylib",
+  "keypath": "./test-ledger/validator-keypair.json",
+  "slot_timeout_threshold": 150,
+  "worker_threads": 10
+}

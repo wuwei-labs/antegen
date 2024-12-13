@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "cli",
+    "cron",
+    "plugin",
+    "programs/*",
+    # "relayer",
+    "sdk",
+    "utils"
+]
+
+[profile.release]
+overflow-checks = true
