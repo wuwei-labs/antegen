@@ -18,12 +18,12 @@ on:
       extra_args:
         description: 'Extra args to pass to bump-version.sh, e.g: --dry-run.'
         required: false
-        default: '--exclude clockwork-thread-program-v1'
+        default: '--exclude antegen-thread-program-v1'
 
 env:
   CARGO_TERM_COLOR: always
   ANCHOR_VERSION: v0.29.0
-  PUBLISH_PREFIX: clockwork
+  PUBLISH_PREFIX: antegen
 
 jobs:
   build-all:
@@ -121,7 +121,7 @@ jobs:
         with:
           if-no-files-found: error
           name: release_build
-          path: clockwork-geyser-plugin-release-*
+          path: antegen-geyser-plugin-release-*
 
 
   release:
@@ -181,12 +181,12 @@ jobs:
           name: ${{ env.CI_TAG }}
           tag_name: ${{ env.CI_TAG }}
           body: |
-            clockwork-geyser-plugin ${{ env.CI_TAG }}
+            antegen-geyser-plugin ${{ env.CI_TAG }}
             solana ${{ env.SOLANA_VERSION }}
             rust ${{ env.PLUGIN_RUST_VERSION }}
           # this gh action ignores the working directory, and defaults to the root of the repo
           files: |
-            clockwork-geyser-plugin-release-*
+            antegen-geyser-plugin-release-*
 
 
   publish-crate:

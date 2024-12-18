@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-extern crate cargo_toml;
 use cargo_toml::Manifest;
 
 fn main() {

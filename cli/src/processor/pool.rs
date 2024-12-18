@@ -4,7 +4,7 @@ use anchor_lang::{
     },
     InstructionData, ToAccountMetas
 };
-use clockwork_network_program::state::{Config, Pool, Registry, PoolSettings};
+use antegen_network_program::state::{Config, Pool, Registry, PoolSettings};
 
 use crate::{client::Client, errors::CliError};
 
@@ -34,19 +34,19 @@ pub fn list(client: &Client) -> Result<(), CliError> {
     Ok(())
 }
 
-pub fn update(client: &Client, id: u64, size: usize) -> Result<(), CliError> {
+pub fn update(client: &Client, id: u64, size: u64) -> Result<(), CliError> {
     let pool_pubkey = Pool::pubkey(id);
     let settings = PoolSettings { size };
     let ix = Instruction {
-        program_id: clockwork_network_program::ID,
-        accounts: clockwork_network_program::accounts::PoolUpdate {
+        program_id: antegen_network_program::ID,
+        accounts: antegen_network_program::accounts::PoolUpdate {
             admin: client.payer_pubkey(),
             config: Config::pubkey(),
             payer: client.payer_pubkey(),
             pool: pool_pubkey,
             system_program: system_program::ID,
         }.to_account_metas(Some(false)),
-        data: clockwork_network_program::instruction::PoolUpdate { settings }.data(),
+        data: antegen_network_program::instruction::PoolUpdate { settings }.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
     get(client, id)?;

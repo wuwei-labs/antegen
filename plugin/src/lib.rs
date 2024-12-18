@@ -1,5 +1,5 @@
 pub mod config {
-    pub use clockwork_plugin_utils::PluginConfig;
+    pub use antegen_plugin_utils::PluginConfig;
 }
 
 use agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin;

@@ -1,8 +1,7 @@
 use std::{convert::TryFrom, fs, path::PathBuf, str::FromStr};
 
 use clap::ArgMatches;
-use clockwork_thread_program::state::{SerializableAccount, SerializableInstruction, Trigger};
-use clockwork_webhook_program::state::HttpMethod;
+use antegen_thread_program::state::{SerializableAccount, SerializableInstruction, Trigger};
 use serde::{Deserialize as JsonDeserialize, Serialize as JsonSerialize};
 use solana_sdk::{
     pubkey::Pubkey,
@@ -24,10 +23,8 @@ impl TryFrom<&ArgMatches> for CliCommand {
             Some(("initialize", matches)) => parse_initialize_command(matches),
             Some(("localnet", matches)) => parse_bpf_command(matches),
             Some(("pool", matches)) => parse_pool_command(matches),
-            Some(("secret", matches)) => parse_secret_command(matches),
             Some(("thread", matches)) => parse_thread_command(matches),
             Some(("registry", matches)) => parse_registry_command(matches),
-            Some(("webhook", matches)) => parse_webhook_command(matches),
             Some(("worker", matches)) => parse_worker_command(matches),
             _ => Err(CliError::CommandNotRecognized(
                 matches.subcommand().unwrap().0.into(),
@@ -87,7 +84,7 @@ fn parse_bpf_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
         program_infos,
         force_init: matches.get_flag("force_init"),
         solana_archive: parse_string("solana_archive", matches).ok(),
-        clockwork_archive: parse_string("clockwork_archive", matches).ok(),
+        antegen_archive: parse_string("antegen_archive", matches).ok(),
         dev: matches.get_flag("dev"),
     })
 }
@@ -162,33 +159,9 @@ fn parse_pool_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
         }),
         Some(("update", matches)) => Ok(CliCommand::PoolUpdate {
             id: parse_u64("id", matches)?,
-            size: parse_usize("size", matches)?,
+            size: parse_u64("size", matches)?,
         }),
         Some(("list", _)) => Ok(CliCommand::PoolList {}),
-        _ => Err(CliError::CommandNotRecognized(
-            matches.subcommand().unwrap().0.into(),
-        )),
-    }
-}
-
-fn parse_secret_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
-    match matches.subcommand() {
-        Some(("approve", matches)) => Ok(CliCommand::SecretApprove {
-            name: parse_string("name", matches)?,
-            delegate: parse_pubkey("delegate", matches)?,
-        }),
-        Some(("get", matches)) => Ok(CliCommand::SecretGet {
-            name: parse_string("name", matches)?,
-        }),
-        Some(("list", _matches)) => Ok(CliCommand::SecretList {}),
-        Some(("create", matches)) => Ok(CliCommand::SecretCreate {
-            name: parse_string("name", matches)?,
-            word: parse_string("word", matches)?,
-        }),
-        Some(("revoke", matches)) => Ok(CliCommand::SecretRevoke {
-            name: parse_string("name", matches)?,
-            delegate: parse_pubkey("delegate", matches)?,
-        }),
         _ => Err(CliError::CommandNotRecognized(
             matches.subcommand().unwrap().0.into(),
         )),
@@ -234,23 +207,6 @@ fn parse_registry_command(matches: &ArgMatches) -> Result<CliCommand, CliError> 
     match matches.subcommand() {
         Some(("get", _)) => Ok(CliCommand::RegistryGet {}),
         Some(("unlock", _)) => Ok(CliCommand::RegistryUnlock {}),
-        _ => Err(CliError::CommandNotRecognized(
-            matches.subcommand().unwrap().0.into(),
-        )),
-    }
-}
-
-fn parse_webhook_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
-    match matches.subcommand() {
-        Some(("get", matches)) => Ok(CliCommand::WebhookGet {
-            id: parse_string("id", matches)?.into_bytes(),
-        }),
-        Some(("create", matches)) => Ok(CliCommand::WebhookCreate {
-            body: parse_string("body", matches)?.into_bytes(),
-            id: parse_string("id", matches)?.into_bytes(),
-            method: parse_http_method("method", matches)?,
-            url: parse_string("url", matches)?,
-        }),
         _ => Err(CliError::CommandNotRecognized(
             matches.subcommand().unwrap().0.into(),
         )),
@@ -312,11 +268,6 @@ fn parse_keypair_file(arg: &str, matches: &ArgMatches) -> Result<Keypair, CliErr
         .map_err(|_err| CliError::BadParameter(arg.into()))?)
 }
 
-fn parse_http_method(arg: &str, matches: &ArgMatches) -> Result<HttpMethod, CliError> {
-    Ok(HttpMethod::from_str(parse_string(arg, matches)?.as_str())
-        .map_err(|_err| CliError::BadParameter(arg.into()))?)
-}
-
 fn parse_pubkey(arg: &str, matches: &ArgMatches) -> Result<Pubkey, CliError> {
     Ok(Pubkey::from_str(parse_string(arg, matches)?.as_str())
         .map_err(|_err| CliError::BadParameter(arg.into()))?)
@@ -339,13 +290,6 @@ pub fn _parse_i64(arg: &str, matches: &ArgMatches) -> Result<i64, CliError> {
 pub fn parse_u64(arg: &str, matches: &ArgMatches) -> Result<u64, CliError> {
     Ok(parse_string(arg, matches)?
         .parse::<u64>()
-        .map_err(|_err| CliError::BadParameter(arg.into()))
-        .unwrap())
-}
-
-pub fn parse_usize(arg: &str, matches: &ArgMatches) -> Result<usize, CliError> {
-    Ok(parse_string(arg, matches)?
-        .parse::<usize>()
         .map_err(|_err| CliError::BadParameter(arg.into()))
         .unwrap())
 }

@@ -1,6 +1,5 @@
 use anchor_lang::{prelude::AccountInfo, AnchorDeserialize};
-use clockwork_thread_program::state::{Thread as ThreadV1, VersionedThread};
-use clockwork_webhook_program::state::Webhook;
+use antegen_thread_program::state::{Thread as ThreadV1, VersionedThread};
 use pyth_sdk_solana::{state::SolanaPriceAccount, PriceFeed};
 use agave_geyser_plugin_interface::geyser_plugin_interface::{
     GeyserPluginError, ReplicaAccountInfo,
@@ -17,8 +16,7 @@ static PYTH_ORACLE_PROGRAM_ID_DEVNET: Pubkey =
 pub enum AccountUpdateEvent {
     Clock { clock: Clock },
     Thread { thread: VersionedThread },
-    PriceFeed { price_feed: PriceFeed },
-    Webhook { webhook: Webhook },
+    PriceFeed { price_feed: PriceFeed }
 }
 
 impl TryFrom<&mut ReplicaAccountInfo<'_>> for AccountUpdateEvent {
@@ -40,10 +38,10 @@ impl TryFrom<&mut ReplicaAccountInfo<'_>> for AccountUpdateEvent {
         }
 
         // If the account belongs to the thread v1 program, parse it.
-        if owner_pubkey == clockwork_thread_program::ID && account_info.data.len() > 8 {
+        if owner_pubkey == antegen_thread_program::ID && account_info.data.len() > 8 {
             let thread_v1 = ThreadV1::try_from_slice(account_info.data).map_err(|_| {
                 GeyserPluginError::AccountsUpdateError {
-                    msg: "Failed to parse Clockwork thread v2 account".into(),
+                    msg: "Failed to parse Antegen thread v2 account".into(),
                 }
             })?;
             return Ok(AccountUpdateEvent::Thread {
@@ -72,18 +70,8 @@ impl TryFrom<&mut ReplicaAccountInfo<'_>> for AccountUpdateEvent {
             return Ok(AccountUpdateEvent::PriceFeed { price_feed });
         }
 
-        // If the account belongs to the webhook program, parse it using Anchor's utilities.
-        if owner_pubkey == clockwork_webhook_program::ID && account_info.data.len() > 8 {
-            let webhook = Webhook::try_from_slice(account_info.data).map_err(|_| {
-                GeyserPluginError::AccountsUpdateError {
-                    msg: "Failed to parse Clockwork webhook".into(),
-                }
-            })?;
-            return Ok(AccountUpdateEvent::Webhook { webhook });
-        }
-
         Err(GeyserPluginError::AccountsUpdateError {
-            msg: "Account is not relevant to Clockwork plugin".into(),
+            msg: "Account is not relevant to Antegen plugin".into(),
         })
     }
 }

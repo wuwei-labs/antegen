@@ -32,13 +32,13 @@ pub struct Inner {
 
 impl GeyserPlugin for ClockworkPlugin {
     fn name(&self) -> &'static str {
-        "clockwork-plugin"
+        "antegen-plugin"
     }
 
     fn on_load(&mut self, config_file: &str, is_reload: bool) -> PluginResult<()> {
         solana_logger::setup_with_default("info");
         info!(
-            "clockwork-plugin crate-info - geyser_interface_version: {}, rustc: {}",
+            "antegen-plugin crate-info - geyser_interface_version: {}, rustc: {}",
             env!("GEYSER_INTERFACE_VERSION"),
             env!("RUSTC_VERSION")
         );
@@ -122,15 +122,6 @@ impl GeyserPlugin for ClockworkPlugin {
                             .thread
                             .clone()
                             .observe_thread(thread, account_pubkey, slot)
-                            .await
-                            .ok();
-                    }
-                    AccountUpdateEvent::Webhook { webhook } => {
-                        inner
-                            .observers
-                            .webhook
-                            .clone()
-                            .observe_webhook(webhook, account_pubkey)
                             .await
                             .ok();
                     }
@@ -237,7 +228,7 @@ fn build_runtime(config: PluginConfig) -> Arc<Runtime> {
     Arc::new(
         Builder::new_multi_thread()
             .enable_all()
-            .thread_name("clockwork-plugin")
+            .thread_name("antegen-plugin")
             .worker_threads(config.thread_count)
             .max_blocking_threads(config.thread_count)
             .build()

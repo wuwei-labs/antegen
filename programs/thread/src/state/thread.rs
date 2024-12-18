@@ -1,7 +1,7 @@
 use std::mem::size_of;
 
 use anchor_lang::{prelude::*, AnchorDeserialize, AnchorSerialize};
-use clockwork_utils::thread::{ClockData, SerializableInstruction, Trigger};
+use antegen_utils::thread::{ClockData, SerializableInstruction, Trigger};
 
 pub const SEED_THREAD: &[u8] = b"thread";
 

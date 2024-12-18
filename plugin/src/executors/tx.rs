@@ -8,8 +8,8 @@ use std::{
 };
 
 use bincode::serialize;
-use clockwork_network_program::state::{Pool, Registry, Snapshot, SnapshotFrame, Worker};
-use clockwork_thread_program::state::VersionedThread;
+use antegen_network_program::state::{Pool, Registry, Snapshot, SnapshotFrame, Worker};
+use antegen_thread_program::state::VersionedThread;
 use log::info;
 use solana_client::{
     nonblocking::{rpc_client::RpcClient, tpu_client::TpuClient},
@@ -133,7 +133,7 @@ impl TxExecutor {
                     .iter()
                     .position(|k| k.eq(&worker_pubkey))
                     .map(|i| i as u64),
-                workers: workers.make_contiguous().to_vec().clone(),
+                workers: workers.clone(),
             }
         }) {
             info!("pool_position: {:?}", pool_position);

@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use clockwork_cron::Schedule;
+use solana_cron::Schedule;
 use std::str::FromStr;
 
 use crate::{client::Client, errors::CliError};

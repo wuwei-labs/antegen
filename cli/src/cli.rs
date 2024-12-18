@@ -1,6 +1,5 @@
 use clap::{Arg, ArgAction, ArgGroup, Command};
-use clockwork_thread_program::state::{SerializableInstruction, Trigger};
-use clockwork_webhook_program::state::HttpMethod;
+use antegen_thread_program::state::{SerializableInstruction, Trigger};
 use solana_sdk::{pubkey::Pubkey, signature::Keypair};
 
 use crate::parser::ProgramInfo;
@@ -55,7 +54,7 @@ pub enum CliCommand {
         network_url: Option<String>,
         program_infos: Vec<ProgramInfo>,
         solana_archive: Option<String>,
-        clockwork_archive: Option<String>,
+        antegen_archive: Option<String>,
         dev: bool,
     },
 
@@ -66,7 +65,7 @@ pub enum CliCommand {
     PoolList {},
     PoolUpdate {
         id: u64,
-        size: usize,
+        size: u64,
     },
 
     // TODO Rename to Version. Use flags to filter by program.
@@ -105,35 +104,6 @@ pub enum CliCommand {
     RegistryGet,
     RegistryUnlock,
 
-    // Secrets
-    SecretApprove {
-        name: String,
-        delegate: Pubkey,
-    },
-    SecretCreate {
-        name: String,
-        word: String,
-    },
-    SecretGet {
-        name: String,
-    },
-    SecretList {},
-    SecretRevoke {
-        name: String,
-        delegate: Pubkey,
-    },
-
-    // Webhook
-    WebhookCreate {
-        body: Vec<u8>,
-        id: Vec<u8>,
-        method: HttpMethod,
-        url: String,
-    },
-    WebhookGet {
-        id: Vec<u8>,
-    },
-
     // Worker commands
     WorkerCreate {
         signatory: Keypair,
@@ -148,14 +118,14 @@ pub enum CliCommand {
 }
 
 pub fn app() -> Command {
-    Command::new("Clockwork")
-        .bin_name("clockwork")
+    Command::new("Antegen")
+        .bin_name("antegen")
         .about("An automation engine for the Solana blockchain")
         .version(env!("CARGO_PKG_VERSION")) // Use the crate version
         .arg_required_else_help(true)
         .subcommand(
             Command::new("config")
-                .about("Manage the Clockwork network config")
+                .about("Manage the Antegen network config")
                 .arg_required_else_help(true)
                 .subcommand(Command::new("get").about("Get a config value"))
                 .subcommand(
@@ -201,7 +171,7 @@ pub fn app() -> Command {
         )
         .subcommand(
             Command::new("delegation")
-                .about("Manage a stake delegation to a Clockwork worker")
+                .about("Manage a stake delegation to a Antegen worker")
                 .subcommand(
                     Command::new("create")
                         .about("Create a new delegation")
@@ -333,7 +303,7 @@ pub fn app() -> Command {
         )
         .subcommand(
             Command::new("initialize")
-                .about("Initialize the Clockwork network program")
+                .about("Initialize the Antegen network program")
                 .arg(
                     Arg::new("mint")
                         .long("mint")
@@ -346,7 +316,7 @@ pub fn app() -> Command {
         )
         .subcommand(
             Command::new("localnet")
-                .about("Launch a local Clockwork worker for app development and testing")
+                .about("Launch a local Antegen worker for app development and testing")
                 .arg(
                     Arg::new("bpf_program")
                         .long("bpf-program")
@@ -381,6 +351,8 @@ pub fn app() -> Command {
                 )
                 .arg(Arg::new("force_init")
                     .long("force-init")
+                    .action(ArgAction::SetTrue)
+                    .default_value("false")
                     .help("Initializes and downloads localnet dependencies")
                 )
                 .arg(
@@ -394,11 +366,11 @@ pub fn app() -> Command {
                         .num_args(1),
                 )
                 .arg(
-                    Arg::new("clockwork_archive")
-                        .long("clockwork-archive")
+                    Arg::new("antegen_archive")
+                        .long("antegen-archive")
                         .help("url or local path to the solana archive containing the necessary \
                      dependencies such as clocwkork-thread-program, etc. \
-                     Can be useful for debugging or testing different versions of clockwork releases
+                     Can be useful for debugging or testing different versions of antegen releases
                      ")
                         .value_name("CLOCKWORK_ARCHIVE")
                         .num_args(1)
@@ -407,12 +379,14 @@ pub fn app() -> Command {
                 .arg(
                     Arg::new("dev")
                         .long("dev")
-                        .help("Use development versions of clockwork programs")
+                        .action(ArgAction::SetTrue)
+                        .default_value("false")
+                        .help("Use development versions of antegen programs")
                 )
         )
         .subcommand(
             Command::new("pool")
-                .about("Manage the Clockwork network worker pools")
+                .about("Manage the Antegen network worker pools")
                 .subcommand(
                     Command::new("get")
                         .about("Get a pool")
@@ -449,94 +423,6 @@ pub fn app() -> Command {
                                 .help("The size of the pool"),
                         ),
                 ),
-        )
-        .subcommand(
-            Command::new("secret")
-                .about("Manage your secrets")
-                .arg_required_else_help(true)
-                .subcommand(
-                    Command::new("approve")
-                        .about("Approve a new delegate to use a secret")
-                        .arg(
-                            Arg::new("name")
-                                .long("name")
-                                .short('n')
-                                .value_name("NAME")
-                                .num_args(1)
-                                .required(true)
-                                .help("The name of the secret")
-                        )
-                        .arg(
-                            Arg::new("delegate")
-                                .long("delegate")
-                                .short('d')
-                                .value_name("PUBKEY")
-                                .num_args(1)
-                                .required(true)
-                                .help("The delegate to approve")
-                        )
-                )
-                .subcommand(
-                    Command::new("list")
-                        .about("List your secrets")
-                )
-                .subcommand(
-                    Command::new("create")
-                        .about("Save a new secret")
-                        .arg(
-                            Arg::new("word")
-                                .long("word")
-                                .short('w')
-                                .value_name("WORD")
-                                .num_args(1)
-                                .required(true)
-                                .help("The secret word to securely save")
-                        )
-                        .arg(
-                            Arg::new("name")
-                                .long("name")
-                                .short('n')
-                                .value_name("NAME")
-                                .num_args(1)
-                                .required(true)
-                                .help("The name of the secret")
-                        )
-                )
-                .subcommand(
-                    Command::new("get")
-                        .about("Retrieve a previously saved secret")
-                        .arg(
-                            Arg::new("name")
-                                .long("name")
-                                .short('n')
-                                .value_name("NAME")
-                                .num_args(1)
-                                .required(true)
-                                .help("The name of the secret")
-                        )
-                )
-                .subcommand(
-                    Command::new("revoke")
-                        .about("Revoke a delegate's approval to use a secret")
-                        .arg(
-                            Arg::new("name")
-                                .long("name")
-                                .short('n')
-                                .value_name("NAME")
-                                .num_args(1)
-                                .required(true)
-                                .help("The name of the secret")
-                        )
-                        .arg(
-                            Arg::new("delegate")
-                                .long("delegate")
-                                .short('d')
-                                .value_name("PUBKEY")
-                                .num_args(1)
-                                .required(true)
-                                .help("The delegate to revoke approval from")
-                        )
-                )
         )
         .subcommand(
             Command::new("thread")
@@ -700,72 +586,14 @@ pub fn app() -> Command {
         )
         .subcommand(
             Command::new("registry")
-                .about("Manage the Clockwork network registry")
+                .about("Manage the Antegen network registry")
                 .arg_required_else_help(true)
                 .subcommand(Command::new("get").about("Lookup the registry"))
                 .subcommand(Command::new("unlock").about("Manually unlock the registry")),
         )
         .subcommand(
             Command::new("snapshot")
-                .about("Lookup the current Clockwork network registry")
-        )
-        .subcommand(
-            Command::new("webhook")
-                .about("Manage your webhooks")
-                .arg_required_else_help(true)
-                .subcommand(
-                    Command::new("create")
-                        .about("Create a new webhook")
-                        .arg(
-                            Arg::new("body")
-                                .long("body")
-                                .short('b')
-                                .value_name("VALUE")
-                                .num_args(1)
-                                .required(false)
-                                .help("The body of the request")
-                        )
-                        .arg(
-                            Arg::new("id")
-                                .long("id")
-                                .short('i')
-                                .value_name("ID")
-                                .num_args(1)
-                                .required(true)
-                                .help("The id of the webhook")
-                        )
-                        .arg(
-                            Arg::new("method")
-                                .long("method")
-                                .short('m')
-                                .value_name("GET|POST")
-                                .required(true)
-                                .num_args(1)
-                                .help("The http method to use")
-                        )
-                        .arg(
-                            Arg::new("url")
-                                .long("url")
-                                .short('u')
-                                .value_name("URL")
-                                .num_args(1)
-                                .required(true)
-                                .help("The url to send the webhook to")
-                        )
-                )
-                .subcommand(
-                    Command::new("get")
-                        .about("Lookup a webhook")
-                        .arg(
-                            Arg::new("id")
-                                .long("id")
-                                .short('i')
-                                .value_name("ID")
-                                .num_args(1)
-                                .required(true)
-                                .help("The id of the webhook")
-                        )
-                )
+                .about("Lookup the current Antegen network registry")
         )
         .subcommand(
             Command::new("worker")
@@ -773,7 +601,7 @@ pub fn app() -> Command {
                 .arg_required_else_help(true)
                 .subcommand(
                     Command::new("create")
-                        .about("Register a new worker with the Clockwork network")
+                        .about("Register a new worker with the Antegen network")
                         .arg(
                             Arg::new("signatory_keypair")
                                 .index(1)
@@ -785,7 +613,7 @@ pub fn app() -> Command {
                 )
                 .subcommand(
                     Command::new("get")
-                        .about("Lookup a worker on the Clockwork network")
+                        .about("Lookup a worker on the Antegen network")
                         .arg(
                             Arg::new("id")
                                 .index(1)

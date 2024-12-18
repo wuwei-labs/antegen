@@ -33,14 +33,14 @@ pub fn download_deps(
     runtime_dir: &Path,
     force_init: bool,
     solana_archive: Option<String>,
-    clockwork_archive: Option<String>,
+    antegen_archive: Option<String>,
     dev: bool,
 ) -> Result<()> {
     let solana_tag = env!("GEYSER_INTERFACE_VERSION").to_owned().to_tag_version();
-    let clockwork_tag = env!("CARGO_PKG_VERSION").to_owned();
+    let antegen_tag = env!("CARGO_PKG_VERSION").to_owned();
 
     // Create the version directory if it does not exist
-    let active_runtime = &runtime_dir.join(&clockwork_tag);
+    let active_runtime = &runtime_dir.join(&antegen_tag);
 
     download_and_extract(
         &active_runtime,
@@ -52,8 +52,8 @@ pub fn download_deps(
     if !dev {
         download_and_extract(
             &active_runtime,
-            &clockwork_archive.unwrap_or(CliConfig::clockwork_release_url(&clockwork_tag)),
-            &active_runtime.join(CliConfig::clockwork_release_archive()),
+            &antegen_archive.unwrap_or(CliConfig::antegen_release_url(&antegen_tag)),
+            &active_runtime.join(CliConfig::antegen_release_archive()),
             config::CLOCKWORK_DEPS,
             force_init,
         )?;

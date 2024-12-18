@@ -6,9 +6,9 @@ use std::{
 
 use anchor_lang::prelude::*;
 use chrono::{DateTime, Utc};
-use clockwork_cron::Schedule;
-use clockwork_network_program::state::{Worker, WorkerAccount};
-use clockwork_utils::thread::Trigger;
+use solana_cron::Schedule;
+use antegen_network_program::state::{Worker, WorkerAccount};
+use antegen_utils::thread::Trigger;
 use pyth_sdk_solana::state::SolanaPriceAccount;
 use crate::{errors::*, state::*};
 
