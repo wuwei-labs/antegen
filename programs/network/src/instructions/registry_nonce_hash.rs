@@ -1,4 +1,4 @@
-use clockwork_utils::thread::ThreadResponse;
+use antegen_utils::thread::ThreadResponse;
 
 use {crate::state::*, anchor_lang::prelude::*};
 

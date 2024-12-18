@@ -1,6 +1,4 @@
 use {
-    crate::deps::ToTagVersion,
-    clap::crate_version,
     solana_sdk::commitment_config::CommitmentConfig,
     std::{
         env,
@@ -12,16 +10,13 @@ use {
 
 pub const DEFAULT_RPC_TIMEOUT_SECONDS: Duration = Duration::from_secs(30);
 pub const DEFAULT_CONFIRM_TX_TIMEOUT_SECONDS: Duration = Duration::from_secs(5);
-pub const RELAYER_URL: &str = "http://localhost:8000/";
-pub const CLOCKWORK_RELEASE_BASE_URL: &str =
-    "https://github.com/clockwork-xyz/clockwork/releases/download";
-pub const CLOCKWORK_DEPS: &[&str] = &[
-    "clockwork_network_program.so",
-    "clockwork_thread_program.so",
-    "clockwork_webhook_program.so",
-    "libclockwork_plugin.so",
+pub const ANTEGEN_RELEASE_URL: &str = "https://github.com/wuwei-labs/antegen/releases/download";
+pub const ANTEGEN_DEPS: &[&str] = &[
+    "antegen_network_program.so",
+    "antegen_thread_program.so",
+    "libantegen_plugin.so",
 ];
-pub const SOLANA_RELEASE_BASE_URL: &str = "https://github.com/solana-labs/solana/releases/download";
+pub const SOLANA_RELEASE_BASE_URL: &str = "https://github.com/anza-xyz/agave/releases/download";
 pub const SOLANA_DEPS: &[&str] = &["solana-test-validator"];
 
 /// The combination of solana config file and our own config file
@@ -29,7 +24,6 @@ pub const SOLANA_DEPS: &[&str] = &["solana-test-validator"];
 pub struct CliConfig {
     pub json_rpc_url: String,
     pub websocket_url: String,
-    pub relayer_url: String,
     pub keypair_path: String,
     pub rpc_timeout: Duration,
     pub commitment: CommitmentConfig,
@@ -46,12 +40,11 @@ impl CliConfig {
         CliConfig {
             json_rpc_url: solana_config.json_rpc_url,
             websocket_url: solana_config.websocket_url,
-            relayer_url: RELAYER_URL.to_owned(),
             keypair_path: solana_config.keypair_path,
             rpc_timeout: DEFAULT_RPC_TIMEOUT_SECONDS,
             commitment: CommitmentConfig::confirmed(),
             confirm_transaction_initial_timeout: DEFAULT_CONFIRM_TX_TIMEOUT_SECONDS,
-            active_version: crate_version!().to_owned().to_tag_version(),
+            active_version: env!("CARGO_PKG_VERSION").to_owned(),
             dev: false,
         }
     }
@@ -59,7 +52,7 @@ impl CliConfig {
     pub fn default_home() -> PathBuf {
         dirs_next::home_dir()
             .map(|mut path| {
-                path.extend([".config", "clockwork"]);
+                path.extend([".config", "antegen"]);
                 path
             })
             .unwrap()
@@ -115,10 +108,10 @@ impl CliConfig {
 
     pub fn geyser_lib(&self) -> String {
         if self.dev == true && env::consts::OS.to_lowercase().contains("mac") {
-            self.active_runtime("libclockwork_plugin.dylib")
+            self.active_runtime("libantegen_plugin.dylib")
         } else {
             // in the release process, we always rename dylib to so anyway
-            self.active_runtime("libclockwork_plugin.so")
+            self.active_runtime("libantegen_plugin.so")
         }
     }
 }
@@ -133,7 +126,7 @@ impl PathToString for PathBuf {
     }
 }
 
-// Clockwork Deps Helpers
+// Antegen Deps Helpers
 impl CliConfig {
     // #[tokio::main]
     fn detect_target_triplet() -> String {
@@ -152,18 +145,18 @@ impl CliConfig {
             .to_owned()
     }
 
-    pub fn clockwork_release_url(tag: &str) -> String {
+    pub fn antegen_release_url(tag: &str) -> String {
         format!(
             "{}/{}/{}",
-            CLOCKWORK_RELEASE_BASE_URL,
+            ANTEGEN_RELEASE_URL,
             tag,
-            &Self::clockwork_release_archive()
+            &Self::antegen_release_archive()
         )
     }
 
-    pub fn clockwork_release_archive() -> String {
+    pub fn antegen_release_archive() -> String {
         let target_triplet = Self::detect_target_triplet();
-        format!("clockwork-geyser-plugin-release-{}.tar.bz2", target_triplet)
+        format!("antegen-geyser-plugin-release-{}.tar.bz2", target_triplet)
     }
 
     pub fn solana_release_url(tag: &str) -> String {

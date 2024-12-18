@@ -1,4 +1,4 @@
-use clockwork_utils::thread::ThreadResponse;
+use antegen_utils::thread::ThreadResponse;
 use anchor_lang::{prelude::*, InstructionData, solana_program::instruction::Instruction};
 
 use crate::state::*;

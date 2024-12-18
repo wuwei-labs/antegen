@@ -2,7 +2,7 @@
 
 use anchor_lang::prelude::*;
 
-/// Errors for the the Clockwork thread program.
+/// Errors for the the Antegen thread program.
 #[error_code]
 pub enum ClockworkError {
     /// Thrown if a exec response has an invalid program ID or cannot be parsed.

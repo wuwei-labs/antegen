@@ -1,9 +1,9 @@
-# clockwork-cron [![](https://img.shields.io/crates/v/clockwork-cron.svg)](https://crates.io/crates/clockwork-cron) [![](https://docs.rs/cron/badge.svg)](https://docs.rs/clockwork-cron)
+# solana-cron [![](https://img.shields.io/crates/v/solana-cron.svg)](https://crates.io/crates/solana-cron) [![](https://docs.rs/cron/badge.svg)](https://docs.rs/solana-cron)
 
 A cron expression parser that's safe to use in the Solana runtime. Works with stable Rust v1.28.0.
 
 ```rust
-use clockwork_cron::Schedule;
+use solana_cron::Schedule;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use std::str::FromStr;
 
@@ -44,7 +44,7 @@ Upcoming fire times:
 ```bash
 sec  min   hour   day of month   month   day of week   year
 ```
-If you use tools such as crontab guru, note that the clockwork parser is a __7__ columns string.
+If you use tools such as crontab guru, note that the solana parser is a __7__ columns string.
 You probably need to add the __seconds__ _(left most column)_ and can optionally add the year _(right most column)_.
 e.g. the following 5 columns cron:
 

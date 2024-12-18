@@ -5,12 +5,11 @@ use std::{
 };
 
 use anchor_lang::prelude::*;
-use chrono::{DateTime, NaiveDateTime, Utc};
-use clockwork_cron::Schedule;
-use clockwork_network_program::state::{Worker, WorkerAccount};
-use clockwork_utils::thread::Trigger;
-use pyth_sdk_solana::load_price_feed_from_account_info;
-
+use chrono::{DateTime, Utc};
+use solana_cron::Schedule;
+use antegen_network_program::state::{Worker, WorkerAccount};
+use antegen_utils::thread::Trigger;
+use pyth_sdk_solana::state::SolanaPriceAccount;
 use crate::{errors::*, state::*};
 
 use super::TRANSACTION_BASE_FEE_REIMBURSEMENT;
@@ -209,7 +208,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                         ClockworkError::TriggerConditionFailed
                     );
                     const STALENESS_THRESHOLD: u64 = 60; // staleness threshold in seconds
-                    let price_feed = load_price_feed_from_account_info(account_info).unwrap();
+                    let price_feed = SolanaPriceAccount::account_info_to_feed(account_info).unwrap();
                     let current_timestamp = Clock::get()?.unix_timestamp;
                     let current_price = price_feed
                         .get_price_no_older_than(current_timestamp, STALENESS_THRESHOLD)
@@ -277,10 +276,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
 fn next_timestamp(after: i64, schedule: String) -> Option<i64> {
     Schedule::from_str(&schedule)
         .unwrap()
-        .next_after(&DateTime::<Utc>::from_naive_utc_and_offset(
-            NaiveDateTime::from_timestamp_opt(after, 0).unwrap(),
-            Utc,
-        ))
+        .next_after(&DateTime::<Utc>::from_timestamp(after, 0).unwrap())
         .take()
         .map(|datetime| datetime.timestamp())
 }

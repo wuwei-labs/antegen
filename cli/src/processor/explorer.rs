@@ -1,12 +1,12 @@
 use {
     crate::errors::CliError,
     crate::config::CliConfig,
-    clockwork_utils::explorer::Explorer,
+    antegen_utils::explorer::Explorer,
 };
 
 pub fn thread_url<T: std::fmt::Display>(thread: T, config: CliConfig) -> Result<(),
     CliError> {
-    println!("thread: {}", explorer(config).thread_url(thread, clockwork_thread_program::ID));
+    println!("thread: {}", explorer(config).thread_url(thread, antegen_thread_program::ID));
     Ok(())
 }
 

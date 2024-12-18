@@ -9,7 +9,7 @@ usage() {
     echo "Error: $*"
   fi
   cat <<EOF
-usage: $0 [+<cargo version>] [--release] [--target <target triple>] <install directory>
+usage: $0 [--release] [--target <target triple>] <install directory>
 EOF
   exit $exitcode
 }
@@ -18,9 +18,6 @@ EOF
 defaultTargetTriple=$(cargo -vV | grep 'host:' | cut -d ' ' -f2)
 
 # Set build flags
-
-# Setup rust the default rust-version
-maybeRustVersion=
 installDir=
 buildVariant=debug
 maybeReleaseFlag=
@@ -41,9 +38,6 @@ while [[ -n $1 ]]; do
         usage "Unknown option: $1"
         ;;
     esac
-  elif [[ ${1:0:1} = + ]]; then
-    maybeRustVersion=${1:1}
-    shift
   else
     installDir=$1
     shift
@@ -55,15 +49,7 @@ if [[ -z "$targetTriple" ]]; then
   targetTriple="$defaultTargetTriple"
 fi
 
-if [ -z "$maybeRustVersion" ]; then
-    source scripts/ci/rust-version.sh
-    maybeRustVersion="$rust_stable"
-else
-    rustup install "$maybeRustVersion"
-fi
-
 # Print final configuration
-echo "Using Rust version: $maybeRustVersion"
 echo "Build variant: $buildVariant"
 echo "Target triple: $targetTriple"
 echo "Install directory: $installDir"
@@ -83,46 +69,37 @@ echo "Install location: $installDir ($buildVariant)"
 cd "$(dirname "$0")"/..
 SECONDS=0
 
-# Enumerate the bins
-BINS=(
-  clockwork
-)
-
-# Create bin args
-binArgs=()
-for bin in "${BINS[@]}"; do 
-  binArgs+=(--bin "$bin")
-done
-
 # Build programs
 (
   set -x
+  source ~/.bash_profile
   anchor build
 )
 
 # Define lib extension
 case $targetTriple in
   *darwin*)
-    pluginFilename=libclockwork_plugin.dylib
+    pluginFilename=libantegen_plugin.dylib
     ;;
   *)
-    pluginFilename=libclockwork_plugin.so
+    pluginFilename=libantegen_plugin.so
     ;;
 esac
 
 # Build the repo
 (
   set -x
-  cargo +"$maybeRustVersion" build --locked $maybeReleaseFlag "${binArgs[@]}" --lib --target "$targetTriple"
+  cargo build --workspace --locked $maybeReleaseFlag --lib --target "$targetTriple"
+  
   # Copy binaries
   case $targetTriple in
     *darwin*)
-      pluginFilename=libclockwork_plugin.dylib
+      pluginFilename=libantegen_plugin.dylib
       cp -fv "target/$targetTriple/$buildVariant/$pluginFilename" "$installDir"/lib
-      mv "$installDir"/lib/libclockwork_plugin.dylib "$installDir"/lib/libclockwork_plugin.so
+      mv "$installDir"/lib/libantegen_plugin.dylib "$installDir"/lib/libantegen_plugin.so
       ;;
     *)
-      pluginFilename=libclockwork_plugin.so
+      pluginFilename=libantegen_plugin.so
       cp -fv "target/$targetTriple/$buildVariant/$pluginFilename" "$installDir"/lib
       ;;
   esac
@@ -132,9 +109,8 @@ esac
     cp -fv "target/$targetTriple/$buildVariant/$bin" "$installDir/bin"
   done
 
-  cp -fv "target/deploy/clockwork_network_program.so" "$installDir/lib"
-  cp -fv "target/deploy/clockwork_thread_program.so" "$installDir/lib"
-  cp -fv "target/deploy/clockwork_webhook_program.so" "$installDir/lib"
+  cp -fv "target/deploy/antegen_network_program.so" "$installDir/lib"
+  cp -fv "target/deploy/antegen_thread_program.so" "$installDir/lib"
 )
 
 # Success message

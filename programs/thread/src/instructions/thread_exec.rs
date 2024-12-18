@@ -6,8 +6,8 @@ use anchor_lang::{
     },
     AnchorDeserialize, InstructionData,
 };
-use clockwork_network_program::state::{Fee, Pool, Worker, WorkerAccount};
-use clockwork_utils::thread::{SerializableInstruction, ThreadResponse, PAYER_PUBKEY};
+use antegen_network_program::state::{Fee, Pool, Worker, WorkerAccount};
+use antegen_utils::thread::{SerializableInstruction, ThreadResponse, PAYER_PUBKEY};
 
 use crate::{errors::ClockworkError, state::*};
 
@@ -24,11 +24,11 @@ pub struct ThreadExec<'info> {
     #[account(
         mut,
         seeds = [
-            clockwork_network_program::state::SEED_FEE,
+            antegen_network_program::state::SEED_FEE,
             worker.key().as_ref(),
         ],
         bump,
-        seeds::program = clockwork_network_program::ID,
+        seeds::program = antegen_network_program::ID,
         has_one = worker,
     )]
     pub fee: Account<'info, Fee>,
@@ -84,7 +84,7 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
     // We have already verified that it is not null during account validation.
     let instruction: &mut SerializableInstruction = &mut thread.next_instruction.clone().unwrap();
 
-    // Inject the signatory's pubkey for the Clockwork payer ID.
+    // Inject the signatory's pubkey for the Antegen payer ID.
     for acc in instruction.accounts.iter_mut() {
         if acc.pubkey.eq(&PAYER_PUBKEY) {
             acc.pubkey = signatory.key();

@@ -17,9 +17,8 @@ use {
         solana_program::{instruction::Instruction, system_program},
         InstructionData, ToAccountMetas
     },
-    clap::crate_version,
-    clockwork_network_program::state::{Config, ConfigSettings, Registry},
-    clockwork_thread_program::state::{Thread, Trigger},
+    antegen_network_program::state::{Config, ConfigSettings, Registry},
+    antegen_thread_program::state::{Thread, Trigger},
     solana_sdk::{
         native_token::LAMPORTS_PER_SOL,
         program_pack::Pack,
@@ -57,7 +56,7 @@ pub fn start(
     program_infos: Vec<ProgramInfo>,
     force_init: bool,
     solana_archive: Option<String>,
-    clockwork_archive: Option<String>,
+    antegen_archive: Option<String>,
     dev: bool,
 ) -> Result<(), CliError> {
     config.dev = dev;
@@ -65,7 +64,7 @@ pub fn start(
         &CliConfig::default_runtime_dir(),
         force_init,
         solana_archive,
-        clockwork_archive,
+        antegen_archive,
         dev,
     )
     .map_err(|err| CliError::FailedLocalnet(err.to_string()))?;
@@ -78,9 +77,9 @@ pub fn start(
         &mut start_test_validator(config, client, program_infos, network_url, clone_addresses)
             .map_err(|err| CliError::FailedLocalnet(err.to_string()))?;
 
-    // Initialize Clockwork
+    // Initialize Antegen
     let mint_pubkey =
-        mint_clockwork_token(client).map_err(|err| CliError::FailedTransaction(err.to_string()))?;
+        mint_antegen_token(client).map_err(|err| CliError::FailedTransaction(err.to_string()))?;
     super::initialize::initialize(client, mint_pubkey)
         .map_err(|err| CliError::FailedTransaction(err.to_string()))?;
     register_worker(client, config).map_err(|err| CliError::FailedTransaction(err.to_string()))?;
@@ -93,7 +92,7 @@ pub fn start(
     Ok(())
 }
 
-fn mint_clockwork_token(client: &Client) -> Result<Pubkey> {
+fn mint_antegen_token(client: &Client) -> Result<Pubkey> {
     // Calculate rent and pubkeys
     let mint_keypair = Keypair::new();
     let mint_rent = client
@@ -142,7 +141,7 @@ fn mint_clockwork_token(client: &Client) -> Result<Pubkey> {
     // Submit tx
     client
         .send_and_confirm(&ixs, &[client.payer(), &mint_keypair])
-        .context("mint_clockwork_token failed")?;
+        .context("mint_antegen_token failed")?;
 
     Ok(mint_keypair.pubkey())
 }
@@ -170,71 +169,71 @@ fn register_worker(client: &Client, config: &CliConfig) -> Result<()> {
 
 fn create_threads(client: &Client, mint_pubkey: Pubkey) -> Result<()> {
     // Create epoch thread.
-    let epoch_thread_id = "clockwork.network.epoch";
+    let epoch_thread_id = "antegen.network.epoch";
     let epoch_thread_pubkey = Thread::pubkey(client.payer_pubkey(), epoch_thread_id.into());
     let ix_a1 = Instruction {
-        program_id: clockwork_network_program::ID,
-        accounts: clockwork_network_program::accounts::DistributeFeesJob {
+        program_id: antegen_network_program::ID,
+        accounts: antegen_network_program::accounts::DistributeFeesJob {
             config: Config::pubkey(),
             registry: Registry::pubkey(),
             thread: epoch_thread_pubkey,
         }.to_account_metas(Some(false)),
-        data: clockwork_network_program::instruction::DistributeFeesJob {}.data(),
+        data: antegen_network_program::instruction::DistributeFeesJob {}.data(),
     };
     let ix_a2 = Instruction {
-        program_id: clockwork_network_program::ID,
-        accounts: clockwork_network_program::accounts::ProcessUnstakesJob {
+        program_id: antegen_network_program::ID,
+        accounts: antegen_network_program::accounts::ProcessUnstakesJob {
             config: Config::pubkey(),
             registry: Registry::pubkey(),
             thread: epoch_thread_pubkey,
         }.to_account_metas(Some(false)),
-        data: clockwork_network_program::instruction::ProcessUnstakesJob {}.data(),
+        data: antegen_network_program::instruction::ProcessUnstakesJob {}.data(),
     };
     let ix_a3 = Instruction {
-        program_id: clockwork_network_program::ID,
-        accounts: clockwork_network_program::accounts::StakeDelegationsJob {
+        program_id: antegen_network_program::ID,
+        accounts: antegen_network_program::accounts::StakeDelegationsJob {
             config: Config::pubkey(),
             registry: Registry::pubkey(),
             thread: epoch_thread_pubkey,
         }.to_account_metas(Some(false)),
-        data: clockwork_network_program::instruction::StakeDelegationsJob {}.data(),
+        data: antegen_network_program::instruction::StakeDelegationsJob {}.data(),
     };
     let ix_a4 = Instruction {
-        program_id: clockwork_network_program::ID,
-        accounts: clockwork_network_program::accounts::TakeSnapshotJob {
+        program_id: antegen_network_program::ID,
+        accounts: antegen_network_program::accounts::TakeSnapshotJob {
             config: Config::pubkey(),
             registry: Registry::pubkey(),
             thread: epoch_thread_pubkey,
         }.to_account_metas(Some(false)),
-        data: clockwork_network_program::instruction::TakeSnapshotJob {}.data(),
+        data: antegen_network_program::instruction::TakeSnapshotJob {}.data(),
     };
     let ix_a5 = Instruction {
-        program_id: clockwork_network_program::ID,
-        accounts: clockwork_network_program::accounts::EpochCutover {
+        program_id: antegen_network_program::ID,
+        accounts: antegen_network_program::accounts::EpochCutover {
             config: Config::pubkey(),
             registry: Registry::pubkey(),
             thread: epoch_thread_pubkey,
         }.to_account_metas(Some(false)),
-        data: clockwork_network_program::instruction::IncrementEpoch {}.data(),
+        data: antegen_network_program::instruction::IncrementEpoch {}.data(),
     };
     let ix_a6 = Instruction {
-        program_id: clockwork_network_program::ID,
-        accounts: clockwork_network_program::accounts::DeleteSnapshotJob {
+        program_id: antegen_network_program::ID,
+        accounts: antegen_network_program::accounts::DeleteSnapshotJob {
             config: Config::pubkey(),
             registry: Registry::pubkey(),
             thread: epoch_thread_pubkey,
         }.to_account_metas(Some(false)),
-        data: clockwork_network_program::instruction::DeleteSnapshotJob {}.data(),
+        data: antegen_network_program::instruction::DeleteSnapshotJob {}.data(),
     };
     let ix_a = Instruction {
-        program_id: clockwork_thread_program::ID,
-        accounts: clockwork_thread_program::accounts::ThreadCreate {
+        program_id: antegen_thread_program::ID,
+        accounts: antegen_thread_program::accounts::ThreadCreate {
             authority: client.payer_pubkey(),
             payer: client.payer_pubkey(),
             system_program: system_program::ID,
             thread: epoch_thread_pubkey,
         }.to_account_metas(Some(false)),
-        data: clockwork_thread_program::instruction::ThreadCreate {
+        data: antegen_thread_program::instruction::ThreadCreate {
             amount: LAMPORTS_PER_SOL,
             id: epoch_thread_id.into(),
             instructions: vec![
@@ -254,26 +253,26 @@ fn create_threads(client: &Client, mint_pubkey: Pubkey) -> Result<()> {
     };
 
     // Create hasher thread.
-    let hasher_thread_id = "clockwork.network.hasher";
+    let hasher_thread_id = "antegen.network.hasher";
     let hasher_thread_pubkey = Thread::pubkey(client.payer_pubkey(), hasher_thread_id.into());
     let registry_hash_ix = Instruction {
-        program_id: clockwork_network_program::ID,
-        accounts: clockwork_network_program::accounts::RegistryNonceHash {
+        program_id: antegen_network_program::ID,
+        accounts: antegen_network_program::accounts::RegistryNonceHash {
             config: Config::pubkey(),
             registry: Registry::pubkey(),
             thread: hasher_thread_pubkey,  
         }.to_account_metas(Some(false)),
-        data: clockwork_network_program::instruction::RegistryNonceHash {}.data(),
+        data: antegen_network_program::instruction::RegistryNonceHash {}.data(),
     };
     let ix_b = Instruction {
-        program_id: clockwork_thread_program::ID,
-        accounts: clockwork_thread_program::accounts::ThreadCreate {
+        program_id: antegen_thread_program::ID,
+        accounts: antegen_thread_program::accounts::ThreadCreate {
             authority: client.payer_pubkey(),
             payer: client.payer_pubkey(),
             system_program: system_program::ID,
             thread: hasher_thread_pubkey,
         }.to_account_metas(Some(false)),
-        data: clockwork_thread_program::instruction::ThreadCreate {
+        data: antegen_thread_program::instruction::ThreadCreate {
             amount: LAMPORTS_PER_SOL,
             id: hasher_thread_id.into(),
             instructions: vec![
@@ -295,12 +294,12 @@ fn create_threads(client: &Client, mint_pubkey: Pubkey) -> Result<()> {
         mint: mint_pubkey,
     };
     let ix_c = Instruction {
-        program_id: clockwork_network_program::ID,
-        accounts: clockwork_network_program::accounts::ConfigUpdate {
+        program_id: antegen_network_program::ID,
+        accounts: antegen_network_program::accounts::ConfigUpdate {
             admin: client.payer_pubkey(),
             config: Config::pubkey()
         }.to_account_metas(Some(false)),
-        data: clockwork_network_program::instruction::ConfigUpdate { settings }.data(),
+        data: antegen_network_program::instruction::ConfigUpdate { settings }.data(),
     };
 
     client
@@ -317,7 +316,7 @@ fn create_threads(client: &Client, mint_pubkey: Pubkey) -> Result<()> {
 }
 
 fn create_geyser_plugin_config(config: &CliConfig) -> Result<()> {
-    let geyser_config = clockwork_plugin_utils::PluginConfig {
+    let geyser_config = antegen_plugin_utils::PluginConfig {
         keypath: Some(config.signatory().to_owned()),
         libpath: Some(config.geyser_lib().to_owned()),
         ..Default::default()
@@ -340,9 +339,8 @@ fn start_test_validator(
     let path = config.active_runtime("solana-test-validator").to_owned();
     let cmd = &mut Command::new(path);
     cmd.arg("-r")
-        .bpf_program(config, clockwork_network_program::ID, "network")
-        .bpf_program(config, clockwork_thread_program::ID, "thread")
-        .bpf_program(config, clockwork_webhook_program::ID, "webhook")
+        .bpf_program(config, antegen_network_program::ID, "network")
+        .bpf_program(config, antegen_thread_program::ID, "thread")
         .network_url(network_url)
         .clone_addresses(clone_addresses)
         .add_programs_with_path(program_infos)
@@ -351,7 +349,7 @@ fn start_test_validator(
     let mut process = cmd
         .spawn()
         .context(format!("solana-test-validator command: {:#?}", cmd))?;
-print_status!("Running", "Clockwork Validator {}\n", crate_version!());
+    print_status!("Running", "Antegen Validator {}\n", env!("CARGO_PKG_VERSION").to_owned());
 
     // Wait for the validator to become healthy
     let ms_wait = 10_000;
@@ -410,7 +408,7 @@ impl TestValidatorHelpers for Command {
         program_id: Pubkey,
         program_name: &str,
     ) -> &mut Command {
-        let filename = format!("clockwork_{}_program.so", program_name);
+        let filename = format!("antegen_{}_program.so", program_name);
         self.arg("--bpf-program")
             .arg(program_id.to_string())
             .arg(config.active_runtime(filename.as_str()).to_owned())

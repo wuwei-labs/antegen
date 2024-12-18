@@ -1,7 +1,7 @@
 use std::{fmt::Debug, sync::Arc};
 
 use log::info;
-use solana_geyser_plugin_interface::geyser_plugin_interface::{
+use agave_geyser_plugin_interface::geyser_plugin_interface::{
     GeyserPlugin, ReplicaAccountInfo, ReplicaAccountInfoVersions, Result as PluginResult,
     SlotStatus,
 };
@@ -32,19 +32,20 @@ pub struct Inner {
 
 impl GeyserPlugin for ClockworkPlugin {
     fn name(&self) -> &'static str {
-        "clockwork-plugin"
+        "antegen-plugin"
     }
 
-    fn on_load(&mut self, config_file: &str) -> PluginResult<()> {
+    fn on_load(&mut self, config_file: &str, is_reload: bool) -> PluginResult<()> {
         solana_logger::setup_with_default("info");
         info!(
-            "clockwork-plugin crate-info - spec: {}, geyser_interface_version: {}, rustc: {}",
-            env!("SPEC"),
+            "antegen-plugin crate-info - geyser_interface_version: {}, rustc: {}",
             env!("GEYSER_INTERFACE_VERSION"),
             env!("RUSTC_VERSION")
         );
-        info!("Loading snapshot...");
+
+        info!("Loading snapshot..., isReload: {}", is_reload);
         let config = PluginConfig::read_from(config_file)?;
+        println!("config_file: {:?}", config_file);
         *self = ClockworkPlugin::new_from_config(config);
         Ok(())
     }
@@ -124,15 +125,6 @@ impl GeyserPlugin for ClockworkPlugin {
                             .await
                             .ok();
                     }
-                    AccountUpdateEvent::Webhook { webhook } => {
-                        inner
-                            .observers
-                            .webhook
-                            .clone()
-                            .observe_webhook(webhook, account_pubkey)
-                            .await
-                            .ok();
-                    }
                     AccountUpdateEvent::PriceFeed { price_feed } => {
                         inner
                             .observers
@@ -158,8 +150,9 @@ impl GeyserPlugin for ClockworkPlugin {
         &self,
         slot: u64,
         _parent: Option<u64>,
-        status: SlotStatus,
+        status: &SlotStatus,
     ) -> PluginResult<()> {
+        let status = status.clone();
         self.inner.clone().spawn(|inner| async move {
             match status {
                 SlotStatus::Processed => {
@@ -178,7 +171,7 @@ impl GeyserPlugin for ClockworkPlugin {
 
     fn notify_transaction(
         &self,
-        _transaction: solana_geyser_plugin_interface::geyser_plugin_interface::ReplicaTransactionInfoVersions,
+        _transaction: agave_geyser_plugin_interface::geyser_plugin_interface::ReplicaTransactionInfoVersions,
         _slot: u64,
     ) -> PluginResult<()> {
         Ok(())
@@ -186,7 +179,7 @@ impl GeyserPlugin for ClockworkPlugin {
 
     fn notify_block_metadata(
         &self,
-        _blockinfo: solana_geyser_plugin_interface::geyser_plugin_interface::ReplicaBlockInfoVersions,
+        _blockinfo: agave_geyser_plugin_interface::geyser_plugin_interface::ReplicaBlockInfoVersions,
     ) -> PluginResult<()> {
         Ok(())
     }
@@ -235,7 +228,7 @@ fn build_runtime(config: PluginConfig) -> Arc<Runtime> {
     Arc::new(
         Builder::new_multi_thread()
             .enable_all()
-            .thread_name("clockwork-plugin")
+            .thread_name("antegen-plugin")
             .worker_threads(config.thread_count)
             .max_blocking_threads(config.thread_count)
             .build()

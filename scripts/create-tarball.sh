@@ -19,7 +19,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-RELEASE_BASENAME="${RELEASE_BASENAME:=clockwork-geyser-plugin-release}"
+RELEASE_BASENAME="${RELEASE_BASENAME:=antegen-geyser-plugin-release}"
 TARBALL_BASENAME="${TARBALL_BASENAME:="$RELEASE_BASENAME"}"
 
 echo --- Creating release tarball
@@ -41,8 +41,7 @@ echo --- Creating release tarball
   var=$(pwd)
   echo "The current working directory $var"
 
-  source ./scripts/ci/rust-version.sh stable
-  ./scripts/build-all.sh +"${rust_stable:?}" --release --target "$TARGET" "${RELEASE_BASENAME}"
+  ./scripts/build-all.sh --release --target "$TARGET" "${RELEASE_BASENAME}"
 
   RELEASE_NAME="${TARBALL_BASENAME}-${TARGET}"
 

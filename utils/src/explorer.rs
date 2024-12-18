@@ -1,5 +1,5 @@
 const EXPLORER_URL: &str = "https://explorer.solana.com";
-const CK_EXPLORER_URL: &str = "https://explorer.clockwork.xyz";
+const CK_EXPLORER_URL: &str = "https://explorer.antegen.xyz";
 
 
 #[derive(Default)]
@@ -62,7 +62,7 @@ impl Explorer {
         }
     }
 
-    /// Ex: https://explorer.clockwork.xyz/thread/{thread}
+    /// Ex: https://explorer.antegen.xyz/thread/{thread}
     ///     ?network=custom
     ///     &customRPC=http://localhost:8899
     pub fn thread_url<T: std::fmt::Display, U: std::fmt::Display>(&self, thread: T, program_id: U) -> String {
