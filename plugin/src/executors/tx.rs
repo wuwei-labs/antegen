@@ -16,7 +16,7 @@ use solana_client::{
     rpc_config::RpcSimulateTransactionConfig,
     tpu_client::TpuClientConfig,
 };
-use solana_geyser_plugin_interface::geyser_plugin_interface::{
+use agave_geyser_plugin_interface::geyser_plugin_interface::{
     GeyserPluginError, Result as PluginResult,
 };
 use solana_program::pubkey::Pubkey;

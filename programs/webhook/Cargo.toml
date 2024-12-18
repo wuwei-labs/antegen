@@ -1,12 +1,12 @@
 [package]
 name = "clockwork-webhook-program"
-version = "2.0.19"
-description = "Clockwork webhook program"
+version = "1.0.0"
 edition = "2021"
+description = "Clockwork webhook program"
 license = "AGPL-3.0-or-later"
-homepage = "https://clockwork.xyz"
-repository = "https://github.com/clockwork-xyz/clockwork"
-documentation = "https://docs.clockwork.xyz"
+homepage = "https://clockwork.wuwei.dev"
+repository = "https://github.com/wuwei-labs/clockwork"
+documentation = "https://clockwork.wuwei.dev/docs"
 readme = "./README.md"
 keywords = ["solana"]
 
@@ -22,7 +22,8 @@ cpi = ["no-entrypoint"]
 default = []
 
 [dependencies]
-anchor-lang = { features = ["init-if-needed"], version = "0.29.0" }
-clockwork-network-program = { path = "../network", features = ["cpi"], version = "=2.0.19" }
-clockwork-utils = { path = "../../utils", version = "=2.0.19" }
-serde = "1.0.152"
+clockwork-network-program = { path = "../network", features = ["cpi"], version = "=1.0.0" }
+clockwork-utils = { path = "../../utils", version = "=1.0.0" }
+
+anchor-lang = { features = ["init-if-needed"], git = "https://github.com/coral-xyz/anchor", rev = "0453672" }
+serde = "1.0.216"
