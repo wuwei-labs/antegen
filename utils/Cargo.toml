@@ -1,12 +1,12 @@
 [package]
 name = "clockwork-utils"
-version = "2.0.19"
-description = "Tools for building blocks on Solana"
+version = "1.0.0"
 edition = "2021"
+description = "Tools for building blocks on Solana"
 license = "AGPL-3.0-or-later"
-homepage = "https://clockwork.xyz"
-repository = "https://github.com/clockwork-xyz/clockwork"
-documentation = "https://docs.clockwork.xyz"
+homepage = "https://clockwork.wuwei.dev"
+repository = "https://github.com/wuwei-labs/clockwork"
+documentation = "https://clockwork.wuwei.dev/docs"
 readme = "./README.md"
 keywords = ["solana"]
 
@@ -14,9 +14,8 @@ keywords = ["solana"]
 name = "clockwork_utils"
 
 [dependencies]
-anchor-lang = "0.29.0"
-base64 = "~0.13"
+anchor-lang = { git = "https://github.com/coral-xyz/anchor", rev = "0453672" }
+base64 = "~0.22"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 static-pubkey = "1.0.3"
-

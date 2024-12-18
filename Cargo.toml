@@ -1,4 +1,5 @@
 [workspace]
+resolver = "2"
 members = [
     "cli",
     "cron",
@@ -11,3 +12,8 @@ members = [
 
 [profile.release]
 overflow-checks = true
+panic = "abort"         # Aborts on panic instead of unwinding
+lto = "thin"            # Enable link-time optimization
+codegen-units = 1       # Optimize for size
+strip = true            # Strip symbols from binary
+opt-level = 3           # Maximum optimizations
