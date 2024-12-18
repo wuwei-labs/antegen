@@ -1,4 +1,4 @@
-//! This program orchestrates a Clockwork worker network deployed across a Solana cluster.
+//! This program orchestrates a Antegen worker network deployed across a Solana cluster.
 //! It implements a PoS protocol that allows workers to rotate into "pools" proportionately to
 //! the amount of stake delgated to them. It also provides accounts for workers to collect fees
 //! and distribute those fees to delegators.
@@ -10,7 +10,7 @@ mod instructions;
 mod jobs;
 
 use anchor_lang::prelude::*;
-use clockwork_utils::thread::*;
+use antegen_utils::thread::*;
 use instructions::*;
 use jobs::*;
 use state::*;

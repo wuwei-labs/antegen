@@ -40,7 +40,7 @@ pub fn handler(ctx: Context<PoolUpdate>, settings: PoolSettings) -> Result<()> {
     pool.update(&settings)?;
 
     // Reallocate memory for the pool account
-    let data_len = 8 + size_of::<Pool>() + settings.size.checked_mul(size_of::<Pubkey>()).unwrap();
+    let data_len = 8 + size_of::<Pool>() + (settings.size as usize).checked_mul(size_of::<Pubkey>()).unwrap();
     pool.to_account_info().realloc(data_len, false)?;
 
     // If lamports are required to maintain rent-exemption, pay them

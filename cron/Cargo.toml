@@ -1,20 +1,21 @@
 [package]
-name = "clockwork-cron"
-version = "2.0.19"
+name = "solana-cron"
 description = "A cron expression parser that's safe to use in the Solana runtime"
-edition = "2021"
-license = "AGPL-3.0-or-later"
-homepage = "https://clockwork.xyz"
-repository = "https://github.com/clockwork-xyz/clockwork"
-documentation = "https://docs.clockwork.xyz"
-readme = "./README.md"
-keywords = ["solana"]
+
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+documentation = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+readme = { workspace = true }
+keywords = { workspace = true }
 
 [lib]
-name = "clockwork_cron"
+name = "solana_cron"
 
 [dependencies]
-chrono = { version = "0.4.19", default-features = false, features = ["alloc"] }
-nom = "~7"
-once_cell = "1.5.2"
-
+chrono = { workspace = true }
+nom = { workspace = true }
+once_cell = { workspace = true }

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use anchor_lang::{InstructionData, ToAccountMetas};
-use clockwork_thread_program::state::{VersionedThread, Trigger};
-use clockwork_network_program::state::Worker;
-use clockwork_utils::thread::PAYER_PUBKEY;
+use antegen_thread_program::state::{VersionedThread, Trigger};
+use antegen_network_program::state::Worker;
+use antegen_utils::thread::PAYER_PUBKEY;
 use log::info;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{
@@ -11,7 +11,7 @@ use solana_client::{
     rpc_config::{RpcSimulateTransactionAccountsConfig, RpcSimulateTransactionConfig},
     rpc_custom_error::JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED,
 };
-use solana_geyser_plugin_interface::geyser_plugin_interface::{
+use agave_geyser_plugin_interface::geyser_plugin_interface::{
     GeyserPluginError, Result as PluginResult,
 };
 use solana_program::{
@@ -222,24 +222,14 @@ fn build_kickoff_ix(
     // Build the instruction.
     let mut kickoff_ix = match thread {
         VersionedThread::V1(_) => Instruction {
-            program_id: clockwork_thread_program_v1::ID,
-            accounts: clockwork_thread_program_v1::accounts::ThreadKickoff {
+            program_id: antegen_thread_program::ID,
+            accounts: antegen_thread_program::accounts::ThreadKickoff {
                 signatory: signatory_pubkey,
                 thread: thread_pubkey,
                 worker: worker_pubkey,
             }
             .to_account_metas(Some(false)),
-            data: clockwork_thread_program_v1::instruction::ThreadKickoff {}.data(),
-        },
-        VersionedThread::V2(_) => Instruction {
-            program_id: clockwork_thread_program::ID,
-            accounts: clockwork_thread_program::accounts::ThreadKickoff {
-                signatory: signatory_pubkey,
-                thread: thread_pubkey,
-                worker: worker_pubkey,
-            }
-            .to_account_metas(Some(false)),
-            data: clockwork_thread_program::instruction::ThreadKickoff {}.data(),
+            data: antegen_thread_program::instruction::ThreadKickoff {}.data(),
         },
     };
 
@@ -278,29 +268,16 @@ fn build_exec_ix(
     // Build the instruction.
     let mut exec_ix = match thread {
         VersionedThread::V1(_) => Instruction {
-            program_id: clockwork_thread_program_v1::ID,
-            accounts: clockwork_thread_program_v1::accounts::ThreadExec {
-                fee: clockwork_network_program::state::Fee::pubkey(worker_pubkey),
-                penalty: clockwork_network_program::state::Penalty::pubkey(worker_pubkey),
-                pool: clockwork_network_program::state::Pool::pubkey(0),
+            program_id: antegen_thread_program::ID,
+            accounts: antegen_thread_program::accounts::ThreadExec {
+                fee: antegen_network_program::state::Fee::pubkey(worker_pubkey),
+                pool: antegen_network_program::state::Pool::pubkey(0),
                 signatory: signatory_pubkey,
                 thread: thread_pubkey,
                 worker: worker_pubkey,
             }
             .to_account_metas(Some(true)),
-            data: clockwork_thread_program_v1::instruction::ThreadExec {}.data(),
-        },
-        VersionedThread::V2(_) => Instruction {
-            program_id: clockwork_thread_program::ID,
-            accounts: clockwork_thread_program::accounts::ThreadExec {
-                fee: clockwork_network_program::state::Fee::pubkey(worker_pubkey),
-                pool: clockwork_network_program::state::Pool::pubkey(0),
-                signatory: signatory_pubkey,
-                thread: thread_pubkey,
-                worker: worker_pubkey,
-            }
-            .to_account_metas(Some(true)),
-            data: clockwork_thread_program::instruction::ThreadExec {}.data(),
+            data: antegen_thread_program::instruction::ThreadExec {}.data(),
         },
     };
 

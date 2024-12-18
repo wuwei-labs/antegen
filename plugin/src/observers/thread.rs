@@ -5,12 +5,12 @@ use std::{
     sync::{atomic::AtomicU64, Arc},
 };
 
-use chrono::{DateTime, NaiveDateTime, Utc};
-use clockwork_cron::Schedule;
-use clockwork_thread_program::state::{Equality, Trigger, TriggerContext, VersionedThread};
+use chrono::{DateTime, Utc};
+use solana_cron::Schedule;
+use antegen_thread_program::state::{Equality, Trigger, TriggerContext, VersionedThread};
 use log::info;
 use pyth_sdk_solana::PriceFeed;
-use solana_geyser_plugin_interface::geyser_plugin_interface::{
+use agave_geyser_plugin_interface::geyser_plugin_interface::{
     GeyserPluginError, Result as PluginResult,
 };
 use solana_program::{clock::Clock, pubkey::Pubkey};
@@ -381,10 +381,7 @@ fn next_moment(after: i64, schedule: String) -> Option<i64> {
     match Schedule::from_str(&schedule) {
         Err(_) => None,
         Ok(schedule) => schedule
-            .next_after(&DateTime::<Utc>::from_naive_utc_and_offset(
-                NaiveDateTime::from_timestamp_opt(after, 0).unwrap(),
-                Utc,
-            ))
+            .next_after(&DateTime::<Utc>::from_timestamp(after, 0).unwrap())
             .take()
             .map(|datetime| datetime.timestamp()),
     }

@@ -6,11 +6,10 @@ extern crate version;
 
 pub mod errors;
 pub mod state;
-
 mod instructions;
 
 use anchor_lang::prelude::*;
-use clockwork_utils::{
+use antegen_utils::{
     thread::{SerializableInstruction, Trigger},
     CrateInfo,
 };
@@ -19,7 +18,6 @@ use state::*;
 
 declare_id!("CLoCKyJ6DXBJqqu2VWx9RLbgnwwR6BMHHuyasVmfMzBh");
 
-/// Program for creating transaction threads on Solana.
 #[program]
 pub mod thread_program {
     use super::*;

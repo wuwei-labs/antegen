@@ -5,7 +5,6 @@ use {
         Result,
     },
     bzip2::read::BzDecoder,
-    clap::crate_version,
     indicatif::{
         ProgressBar,
         ProgressStyle,
@@ -34,14 +33,14 @@ pub fn download_deps(
     runtime_dir: &Path,
     force_init: bool,
     solana_archive: Option<String>,
-    clockwork_archive: Option<String>,
+    antegen_archive: Option<String>,
     dev: bool,
 ) -> Result<()> {
     let solana_tag = env!("GEYSER_INTERFACE_VERSION").to_owned().to_tag_version();
-    let clockwork_tag = crate_version!().to_owned().to_tag_version();
+    let antegen_tag = env!("CARGO_PKG_VERSION").to_owned();
 
     // Create the version directory if it does not exist
-    let active_runtime = &runtime_dir.join(&clockwork_tag);
+    let active_runtime = &runtime_dir.join(&antegen_tag);
 
     download_and_extract(
         &active_runtime,
@@ -53,9 +52,9 @@ pub fn download_deps(
     if !dev {
         download_and_extract(
             &active_runtime,
-            &clockwork_archive.unwrap_or(CliConfig::clockwork_release_url(&clockwork_tag)),
-            &active_runtime.join(CliConfig::clockwork_release_archive()),
-            config::CLOCKWORK_DEPS,
+            &antegen_archive.unwrap_or(CliConfig::antegen_release_url(&antegen_tag)),
+            &active_runtime.join(CliConfig::antegen_release_archive()),
+            config::ANTEGEN_DEPS,
             force_init,
         )?;
     }
@@ -102,8 +101,8 @@ fn download_file(url: &str, dest: &Path) -> Result<()> {
 
             let pb = ProgressBar::new(response.content_length().unwrap_or(0));
             pb.set_style(ProgressStyle::default_bar()
-                .template("{spinner:.green} 🚚 [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                .progress_chars("#>-"));
+                .template("{spinner:.green} 🚚 [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")?
+            );
 
             let mut source = pb.wrap_read(response);
 

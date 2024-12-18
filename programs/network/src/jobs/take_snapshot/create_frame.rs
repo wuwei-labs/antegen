@@ -3,8 +3,8 @@ use anchor_lang::{
     solana_program::{instruction::Instruction, system_program},
     InstructionData,
 };
-use anchor_spl::{associated_token::get_associated_token_address, token::TokenAccount};
-use clockwork_utils::thread::{ThreadResponse, PAYER_PUBKEY};
+use anchor_spl::{ associated_token::get_associated_token_address, token::TokenAccount };
+use antegen_utils::thread::{ ThreadResponse, PAYER_PUBKEY };
 use std::mem::size_of;
 
 use crate::state::*;

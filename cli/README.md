@@ -1,4 +1,4 @@
-# Clockwork CLI
+# Antegen CLI
 
 If you are on linux, you might need to run this:
 ```sh
@@ -7,5 +7,5 @@ sudo apt-get update && sudo apt-get upgrade && sudo apt-get install -y pkg-confi
 
 Install with cargo
 ```sh
-cargo install -f --locked clockwork-cli
+cargo install -f --locked antegen-cli
 ```

@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  PUBLISH_PREFIX: antegen
+
+jobs:
+  release:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: ConorMacBride/install-package@v1
+        with:
+          brew: jq yq
+          apt: jq pkg-config build-essential libudev-dev libssl-dev
+
+      - name: Install yq on Linux
+        if: contains(runner.os, 'linux')
+        run: |
+          sudo snap install yq
+
+      - name: Get version from tag
+        id: get_version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          VERSION=${TAG#v}  # Remove 'v' prefix
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          
+      - name: Install Rust Stable to use with tools
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Get solana-sdk version
+        id: solana-sdk
+        run: echo "result=$(yq -oy '.workspace.dependencies."solana-sdk".version' Cargo.toml)" >> $GITHUB_OUTPUT
+
+      - name: Install Solana CLI (beta)
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v${{ steps.solana-sdk.outputs.result }}/install)"
+          echo "/home/runner/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+        
+      - name: Get anchor-lang revision
+        id: anchor-lang
+        run: echo "result=$(yq -oy '.workspace.dependencies."anchor-lang".rev' Cargo.toml)" >> $GITHUB_OUTPUT
+
+      - name: Install Anchor CLI from git
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: anchor-cli
+          git: https://github.com/coral-xyz/anchor
+          commit: ${{ steps.anchor-lang.outputs.result }}
+
+      - name: Build release tarball
+        run: |
+          chmod +x ./scripts/create-tarball.sh
+          chmod +x ./scripts/build-all.sh
+          ./scripts/create-tarball.sh --target ${{ matrix.target }}
+
+      - name: Get antegen version
+        id: antegen-version
+        run: echo "result=$(yq -oy '.workspace.package.version' Cargo.toml)" >> $GITHUB_OUTPUT
+
+      - name: Get rustc version
+        id: rust-toolchain
+        run: echo "result=$(yq -oy '.toolchain.channel' rust-toolchain.toml)" >> $GITHUB_OUTPUT
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          CARGO_VERSION="${{ steps.antegen-version.outputs.result }}"
+          TAG_VERSION="${{ steps.get_version.outputs.version }}"
+          
+          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+            echo "Error: Tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
+            exit 1
+          fi
+
+      - name: Publish Github release
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: true
+          name: ${{ steps.get_version.outputs.tag }}
+          tag_name: ${{ steps.get_version.outputs.tag }}
+          body: |
+            # 🚀 Release Details
+
+            ### 🔌 Plugin Version
+            - antegen-geyser-plugin `v${{ steps.antegen-version.outputs.result }}`
+
+            ### ⚡ Runtime Versions
+            - 🌟 Solana `${{ steps.solana-sdk.outputs.result }}`
+            - 🦀 Rust `${{ steps.rust-toolchain.outputs.result }}`
+            - ⚓️ Anchor `${{ steps.anchor-lang.outputs.result }}`
+
+            ---
+            📝 For installation instructions and documentation, visit [docs.antegen.xyz](https://docs.antegen.xyz)
+          files: |
+            antegen-geyser-plugin-release-*

@@ -1,6 +1,6 @@
 use {
     anchor_lang::{prelude::*, system_program},
-    clockwork_utils::CrateInfo,
+    antegen_utils::CrateInfo,
 };
 
 /// Accounts required for the `get_crate_info` instruction.
@@ -14,7 +14,7 @@ pub struct GetCrateInfo<'info> {
 
 pub fn handler(_ctx: Context<GetCrateInfo>) -> Result<CrateInfo> {
     let spec = format!(
-        "https://github.com/clockwork-xyz/clockwork/blob/v{}/programs/thread/Cargo.toml",
+        "https://github.com/antegen-xyz/antegen/blob/v{}/programs/thread/Cargo.toml",
         version!()
     );
     let blob = "";
