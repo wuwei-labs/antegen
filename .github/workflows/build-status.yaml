@@ -1,13 +1,9 @@
 name: Build Status
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  release:
+    types: [published]
   workflow_dispatch:
-  pull_request:
-    branches:
-      - main
 
 env:
   CARGO_TERM_COLOR: always
