@@ -74,17 +74,6 @@ jobs:
           chmod +x ./scripts/create-tarball.sh
           chmod +x ./scripts/build-all.sh
           ./scripts/create-tarball.sh --target ${{ matrix.target }}
-          ARTIFACT_PATH=$(find . -name "antegen-geyser-plugin-release-*" -type f ! -name "*.sha256")
-          if [ -z "$ARTIFACT_PATH" ]; then
-            echo "Error: Could not find release artifact"
-            exit 1
-          fi
-          ARTIFACT_PATH="${ARTIFACT_PATH#./}"
-          echo "artifact_path=$ARTIFACT_PATH" >> $GITHUB_OUTPUT
-
-      - name: Calculate checksums
-        run: |
-          sha256sum "${{ steps.build.outputs.artifact_path }}" > "${{ steps.build.outputs.artifact_path }}.sha256"
 
       - name: Get antegen version
         id: antegen-version
@@ -105,21 +94,11 @@ jobs:
             exit 1
           fi
 
-      - name: Upload artifacts to temporary storage
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-artifacts-${{ matrix.target }}
-          path: |
-            ${{ steps.build.outputs.artifact_path }}
-            ${{ steps.build.outputs.artifact_path }}.sha256
-          retention-days: 1
-
       - name: Publish Github release
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fail_on_unmatched_files: true
-          name: ${{ steps.get_version.outputs.tag }}
           tag_name: ${{ steps.get_version.outputs.tag }}
           body: |
             # 🚀 Release Details
@@ -139,4 +118,3 @@ jobs:
             📝 For installation instructions and documentation, visit [docs.antegen.xyz](https://docs.antegen.xyz)
           files: |
             antegen-geyser-plugin-release-*
-            antegen-geyser-plugin-release-*.sha256
