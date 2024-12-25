@@ -82,6 +82,7 @@ jobs:
         run: echo "result=$(yq -oy '.toolchain.channel' rust-toolchain.toml)" >> $GITHUB_OUTPUT
 
       - name: Verify tag matches Cargo.toml version
+        if: github.event_name != 'workflow_dispatch'
         run: |
           CARGO_VERSION="${{ steps.antegen-version.outputs.result }}"
           TAG_VERSION="${{ steps.get_version.outputs.version }}"
@@ -94,6 +95,7 @@ jobs:
       - name: Publish Github release
         uses: softprops/action-gh-release@v2
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           fail_on_unmatched_files: true
           name: ${{ steps.get_version.outputs.tag }}
           tag_name: ${{ steps.get_version.outputs.tag }}
