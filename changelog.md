@@ -15,13 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 1.0.1 (2024-12-24)
 
-## 1.0.0 (2024-12-24)
+## 1.0.0 (2024-12-25)
 
 <csr-id-95fb867032ed6053c8caa9b892b83bd79d5d4014/>
+<csr-id-50a1668183d52b56690922f6c6cf34e0cd25b63d/>
 
 ### Refactor
 
  - <csr-id-95fb867032ed6053c8caa9b892b83bd79d5d4014/> :recycle: updated to use carge `smart-release`
+
+### Chore
+
+ - <csr-id-a5f61863223d8aff076ce73c147a41a107a9a4c1/> :tada: v1.0.0
 
 ### Chore
 
@@ -42,6 +47,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <details><summary>view details</summary>
 
  * **Uncategorized**
-    - :tada: v1.0.0 ([`50a1668`](https://github.com/wuwei-labs/antegen/commit/50a1668183d52b56690922f6c6cf34e0cd25b63d))
+    - :tada: v1.0.0 ([`a5f6186`](https://github.com/wuwei-labs/antegen/commit/a5f61863223d8aff076ce73c147a41a107a9a4c1))
 </details>
 
