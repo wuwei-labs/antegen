@@ -117,9 +117,6 @@ jobs:
             - 🦀 Rust `${{ steps.rust-toolchain.outputs.result }}`
             - ⚓️ Anchor `${{ steps.anchor-lang.outputs.result }}`
 
-            ### 📦 Assets
-            SHA-256 checksums are provided for all release artifacts.
-
             ---
             📝 For installation instructions and documentation, visit [docs.antegen.xyz](https://docs.antegen.xyz)
           files: |
