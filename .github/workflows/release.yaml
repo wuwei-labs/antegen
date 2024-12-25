@@ -74,7 +74,13 @@ jobs:
           chmod +x ./scripts/create-tarball.sh
           chmod +x ./scripts/build-all.sh
           ./scripts/create-tarball.sh --target ${{ matrix.target }}
-          echo "artifact_path=$(ls antegen-geyser-plugin-release-*)" >> $GITHUB_OUTPUT
+          ARTIFACT_PATH=$(find . -name "antegen-geyser-plugin-release-*" -type f ! -name "*.sha256")
+          if [ -z "$ARTIFACT_PATH" ]; then
+            echo "Error: Could not find release artifact"
+            exit 1
+          fi
+          ARTIFACT_PATH="${ARTIFACT_PATH#./}"
+          echo "artifact_path=$ARTIFACT_PATH" >> $GITHUB_OUTPUT
 
       - name: Calculate checksums
         run: |
