@@ -1,9 +1,8 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  release:
+    types: [published]
   workflow_dispatch:
 
 env:
@@ -70,10 +69,16 @@ jobs:
           commit: ${{ steps.anchor-lang.outputs.result }}
 
       - name: Build release tarball
+        id: build
         run: |
           chmod +x ./scripts/create-tarball.sh
           chmod +x ./scripts/build-all.sh
           ./scripts/create-tarball.sh --target ${{ matrix.target }}
+          echo "artifact_path=$(ls antegen-geyser-plugin-release-*)" >> $GITHUB_OUTPUT
+
+      - name: Calculate checksums
+        run: |
+          sha256sum "${{ steps.build.outputs.artifact_path }}" > "${{ steps.build.outputs.artifact_path }}.sha256"
 
       - name: Get antegen version
         id: antegen-version
@@ -94,6 +99,15 @@ jobs:
             exit 1
           fi
 
+      - name: Upload artifacts to temporary storage
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts-${{ matrix.target }}
+          path: |
+            ${{ steps.build.outputs.artifact_path }}
+            ${{ steps.build.outputs.artifact_path }}.sha256
+          retention-days: 1
+
       - name: Publish Github release
         uses: softprops/action-gh-release@v2
         with:
@@ -112,7 +126,11 @@ jobs:
             - 🦀 Rust `${{ steps.rust-toolchain.outputs.result }}`
             - ⚓️ Anchor `${{ steps.anchor-lang.outputs.result }}`
 
+            ### 📦 Assets
+            SHA-256 checksums are provided for all release artifacts.
+
             ---
             📝 For installation instructions and documentation, visit [docs.antegen.xyz](https://docs.antegen.xyz)
           files: |
             antegen-geyser-plugin-release-*
+            antegen-geyser-plugin-release-*.sha256
