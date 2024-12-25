@@ -40,10 +40,15 @@ jobs:
       - name: Get version from tag
         id: get_version
         run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          VERSION=${TAG#v}  # Remove 'v' prefix
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=dev" >> $GITHUB_OUTPUT
+            echo "version=dev" >> $GITHUB_OUTPUT
+          else
+            TAG=${GITHUB_REF#refs/tags/}
+            echo "tag=${TAG}" >> $GITHUB_OUTPUT
+            VERSION=${TAG#v}  # Remove 'v' prefix
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          fi
           
       - name: Install Rust Stable to use with tools
         uses: actions-rust-lang/setup-rust-toolchain@v1
