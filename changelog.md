@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Chore
 
+ - <csr-id-e3b8f4e49fd7cce1f222aba0baea5ea4534ad346/> :tada: v1.0.0
+
+### Chore
+
  - <csr-id-a5f61863223d8aff076ce73c147a41a107a9a4c1/> :tada: v1.0.0
 
 ### Chore
@@ -48,6 +52,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <details><summary>view details</summary>
 
  * **Uncategorized**
-    - :tada: v1.0.0 ([`a5f6186`](https://github.com/wuwei-labs/antegen/commit/a5f61863223d8aff076ce73c147a41a107a9a4c1))
+    - :tada: v1.0.0 ([`e3b8f4e`](https://github.com/wuwei-labs/antegen/commit/e3b8f4e49fd7cce1f222aba0baea5ea4534ad346))
 </details>
 
