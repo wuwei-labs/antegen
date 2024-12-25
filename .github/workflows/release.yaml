@@ -12,6 +12,8 @@ env:
 
 jobs:
   release:
+    permissions:
+      contents: write 
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
