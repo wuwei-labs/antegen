@@ -86,6 +86,10 @@ fn parse_bpf_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
         solana_archive: parse_string("solana_archive", matches).ok(),
         antegen_archive: parse_string("antegen_archive", matches).ok(),
         dev: matches.get_flag("dev"),
+        trailing_args: matches.get_many::<String>("test_validator_args")
+            .unwrap_or_default()
+            .map(|s| s.to_string())
+            .collect(),
     })
 }
 

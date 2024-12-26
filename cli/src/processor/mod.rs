@@ -79,6 +79,7 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             solana_archive,
             antegen_archive,
             dev,
+            trailing_args,
         } => localnet::start(
             &mut config,
             &client,
@@ -89,6 +90,7 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             solana_archive,
             antegen_archive,
             dev,
+            trailing_args
         ),
         CliCommand::PoolGet { id } => pool::get(&client, id),
         CliCommand::PoolList {} => pool::list(&client),

@@ -11,7 +11,7 @@ env:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container: backpackapp/build:v0.29.0
     steps:
       - name: Checkout repository

@@ -56,6 +56,7 @@ pub enum CliCommand {
         solana_archive: Option<String>,
         antegen_archive: Option<String>,
         dev: bool,
+        trailing_args: Vec<String>,
     },
 
     // Pool commands
@@ -382,6 +383,13 @@ pub fn app() -> Command {
                         .action(ArgAction::SetTrue)
                         .default_value("false")
                         .help("Use development versions of antegen programs")
+                )
+                .arg(
+                    Arg::new("test_validator_args")
+                        .num_args(0..)
+                        .allow_hyphen_values(true)
+                        .trailing_var_arg(true)
+                        .help("Arguments to pass to solana-test-validator")
                 )
         )
         .subcommand(
