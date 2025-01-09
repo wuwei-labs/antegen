@@ -147,7 +147,7 @@ impl CliConfig {
 
     pub fn antegen_release_url(tag: &str) -> String {
         format!(
-            "{}/{}/{}",
+            "{}/v{}/{}",
             ANTEGEN_RELEASE_URL,
             tag,
             &Self::antegen_release_archive()

@@ -58,6 +58,7 @@ pub fn start(
     solana_archive: Option<String>,
     antegen_archive: Option<String>,
     dev: bool,
+    trailing_args: Vec<String>,
 ) -> Result<(), CliError> {
     config.dev = dev;
     deps::download_deps(
@@ -73,9 +74,15 @@ pub fn start(
     create_geyser_plugin_config(config).map_err(|err| CliError::FailedLocalnet(err.to_string()))?;
 
     // Start the validator
-    let validator_process =
-        &mut start_test_validator(config, client, program_infos, network_url, clone_addresses)
-            .map_err(|err| CliError::FailedLocalnet(err.to_string()))?;
+    let validator_process = &mut start_test_validator(
+        config, 
+        client, 
+        program_infos, 
+        network_url, 
+        clone_addresses,
+        trailing_args,  // Pass trailing args to validator
+    )
+    .map_err(|err| CliError::FailedLocalnet(err.to_string()))?;
 
     // Initialize Antegen
     let mint_pubkey =
@@ -335,16 +342,28 @@ fn start_test_validator(
     program_infos: Vec<ProgramInfo>,
     network_url: Option<String>,
     clone_addresses: Vec<Pubkey>,
+    trailing_args: Vec<String>,
 ) -> Result<Child> {
     let path = config.active_runtime("solana-test-validator").to_owned();
+    if trailing_args.contains(&"--help".to_string()) || trailing_args.contains(&"-h".to_string()) {
+        let mut help_cmd = Command::new(&path);
+        help_cmd.arg("--help");
+        
+        // Execute help command and exit
+        let status = help_cmd.status()
+            .context("Failed to execute solana-test-validator --help")?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
+
     let cmd = &mut Command::new(path);
-    cmd.arg("-r")
+    cmd.arg("--reset")
         .bpf_program(config, antegen_network_program::ID, "network")
         .bpf_program(config, antegen_thread_program::ID, "thread")
         .network_url(network_url)
         .clone_addresses(clone_addresses)
         .add_programs_with_path(program_infos)
-        .geyser_plugin_config(config);
+        .geyser_plugin_config(config)
+        .args(trailing_args);
 
     let mut process = cmd
         .spawn()
