@@ -8,16 +8,16 @@ members = [
 ]
 
 [programs.localnet]
-antegen_network_program = "F8dKseqmBoAkHx3c58Lmb9TgJv5qeTf3BbtZZSEzYvUa"
-antegen_thread_program = "CLoCKyJ6DXBJqqu2VWx9RLbgnwwR6BMHHuyasVmfMzBh"
+antegen_network_program = "AgNet6qmh75bjFULcS9RQijUoWwkCtSiSwXM1K3Ujn6Z"
+antegen_thread_program = "AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1"
 
 [programs.testnet]
-antegen_network_program = "F8dKseqmBoAkHx3c58Lmb9TgJv5qeTf3BbtZZSEzYvUa"
-antegen_thread_program = "CLoCKyJ6DXBJqqu2VWx9RLbgnwwR6BMHHuyasVmfMzBh"
+antegen_network_program = "AgNet6qmh75bjFULcS9RQijUoWwkCtSiSwXM1K3Ujn6Z"
+antegen_thread_program = "AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1"
 
 [programs.mainnet]
-antegen_network_program = "F8dKseqmBoAkHx3c58Lmb9TgJv5qeTf3BbtZZSEzYvUa"
-antegen_thread_program = "CLoCKyJ6DXBJqqu2VWx9RLbgnwwR6BMHHuyasVmfMzBh"
+antegen_network_program = "AgNet6qmh75bjFULcS9RQijUoWwkCtSiSwXM1K3Ujn6Z"
+antegen_thread_program = "AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1"
 
 [registry]
 url = "https://api.apr.dev"

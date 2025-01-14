@@ -16,7 +16,7 @@ use antegen_utils::{
 use instructions::*;
 use state::*;
 
-declare_id!("CLoCKyJ6DXBJqqu2VWx9RLbgnwwR6BMHHuyasVmfMzBh");
+declare_id!("AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1");
 
 #[program]
 pub mod thread_program {
