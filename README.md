@@ -1,14 +1,13 @@
 ---
-label: "Welcome"
 icon: home
 order: 100
 ---
 
-<div align="center">
-  <h1>Antegen</h1>
+# Welcome
 
+<div align="center">
   <p>
-    <strong>🦠 Solana automation engine</strong>
+    <strong>Solana automation engine</strong>
   </p>
 
   <p>

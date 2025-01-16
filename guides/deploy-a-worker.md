@@ -1,6 +1,7 @@
 ---
 label: "Deploy a Worker"
 icon: rocket
+order: 100
 ---
 
 # 🚀 Deploy a Worker
