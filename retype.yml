@@ -1,11 +1,11 @@
 input: .
 output: .retype
-url: # https://docs.antegen.xyz
+url: https://docs.antegen.xyz
 branding:
   title: 🦠 Antegen
   label: Docs
 links:
 - text: Deploy a Worker
-  link: https://retype.com/guides/getting-started/
+  link: https://docs.antegen.xyz/guides/deploy-a-worker/
 footer:
   copyright: "&copy; Copyright {{ year }}. All rights reserved."
