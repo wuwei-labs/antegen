@@ -1,4 +1,4 @@
-# Antegen CLI
+# CLI
 
 If you are on linux, you might need to run this:
 ```sh
