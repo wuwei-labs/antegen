@@ -1,3 +1,9 @@
+---
+label: "Welcome"
+icon: home
+order: 100
+---
+
 <div align="center">
   <h1>Antegen</h1>
 
@@ -6,15 +12,11 @@
   </p>
 
   <p>
-    <a href="https://github.com/wuwei-labs/antegen/actions/workflows/build-status.yaml"><img alt="build status" src="https://github.com/wuwei-labs/antegen/actions/workflows/build-status.yaml/badge.svg"/></a>
-    <a href="https://discord.com/channels/1328480150676836462"><img alt="Discord Chat" src="https://img.shields.io/discord/1328480150676836462?color=blueviolet" /></a>
+    <a href="https://github.com/wuwei-labs/antegen/actions/workflows/build-status.yaml"><img alt="build status" src="https://github.com/wuwei-labs/antegen/actions/workflows/build-status.yaml/badge.svg"/></a>&nbsp;&nbsp;&nbsp;
+    <a href="https://discord.com/channels/1328480150676836462"><img alt="Discord Chat" src="https://img.shields.io/discord/1328480150676836462?color=blueviolet" /></a>&nbsp;&nbsp;&nbsp;
     <a href="https://www.gnu.org/licenses/agpl-3.0.en.html"><img alt="License" src="https://img.shields.io/github/license/wuwei-labs/antegen?color=turquoise" /></a>
   </p>
 </div>
-
-# Background
-
----
 
 ## Why was this fork created?
 
@@ -49,14 +51,14 @@ There's been work on a truly open source version of Clockwork via the [Open Cloc
 > [!NOTE]
 > Antegen is now under active development as its own project. While it shares historical roots with Clockwork, all interfaces and implementations are subject to change as the project evolves to meet its unique objectives.
 
-# Deployments
+## Deployments
 
 | Program | Address| Devnet | Mainnet |
 | ------- | ------ | ------ | ------- |
 | Network | `AgNet6qmh75bjFULcS9RQijUoWwkCtSiSwXM1K3Ujn6Z` |  |  |
 | Thread v1 | `AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1` |  |  |
 
-# SDKs
+## SDKs
 
 | Language | Description  | Lib  | Examples |
 | ----------- | -------- | ---- | -------- |
@@ -64,7 +66,10 @@ There's been work on a truly open source version of Clockwork via the [Open Cloc
 | Rust | Rust bindings for clients.  | [crates.io](https://crates.io/crates/antegen-client) |  |
 | Typescript | Typescript bindings for clients and frontends.  |  |  |
 
-# Local Development
+
+## Local Development
+
+---
 
 #### 1. Install Rust
 
