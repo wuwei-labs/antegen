@@ -19,7 +19,6 @@ impl TryFrom<&ArgMatches> for CliCommand {
             Some(("config", matches)) => parse_config_command(matches),
             Some(("crontab", matches)) => parse_crontab_command(matches),
             Some(("delegation", matches)) => parse_delegation_command(matches),
-            Some(("explorer", matches)) => parse_explorer_command(matches),
             Some(("initialize", matches)) => parse_initialize_command(matches),
             Some(("localnet", matches)) => parse_bpf_command(matches),
             Some(("pool", matches)) => parse_pool_command(matches),
@@ -80,7 +79,6 @@ fn parse_bpf_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
 
     Ok(CliCommand::Localnet {
         clone_addresses,
-        network_url: parse_string("url", matches).ok(),
         program_infos,
         force_init: matches.get_flag("force_init"),
         solana_archive: parse_string("solana_archive", matches).ok(),
@@ -95,7 +93,7 @@ fn parse_bpf_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
 
 fn parse_config_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     match matches.subcommand() {
-        Some(("get", _)) => Ok(CliCommand::ConfigGet {}),
+        Some(("view", _)) => Ok(CliCommand::ConfigView {}),
         Some(("set", matches)) => Ok(CliCommand::ConfigSet {
             admin: parse_pubkey("admin", matches).ok(),
             epoch_thread: parse_pubkey("epoch_thread", matches).ok(),
@@ -123,7 +121,7 @@ fn parse_delegation_command(matches: &ArgMatches) -> Result<CliCommand, CliError
             delegation_id: parse_u64("delegation_id", matches)?,
             worker_id: parse_u64("worker_id", matches)?,
         }),
-        Some(("get", matches)) => Ok(CliCommand::DelegationGet {
+        Some(("info", matches)) => Ok(CliCommand::DelegationInfo {
             delegation_id: parse_u64("delegation_id", matches)?,
             worker_id: parse_u64("worker_id", matches)?,
         }),
@@ -131,18 +129,6 @@ fn parse_delegation_command(matches: &ArgMatches) -> Result<CliCommand, CliError
             amount: parse_u64("amount", matches)?,
             delegation_id: parse_u64("delegation_id", matches)?,
             worker_id: parse_u64("worker_id", matches)?,
-        }),
-        _ => Err(CliError::CommandNotRecognized(
-            matches.subcommand().unwrap().0.into(),
-        )),
-    }
-}
-
-fn parse_explorer_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
-    match matches.subcommand() {
-        Some(("get", matches)) => Ok(CliCommand::ExplorerGetThread {
-            id: parse_string("id", matches).ok(),
-            address: parse_pubkey("address", matches).ok(),
         }),
         _ => Err(CliError::CommandNotRecognized(
             matches.subcommand().unwrap().0.into(),
@@ -165,6 +151,9 @@ fn parse_pool_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
             id: parse_u64("id", matches)?,
             size: parse_u64("size", matches)?,
         }),
+        Some(("rotate", matches)) => Ok(CliCommand::PoolRotate {
+            id: parse_u64("id", matches)?,
+        }),
         Some(("list", _)) => Ok(CliCommand::PoolList {}),
         _ => Err(CliError::CommandNotRecognized(
             matches.subcommand().unwrap().0.into(),
@@ -179,6 +168,11 @@ fn parse_thread_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
             id: parse_string("id", matches)?,
             kickoff_instruction: parse_instruction_file("kickoff_instruction", matches)?,
             trigger: parse_trigger(matches)?,
+        }),
+        Some(("memo-test", matches)) => Ok(CliCommand::ThreadMemoTest {
+            id: matches.get_one::<String>("id").map(|s| s.to_string()),
+            schedule: matches.get_one::<String>("schedule").map(|s| s.to_string()),
+            skippable: matches.get_one::<bool>("skippable").copied(),
         }),
         Some(("delete", matches)) => Ok(CliCommand::ThreadDelete {
             id: parse_string("id", matches)?,
@@ -222,7 +216,7 @@ fn parse_worker_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
         Some(("create", matches)) => Ok(CliCommand::WorkerCreate {
             signatory: parse_keypair_file("signatory_keypair", matches)?,
         }),
-        Some(("get", matches)) => Ok(CliCommand::WorkerGet {
+        Some(("find", matches)) => Ok(CliCommand::WorkerFind {
             id: parse_u64("id", matches)?,
         }),
         Some(("update", matches)) => Ok(CliCommand::WorkerUpdate {

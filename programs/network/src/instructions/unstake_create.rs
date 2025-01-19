@@ -26,7 +26,7 @@ pub struct UnstakeCreate<'info> {
         mut,
         seeds = [SEED_REGISTRY],
         bump, 
-        constraint = !registry.locked @ ClockworkError::RegistryLocked
+        constraint = !registry.locked @ AntegenError::RegistryLocked
     )]
     pub registry: Account<'info, Registry>,
 
@@ -58,7 +58,7 @@ pub fn handler(ctx: Context<UnstakeCreate>, amount: u64) -> Result<()> {
     let worker = &ctx.accounts.worker;
 
     // Validate the request is valid.
-    require!(amount.le(&delegation.stake_amount), ClockworkError::InvalidUnstakeAmount);
+    require!(amount.le(&delegation.stake_amount), AntegenError::InvalidUnstakeAmount);
 
     // Initialize the unstake account.
     unstake.init(amount, authority.key(), delegation.key(), registry.total_unstakes, worker.key())?;

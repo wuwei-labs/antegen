@@ -42,6 +42,5 @@ pub fn initialize(client: &Client, mint: Pubkey) -> Result<(), CliError> {
     client
         .send_and_confirm(&[ix_a, ix_b], &[client.payer()])
         .unwrap();
-
     Ok(())
 }

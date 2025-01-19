@@ -261,7 +261,9 @@ impl ThreadObserver {
                 } => {
                     // Find a reference timestamp for calculating the thread's upcoming target time.
                     let reference_timestamp = match thread.exec_context() {
-                        None => thread.created_at().unix_timestamp,
+                        None => {
+                            thread.created_at().unix_timestamp
+                        },
                         Some(exec_context) => match exec_context.trigger_context {
                             TriggerContext::Cron { started_at } => started_at,
                             _ => {
@@ -271,10 +273,15 @@ impl ThreadObserver {
                             }
                         },
                     };
-
                     // Index the thread to its target timestamp
                     match next_moment(reference_timestamp, schedule) {
-                        None => {} // The thread does not have any upcoming scheduled target time
+                        None => {
+                            info!(
+                                "No upcoming schedule for thread {:?} with reference timestamp {}",
+                                thread_pubkey,
+                                reference_timestamp
+                            );
+                        }
                         Some(target_timestamp) => {
                             let mut w_cron_threads = self.cron_threads.write().await;
                             w_cron_threads
@@ -366,7 +373,6 @@ impl ThreadObserver {
                 }
             }
         }
-
         Ok(())
     }
 }

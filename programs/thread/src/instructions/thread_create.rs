@@ -38,14 +38,12 @@ pub struct ThreadCreate<'info> {
         ],
         bump,
         payer= payer,
-        space = vec![
-            8, 
-            size_of::<Thread>(), 
-            id.len(),
-            instructions.try_to_vec()?.len(),  
-            trigger.try_to_vec()?.len(),
-            NEXT_INSTRUCTION_SIZE,
-        ].iter().sum()
+        space = 8 +                              // discriminator
+                size_of::<Thread>() +            // base struct
+                id.len() +                       // id length
+                4 + (instructions.len() * size_of::<SerializableInstruction>()) + // vec length prefix + items
+                size_of::<Trigger>() +           // trigger enum
+                NEXT_INSTRUCTION_SIZE            // next instruction
     )]
     pub thread: Account<'info, Thread>,
 }
@@ -65,7 +63,7 @@ pub fn handler(ctx: Context<ThreadCreate>, amount: u64, id: Vec<u8>, instruction
     thread.fee = MINIMUM_FEE;
     thread.id = id;
     thread.instructions = instructions;
-    thread.name = String::new();
+    thread.name = String::from_utf8_lossy(&thread.id).to_string();
     thread.next_instruction = None;
     thread.paused = false;
     thread.rate_limit = u64::MAX;

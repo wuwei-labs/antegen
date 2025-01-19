@@ -84,7 +84,7 @@ pub fn handler(ctx: Context<UnstakeProcess>) -> Result<ThreadResponse> {
     // Verify the unstake amount is valid.
     require!(
         unstake.amount.le(&delegation.stake_amount),
-        ClockworkError::InvalidUnstakeAmount
+        AntegenError::InvalidUnstakeAmount
     );
 
     // Transfer tokens from the worker to the authority.

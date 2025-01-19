@@ -1,11 +1,9 @@
 use anchor_lang::{
-    solana_program::{instruction::Instruction, system_program},
-    InstructionData, AccountDeserialize, ToAccountMetas
+    solana_program::{instruction::Instruction, system_program}, AccountDeserialize, InstructionData, ToAccountMetas
 };
-use antegen_thread_program::state::{SerializableInstruction, Thread, ThreadSettings, Trigger, VersionedThread};
+use antegen_thread_program::state::{SerializableInstruction, Thread, VersionedThread, ThreadSettings, Trigger};
 use antegen_utils::CrateInfo;
-use solana_sdk::pubkey::Pubkey;
-
+use solana_sdk::{native_token::LAMPORTS_PER_SOL, pubkey::Pubkey};
 use crate::{client::Client, errors::CliError};
 
 pub fn crate_info(client: &Client) -> Result<(), CliError> {
@@ -47,6 +45,48 @@ pub fn create(
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
     get(client, thread_pubkey)?;
     Ok(())
+}
+
+pub fn memo_test(
+    client: &Client,
+    id: Option<String>,
+    schedule: Option<String>,
+    skippable: Option<bool>,
+) -> Result<(), CliError> {
+    let cluster_url = client.client.url();
+    if !cluster_url.contains("localhost") && !cluster_url.contains("127.0.0.1") {
+        return Err(CliError::FailedLocalnet(
+            "This command is for testing on localnet (localhost)".to_string()
+        ));
+    }
+
+    let thread_id = id.unwrap_or_else(|| "memo-test".to_string());
+    let thread_pubkey = Thread::pubkey(client.payer_pubkey(), thread_id.clone().into_bytes());
+
+    // Airdrop 1 SOL to the thread for rent
+    client
+        .airdrop(&thread_pubkey, LAMPORTS_PER_SOL)
+        .map_err(|e| CliError::Custom(format!("airdrop to thread failed: {}", e)))?;
+    println!("Airdropped 1 SOL to thread: {}", thread_pubkey);
+
+    let memo_ix = Instruction {
+        program_id: spl_memo::id(),
+        data: "Hello, Thread!".as_bytes().to_vec(),
+        accounts: vec![]
+    };
+
+    let instructions = vec![memo_ix.into()];
+    let trigger = Trigger::Cron {
+        schedule: schedule.unwrap_or_else(|| "*/10 * * * * * *".to_string()),
+        skippable: skippable.unwrap_or_default(),
+    };
+
+    create(
+        client,
+        thread_id,
+        instructions,
+        trigger,
+    )
 }
 
 pub fn delete(client: &Client, id: String) -> Result<(), CliError> {

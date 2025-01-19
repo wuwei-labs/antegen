@@ -19,7 +19,9 @@ use {
     },
     antegen_network_program::state::{Config, ConfigSettings, Registry},
     antegen_thread_program::state::{Thread, Trigger},
+    antegen_utils::explorer::Explorer,
     solana_sdk::{
+        commitment_config::CommitmentConfig,
         native_token::LAMPORTS_PER_SOL,
         program_pack::Pack,
         pubkey::Pubkey,
@@ -43,8 +45,8 @@ use {
     },
     std::fs,
     std::process::{
-        Child,
         Command,
+        Stdio
     },
 };
 
@@ -52,7 +54,6 @@ pub fn start(
     config: &mut CliConfig,
     client: &Client,
     clone_addresses: Vec<Pubkey>,
-    network_url: Option<String>,
     program_infos: Vec<ProgramInfo>,
     force_init: bool,
     solana_archive: Option<String>,
@@ -61,50 +62,50 @@ pub fn start(
     trailing_args: Vec<String>,
 ) -> Result<(), CliError> {
     config.dev = dev;
+
+    if dev {
+        std::env::set_var("RUST_LOG", "antegen_plugin=debug");
+    }
+
     deps::download_deps(
         &CliConfig::default_runtime_dir(),
         force_init,
         solana_archive,
         antegen_archive,
         dev,
-    )
-    .map_err(|err| CliError::FailedLocalnet(err.to_string()))?;
+    )?;
 
     // Create Geyser Plugin Config file
-    create_geyser_plugin_config(config).map_err(|err| CliError::FailedLocalnet(err.to_string()))?;
+    create_geyser_plugin_config(config)?;
 
     // Start the validator
-    let validator_process = &mut start_test_validator(
-        config, 
-        client, 
+    start_test_validator(
+        config,
         program_infos, 
-        network_url, 
         clone_addresses,
         trailing_args,  // Pass trailing args to validator
-    )
-    .map_err(|err| CliError::FailedLocalnet(err.to_string()))?;
+    )?;
+
+    wait_for_validator(client, 10)?;
 
     // Initialize Antegen
-    let mint_pubkey =
-        mint_antegen_token(client).map_err(|err| CliError::FailedTransaction(err.to_string()))?;
-    super::initialize::initialize(client, mint_pubkey)
-        .map_err(|err| CliError::FailedTransaction(err.to_string()))?;
-    register_worker(client, config).map_err(|err| CliError::FailedTransaction(err.to_string()))?;
-    create_threads(client, mint_pubkey)
-        .map_err(|err| CliError::FailedTransaction(err.to_string()))?;
+    let mint_pubkey = mint_antegen_token(client)?;
+    super::initialize::initialize(client, mint_pubkey)?;
+    register_worker(client, config)?;
 
-    // Wait for process to be killed.
-    _ = validator_process.wait();
+    
+    create_threads(client, mint_pubkey)?;
 
     Ok(())
 }
 
 fn mint_antegen_token(client: &Client) -> Result<Pubkey> {
+    let explorer = Explorer::from(client.client.url());
     // Calculate rent and pubkeys
     let mint_keypair = Keypair::new();
     let mint_rent = client
         .get_minimum_balance_for_rent_exemption(Mint::LEN)
-        .unwrap_or(0);
+        .context("Failed to calculate mint rent")?;
     let token_account_pubkey =
         get_associated_token_address(&client.payer_pubkey(), &mint_keypair.pubkey());
 
@@ -148,12 +149,14 @@ fn mint_antegen_token(client: &Client) -> Result<Pubkey> {
     // Submit tx
     client
         .send_and_confirm(&ixs, &[client.payer(), &mint_keypair])
-        .context("mint_antegen_token failed")?;
+        .context("Failed to mint Antegen tokens")?;
 
+    print_status!("Mint     💰", "{}", explorer.token(mint_keypair.pubkey()));
     Ok(mint_keypair.pubkey())
 }
 
 fn register_worker(client: &Client, config: &CliConfig) -> Result<()> {
+    let explorer = Explorer::from(client.client.url());
     // Create the worker
     let signatory = read_keypair_file(&config.signatory()).map_err(|err| {
         CliError::FailedLocalnet(format!(
@@ -168,13 +171,19 @@ fn register_worker(client: &Client, config: &CliConfig) -> Result<()> {
         .context("airdrop to signatory failed")?;
     super::worker::create(client, signatory, true).context("worker::create failed")?;
 
+    let worker_info = super::worker::get(client, 0);
+    print_status!("Worker   👷", "{}", explorer.account(worker_info?.worker_pubkey));
+
     // Delegate stake to the worker
     super::delegation::create(client, 0).context("delegation::create failed")?;
     super::delegation::deposit(client, 100000000, 0, 0).context("delegation::deposit failed")?;
+    let delegation_info = super::delegation::get(client,0, 0);
+    print_status!("Delegate 🤝", "{}", explorer.account(delegation_info?.delegation_pubkey));
     Ok(())
 }
 
 fn create_threads(client: &Client, mint_pubkey: Pubkey) -> Result<()> {
+    let explorer = Explorer::from(client.client.url());
     // Create epoch thread.
     let epoch_thread_id = "antegen.network.epoch";
     let epoch_thread_pubkey = Thread::pubkey(client.payer_pubkey(), epoch_thread_id.into());
@@ -267,7 +276,7 @@ fn create_threads(client: &Client, mint_pubkey: Pubkey) -> Result<()> {
         accounts: antegen_network_program::accounts::RegistryNonceHash {
             config: Config::pubkey(),
             registry: Registry::pubkey(),
-            thread: hasher_thread_pubkey,  
+            thread: hasher_thread_pubkey,
         }.to_account_metas(Some(false)),
         data: antegen_network_program::instruction::RegistryNonceHash {}.data(),
     };
@@ -319,6 +328,10 @@ fn create_threads(client: &Client, mint_pubkey: Pubkey) -> Result<()> {
         .send_and_confirm(&vec![ix_b, ix_c], &[client.payer()])
         .context(format!("Failed to create thread: {}", hasher_thread_id))?;
 
+    let config = super::config::get(client)?;
+    print_status!("Epoch    🧵", "{}", explorer.account(config.clone().epoch_thread));
+    print_status!("Hasher   🧵", "{}", explorer.account(config.clone().hasher_thread));
+    print_status!("Admin    👔", "{}", explorer.account(config.clone().admin));
     Ok(())
 }
 
@@ -338,64 +351,75 @@ fn create_geyser_plugin_config(config: &CliConfig) -> Result<()> {
 
 fn start_test_validator(
     config: &CliConfig,
-    client: &Client,
     program_infos: Vec<ProgramInfo>,
-    network_url: Option<String>,
     clone_addresses: Vec<Pubkey>,
-    trailing_args: Vec<String>,
-) -> Result<Child> {
+    trailing_args: Vec<String>
+) -> Result<()> {
     let path = config.active_runtime("solana-test-validator").to_owned();
+    let duration = chrono::Duration::hours(2);
+    let end_time = chrono::Local::now() + duration;
+    let network_url = config.json_rpc_url.to_owned();
+    let explorer = Explorer::from(network_url);
+
     if trailing_args.contains(&"--help".to_string()) || trailing_args.contains(&"-h".to_string()) {
         let mut help_cmd = Command::new(&path);
         help_cmd.arg("--help");
         
-        // Execute help command and exit
         let status = help_cmd.status()
             .context("Failed to execute solana-test-validator --help")?;
         std::process::exit(status.code().unwrap_or(1));
     }
 
-    let cmd = &mut Command::new(path);
-    cmd.arg("--reset")
+    let log_file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("validator.log")
+        .context("Failed to create log file")?;
+
+    let cmd = &mut Command::new("timeout");
+    cmd.arg(format!("{}h", duration.num_hours()))
+        .arg(&path)
+        .arg("--reset")
+        .arg("--log")  // Enable logging
         .bpf_program(config, antegen_network_program::ID, "network")
         .bpf_program(config, antegen_thread_program::ID, "thread")
-        .network_url(network_url)
         .clone_addresses(clone_addresses)
         .add_programs_with_path(program_infos)
         .geyser_plugin_config(config)
         .args(trailing_args);
 
-    let mut process = cmd
+    let process = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log_file.try_clone()?))
+        .stderr(Stdio::from(log_file))
         .spawn()
         .context(format!("solana-test-validator command: {:#?}", cmd))?;
-    print_status!("Running", "Antegen Validator {}\n", env!("CARGO_PKG_VERSION").to_owned());
 
-    // Wait for the validator to become healthy
-    let ms_wait = 10_000;
-    let mut count = 0;
-    while count < ms_wait {
-        match client.get_block_height() {
-            Err(_err) => {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-                count += 1;
-            }
-            Ok(slot) => {
-                if slot > 0 {
-                    println!("Got a slot: {}", slot);
-                    break;
-                }
-            }
+    // Detach the process
+    std::mem::forget(process);
+
+    print_status!("Running  🏃", "Solana Validator with Antegen {}", env!("CARGO_PKG_VERSION").to_owned());
+    print_status!("Explorer 🔍", "{}", explorer.base());
+    print_status!("Timeout  ⏰", "Validator will automatically stop at {}", end_time.format("%Y-%m-%d %H:%M:%S"));
+
+    Ok(())
+}
+
+pub fn wait_for_validator(client: &Client, timeout_secs: u64) -> Result<(), CliError> {
+    let timeout = std::time::Duration::from_secs(timeout_secs);
+    let start = std::time::Instant::now();
+
+    while start.elapsed() < timeout {
+        match client.get_slot_with_commitment(CommitmentConfig::processed()) {
+            Ok(slot) if slot > 0 => return Ok(()),
+            _ => std::thread::sleep(std::time::Duration::from_millis(500)),
         }
     }
-    if count == ms_wait {
-        process.kill()?;
-        std::process::exit(1);
-    }
 
-    // Wait 1 extra second for safety before submitting txs
-    std::thread::sleep(std::time::Duration::from_secs(1));
-
-    Ok(process)
+    Err(CliError::FailedLocalnet(format!(
+        "Validator failed to start within {} seconds",
+        timeout_secs
+    )))
 }
 
 trait TestValidatorHelpers {
@@ -407,7 +431,6 @@ trait TestValidatorHelpers {
         program_name: &str,
     ) -> &mut Command;
     fn geyser_plugin_config(&mut self, config: &CliConfig) -> &mut Command;
-    fn network_url(&mut self, url: Option<String>) -> &mut Command;
     fn clone_addresses(&mut self, clone_addresses: Vec<Pubkey>) -> &mut Command;
 }
 
@@ -436,13 +459,6 @@ impl TestValidatorHelpers for Command {
     fn geyser_plugin_config(&mut self, config: &CliConfig) -> &mut Command {
         self.arg("--geyser-plugin-config")
             .arg(config.geyser_config().to_owned())
-    }
-
-    fn network_url(&mut self, url: Option<String>) -> &mut Command {
-        if let Some(url) = url {
-            self.arg("--url").arg(url);
-        }
-        self
     }
 
     fn clone_addresses(&mut self, clone_addresses: Vec<Pubkey>) -> &mut Command {

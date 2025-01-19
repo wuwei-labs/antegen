@@ -5,9 +5,30 @@ use anchor_lang::{
     InstructionData, AccountDeserialize, ToAccountMetas
 };
 use antegen_network_program::state::{Config, Delegation, Worker};
+use solana_sdk::pubkey::Pubkey;
 use spl_associated_token_account::get_associated_token_address;
 
 use crate::{client::Client, errors::CliError};
+
+#[derive(Debug)]
+pub struct DelegationInfo {
+    pub delegation: Delegation,
+    pub delegation_pubkey: Pubkey,
+    pub balance: String
+}
+
+impl DelegationInfo {
+    pub fn print_status(&self) {
+        println!(
+            "Address: {}\n{:#?}\nLiquid balance: {}",
+            self.delegation_pubkey, 
+            self.delegation, 
+            self.balance
+        );
+
+    }
+}
+
 
 pub fn create(client: &Client, worker_id: u64) -> Result<(), CliError> {
     // Get config data
@@ -121,7 +142,7 @@ pub fn withdraw(
     Ok(())
 }
 
-pub fn get(client: &Client, delegation_id: u64, worker_id: u64) -> Result<(), CliError> {
+pub fn get(client: &Client, delegation_id: u64, worker_id: u64) -> Result<DelegationInfo, CliError> {
     // Get config account
     let config_pubkey = Config::pubkey();
     let config_data = client
@@ -145,10 +166,18 @@ pub fn get(client: &Client, delegation_id: u64, worker_id: u64) -> Result<(), Cl
         .get_token_account_balance(&delegation_tokens_pubkey)
         .map_err(|_err| CliError::AccountDataNotParsable(delegation_pubkey.to_string()))?;
 
-    println!(
-        "Address: {}\n{:#?}\nLiquid balance: {}",
-        delegation_pubkey, delegation, token_balance.ui_amount_string
-    );
+    let delegation_info = DelegationInfo {
+        delegation,
+        delegation_pubkey,
+        balance: token_balance.ui_amount_string
+    };
 
+    Ok(delegation_info)
+}
+
+pub fn info(client: &Client, delegation_id: u64, worker_id: u64) -> Result<(), CliError> {
+    // Get config account
+    let delegation_info = get(client, delegation_id, worker_id);
+    delegation_info?.print_status();
     Ok(())
 }

@@ -1,7 +1,6 @@
 mod config;
 mod crontab;
 mod delegation;
-mod explorer;
 mod initialize;
 mod localnet;
 mod pool;
@@ -28,7 +27,6 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
     match command {
         // Set solana config if using localnet command
         CliCommand::Localnet { .. } => {
-            // TODO Verify the Solana CLI version is compatable with this build.
             set_solana_config().map_err(|err| CliError::FailedLocalnet(err.to_string()))?
         }
         _ => {}
@@ -44,7 +42,7 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
 
     // Process the command
     match command {
-        CliCommand::ConfigGet => config::get(&client),
+        CliCommand::ConfigView => config::view(&client),
         CliCommand::ConfigSet {
             admin,
             epoch_thread,
@@ -57,23 +55,18 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             delegation_id,
             worker_id,
         } => delegation::deposit(&client, amount, delegation_id, worker_id),
-        CliCommand::DelegationGet {
+        CliCommand::DelegationInfo {
             delegation_id,
             worker_id,
-        } => delegation::get(&client, delegation_id, worker_id),
+        } => delegation::info(&client, delegation_id, worker_id),
         CliCommand::DelegationWithdraw {
             amount,
             delegation_id,
             worker_id,
         } => delegation::withdraw(&client, amount, delegation_id, worker_id),
-        CliCommand::ExplorerGetThread { id, address } => {
-            let pubkey = parse_pubkey_from_id_or_address(client.payer_pubkey(), id, address)?;
-            explorer::thread_url(pubkey, config)
-        }
         CliCommand::Initialize { mint } => initialize::initialize(&client, mint),
         CliCommand::Localnet {
             clone_addresses,
-            network_url,
             program_infos,
             force_init,
             solana_archive,
@@ -84,7 +77,6 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             &mut config,
             &client,
             clone_addresses,
-            network_url,
             program_infos,
             force_init,
             solana_archive,
@@ -95,12 +87,18 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
         CliCommand::PoolGet { id } => pool::get(&client, id),
         CliCommand::PoolList {} => pool::list(&client),
         CliCommand::PoolUpdate { id, size } => pool::update(&client, id, size),
+        CliCommand::PoolRotate { id} => pool::rotate(&client, id),
         CliCommand::ThreadCrateInfo {} => thread::crate_info(&client),
         CliCommand::ThreadCreate {
             id,
             kickoff_instruction,
             trigger,
         } => thread::create(&client, id, vec![kickoff_instruction], trigger),
+        CliCommand::ThreadMemoTest { 
+            id,
+            schedule,
+            skippable
+        } => thread::memo_test(&client, id, schedule, skippable),
         CliCommand::ThreadDelete { id } => thread::delete(&client, id),
         CliCommand::ThreadPause { id } => thread::pause(&client, id),
         CliCommand::ThreadResume { id } => thread::resume(&client, id),
@@ -117,7 +115,7 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
         CliCommand::RegistryGet => registry::get(&client),
         CliCommand::RegistryUnlock => registry::unlock(&client),
         CliCommand::WorkerCreate { signatory } => worker::create(&client, signatory, false),
-        CliCommand::WorkerGet { id } => worker::get(&client, id),
+        CliCommand::WorkerFind { id} => worker::find(&client, id),
         CliCommand::WorkerUpdate { id, signatory } => worker::update(&client, id, signatory),
     }
 }

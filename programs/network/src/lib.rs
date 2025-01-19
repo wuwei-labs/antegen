@@ -152,13 +152,11 @@ pub mod network_program {
     }
 
     // IncrementEpoch job
-
     pub fn increment_epoch(ctx: Context<EpochCutover>) -> Result<ThreadResponse> {
         jobs::increment_epoch::job::handler(ctx)
     }
 
     // Delete snapshot
-
     pub fn delete_snapshot_job(ctx: Context<DeleteSnapshotJob>) -> Result<ThreadResponse> {
         jobs::delete_snapshot::job::handler(ctx)
     }
@@ -182,7 +180,6 @@ pub mod network_program {
     }
 
     // ProcessUnstakes job
-
     pub fn process_unstakes_job(ctx: Context<ProcessUnstakesJob>) -> Result<ThreadResponse> {
         jobs::process_unstakes::job::handler(ctx)
     }
