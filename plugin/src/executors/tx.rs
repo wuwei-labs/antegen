@@ -24,7 +24,7 @@ use solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool};
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     signature::{Keypair, Signature},
-    transaction::Transaction,
+    transaction::{Transaction, VersionedTransaction},
 };
 use tokio::{runtime::Runtime, sync::RwLock};
 
@@ -423,7 +423,7 @@ impl TxExecutor {
         observed_slot: u64,
         due_slot: u64,
         thread_pubkey: Pubkey,
-    ) -> Option<(Pubkey, Transaction, u64)> {
+    ) -> Option<(Pubkey, VersionedTransaction, u64)> {
         let thread = match client.clone().get::<VersionedThread>(&thread_pubkey).await {
             Err(_err) => {
                 self.increment_simulation_failure(thread_pubkey).await;
@@ -485,7 +485,7 @@ impl TxExecutor {
         self: Arc<Self>,
         slot: u64,
         thread_pubkey: Pubkey,
-        tx: &Transaction,
+        tx: &VersionedTransaction,
     ) -> PluginResult<()> {
         let r_transaction_history = self.transaction_history.read().await;
         if let Some(metadata) = r_transaction_history.get(&thread_pubkey) {

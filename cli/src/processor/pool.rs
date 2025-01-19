@@ -4,7 +4,7 @@ use anchor_lang::{
     },
     InstructionData, ToAccountMetas
 };
-use antegen_network_program::state::{Config, Pool, Registry, PoolSettings};
+use antegen_network_program::state::{Config, Pool, PoolSettings, Registry, Snapshot, SnapshotFrame, Worker};
 
 use crate::{client::Client, errors::CliError};
 
@@ -48,6 +48,41 @@ pub fn update(client: &Client, id: u64, size: u64) -> Result<(), CliError> {
         }.to_account_metas(Some(false)),
         data: antegen_network_program::instruction::PoolUpdate { settings }.data(),
     };
+    client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
+    get(client, id)?;
+    Ok(())
+}
+
+pub fn rotate(client: &Client, id: u64) -> Result<(), CliError> {
+    // Get required accounts
+    let pool_pubkey = Pool::pubkey(id);
+    let registry_pubkey = Registry::pubkey();
+    let registry = client
+        .get::<Registry>(&registry_pubkey)
+        .map_err(|_err| CliError::AccountDataNotParsable(registry_pubkey.to_string()))?;
+    
+    let snapshot_pubkey = Snapshot::pubkey(registry.current_epoch);
+    let worker_pubkey = Worker::pubkey(id);
+    let worker = client
+        .get::<Worker>(&worker_pubkey)
+        .map_err(|_err| CliError::AccountDataNotParsable("worker".to_string()))?;
+    
+    let snapshot_frame_pubkey = SnapshotFrame::pubkey(snapshot_pubkey, worker.id);
+
+    let ix = Instruction {
+        program_id: antegen_network_program::ID,
+        accounts: antegen_network_program::accounts::PoolRotate {
+            config: Config::pubkey(),
+            pool: pool_pubkey,
+            registry: registry_pubkey,
+            signatory: client.payer_pubkey(),
+            snapshot: snapshot_pubkey,
+            snapshot_frame: snapshot_frame_pubkey,
+            worker: worker_pubkey,
+        }.to_account_metas(Some(false)),
+        data: antegen_network_program::instruction::PoolRotate {}.data(),
+    };
+    
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
     get(client, id)?;
     Ok(())

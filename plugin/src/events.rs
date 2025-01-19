@@ -1,5 +1,5 @@
-use anchor_lang::{prelude::AccountInfo, AnchorDeserialize};
-use antegen_thread_program::state::{Thread as ThreadV1, VersionedThread};
+use anchor_lang::{prelude::AccountInfo, AccountDeserialize};
+use antegen_thread_program::state::VersionedThread;
 use pyth_sdk_solana::{state::SolanaPriceAccount, PriceFeed};
 use agave_geyser_plugin_interface::geyser_plugin_interface::{
     GeyserPluginError, ReplicaAccountInfo,
@@ -7,10 +7,12 @@ use agave_geyser_plugin_interface::geyser_plugin_interface::{
 use solana_program::{clock::Clock, pubkey::Pubkey, sysvar};
 use static_pubkey::static_pubkey;
 
-static PYTH_ORACLE_PROGRAM_ID_MAINNET: Pubkey = 
+static PYTH_ORACLE_PROGRAM_ID_MAINNET: Pubkey =
     static_pubkey!("FsJ3A3u2vn5cTVofAjvy6y5kwABJAqYWpe4975bi2epH");
 static PYTH_ORACLE_PROGRAM_ID_DEVNET: Pubkey =
     static_pubkey!("gSbePebfvPy7tRqimPoVecS2UsBvYv46ynrzWocc92s");
+
+use log::info;
 
 #[derive(Debug)]
 pub enum AccountUpdateEvent {
@@ -39,14 +41,11 @@ impl TryFrom<&mut ReplicaAccountInfo<'_>> for AccountUpdateEvent {
 
         // If the account belongs to the thread v1 program, parse it.
         if owner_pubkey == antegen_thread_program::ID && account_info.data.len() > 8 {
-            let thread_v1 = ThreadV1::try_from_slice(account_info.data).map_err(|_| {
-                GeyserPluginError::AccountsUpdateError {
-                    msg: "Failed to parse Antegen thread v2 account".into(),
-                }
-            })?;
-            return Ok(AccountUpdateEvent::Thread {
-                thread: VersionedThread::V1(thread_v1),
-            });
+            let data = account_info.data.to_vec();
+            let thread = VersionedThread::try_deserialize(&mut data.as_slice()).unwrap();
+        
+            info!("Successfully parsed thread program {}", account_pubkey);
+            return Ok(AccountUpdateEvent::Thread { thread });
         }
 
         // If the account belongs to Pyth, attempt to parse it.

@@ -81,12 +81,15 @@ impl ThreadObserver {
         let r_clocks = self.clocks.read().await;
         if let Some(clock) = r_clocks.get(&slot) {
             let mut w_cron_threads = self.cron_threads.write().await;
+            info!("w_cron_thread: {:#?}", w_cron_threads);
             w_cron_threads.retain(|target_timestamp, thread_pubkeys| {
                 let is_due = clock.unix_timestamp >= *target_timestamp;
+                info!("Is thread due: {}", is_due);
                 if is_due {
                     self.current_epoch
                         .fetch_max(clock.epoch, std::sync::atomic::Ordering::Relaxed);
                     for pubkey in thread_pubkeys.iter() {
+                        info!("Adding {} to excutable list", pubkey);
                         executable_threads.insert(*pubkey);
                     }
                 }
@@ -224,6 +227,7 @@ impl ThreadObserver {
         info!("Indexing thread: {:?} slot: {}", thread_pubkey, slot);
         if thread.next_instruction().is_some() {
             // If the thread has a next instruction, index it as executable.
+            info!("Thread has a next instruction, index it");
             let mut w_now_threads = self.now_threads.write().await;
             w_now_threads.insert(thread_pubkey);
             drop(w_now_threads);
@@ -235,6 +239,7 @@ impl ThreadObserver {
                     offset: _,
                     size: _,
                 } => {
+                    info!("Indexing - Account Trigger");
                     // Index the thread by its trigger's account pubkey.
                     let mut w_account_threads = self.account_threads.write().await;
                     w_account_threads
@@ -259,39 +264,96 @@ impl ThreadObserver {
                     schedule,
                     skippable: _,
                 } => {
+                    info!("Indexing - Cron Trigger");
+                    info!("{}", schedule);
                     // Find a reference timestamp for calculating the thread's upcoming target time.
                     let reference_timestamp = match thread.exec_context() {
-                        None => thread.created_at().unix_timestamp,
+                        None => {
+                            info!("No exec context found, using thread creation timestamp");
+                            thread.created_at().unix_timestamp
+                        },
                         Some(exec_context) => match exec_context.trigger_context {
-                            TriggerContext::Cron { started_at } => started_at,
-                            _ => {
+                            TriggerContext::Cron { started_at } => {
+                                info!(
+                                    "Found Cron trigger context - started_at: {}, thread: {:?}", 
+                                    started_at, 
+                                    thread.pubkey()
+                                );
+                                started_at
+                            },
+                            other => {
+                                info!(
+                                    "Unexpected trigger context: {:?} for thread {:?}", 
+                                    other,
+                                    thread.pubkey()
+                                );
                                 return Err(GeyserPluginError::Custom(
                                     "Invalid exec context".into(),
                                 ))
                             }
                         },
                     };
-
+                    info!("Using reference timestamp: {}", reference_timestamp);
                     // Index the thread to its target timestamp
                     match next_moment(reference_timestamp, schedule) {
-                        None => {} // The thread does not have any upcoming scheduled target time
+                        None => {
+                            info!(
+                                "No upcoming schedule for thread {:?} with reference timestamp {}",
+                                thread_pubkey,
+                                reference_timestamp
+                            );
+                        }
                         Some(target_timestamp) => {
+                            info!(
+                                "Thread {:?} scheduled for timestamp {} (reference: {})", 
+                                thread_pubkey,
+                                target_timestamp,
+                                reference_timestamp
+                            );
+                     
                             let mut w_cron_threads = self.cron_threads.write().await;
+                            let existing_threads = w_cron_threads.get(&target_timestamp)
+                                .map(|set| set.len())
+                                .unwrap_or(0);
+                     
+                            info!(
+                                "Current threads scheduled for timestamp {}: {}", 
+                                target_timestamp, 
+                                existing_threads
+                            );
+                     
                             w_cron_threads
                                 .entry(target_timestamp)
                                 .and_modify(|v| {
                                     v.insert(thread_pubkey);
+                                    info!(
+                                        "Added thread {:?} to existing schedule at {}", 
+                                        thread_pubkey, 
+                                        target_timestamp
+                                    );
                                 })
                                 .or_insert_with(|| {
+                                    info!(
+                                        "Creating new schedule at {} with thread {:?}", 
+                                        target_timestamp, 
+                                        thread_pubkey
+                                    );
                                     let mut v = HashSet::new();
                                     v.insert(thread_pubkey);
                                     v
                                 });
+                     
+                            info!(
+                                "Updated schedule at {} now has {} threads",
+                                target_timestamp,
+                                w_cron_threads.get(&target_timestamp).map(|s| s.len()).unwrap_or(0)
+                            );
                             drop(w_cron_threads);
                         }
                     }
                 }
                 Trigger::Timestamp { unix_ts } => {
+                    info!("Indexing - Timestamp Trigger");
                     let mut w_cron_threads = self.cron_threads.write().await;
                     w_cron_threads
                         .entry(unix_ts)
@@ -306,11 +368,13 @@ impl ThreadObserver {
                     drop(w_cron_threads);
                 }
                 Trigger::Now => {
+                    info!("Indexing - Now Trigger");
                     let mut w_now_threads = self.now_threads.write().await;
                     w_now_threads.insert(thread_pubkey);
                     drop(w_now_threads);
                 }
                 Trigger::Slot { slot } => {
+                    info!("Indexing - Slot Trigger");
                     let mut w_slot_threads = self.slot_threads.write().await;
                     w_slot_threads
                         .entry(slot)
@@ -325,6 +389,7 @@ impl ThreadObserver {
                     drop(w_slot_threads);
                 }
                 Trigger::Epoch { epoch } => {
+                    info!("Indexing - Epoch Trigger");
                     let mut w_epoch_threads = self.epoch_threads.write().await;
                     w_epoch_threads
                         .entry(epoch)
@@ -343,6 +408,7 @@ impl ThreadObserver {
                     equality,
                     limit,
                 } => {
+                    info!("Indexing - Pyth Trigger");
                     let mut w_pyth_threads = self.pyth_threads.write().await;
                     w_pyth_threads
                         .entry(price_feed)
@@ -366,7 +432,6 @@ impl ThreadObserver {
                 }
             }
         }
-
         Ok(())
     }
 }
@@ -378,6 +443,7 @@ impl Debug for ThreadObserver {
 }
 
 fn next_moment(after: i64, schedule: String) -> Option<i64> {
+    info!("Find next moment...");
     match Schedule::from_str(&schedule) {
         Err(_) => None,
         Ok(schedule) => schedule

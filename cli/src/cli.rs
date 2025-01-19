@@ -7,7 +7,7 @@ use crate::parser::ProgramInfo;
 #[derive(Debug, PartialEq)]
 pub enum CliCommand {
     // Config commands
-    ConfigGet,
+    ConfigView,
     ConfigSet {
         admin: Option<Pubkey>,
         epoch_thread: Option<Pubkey>,
@@ -28,7 +28,7 @@ pub enum CliCommand {
         delegation_id: u64,
         worker_id: u64,
     },
-    DelegationGet {
+    DelegationInfo {
         delegation_id: u64,
         worker_id: u64,
     },
@@ -37,29 +37,18 @@ pub enum CliCommand {
         delegation_id: u64,
         worker_id: u64,
     },
-
-    ExplorerGetThread {
-        id: Option<String>,
-        address: Option<Pubkey>,
-    },
-
     Initialize {
         mint: Pubkey,
     },
-
-    // Localnet commands
     Localnet {
         force_init: bool,
         clone_addresses: Vec<Pubkey>,
-        network_url: Option<String>,
         program_infos: Vec<ProgramInfo>,
         solana_archive: Option<String>,
         antegen_archive: Option<String>,
         dev: bool,
         trailing_args: Vec<String>,
     },
-
-    // Pool commands
     PoolGet {
         id: u64,
     },
@@ -68,16 +57,21 @@ pub enum CliCommand {
         id: u64,
         size: u64,
     },
-
+    PoolRotate {
+        id: u64,
+    },
     // TODO Rename to Version. Use flags to filter by program.
     //      Default to listing all deployed program versions on the user's configured cluster.
     ThreadCrateInfo,
-
-    // Thread commands
     ThreadCreate {
         id: String,
         kickoff_instruction: SerializableInstruction,
         trigger: Trigger,
+    },
+    ThreadMemoTest {  // New command for testing
+        id: String,
+        schedule: Option<String>,
+        skippable: bool,
     },
     ThreadDelete {
         id: String,
@@ -109,7 +103,7 @@ pub enum CliCommand {
     WorkerCreate {
         signatory: Keypair,
     },
-    WorkerGet {
+    WorkerFind {
         id: u64,
     },
     WorkerUpdate {
@@ -128,7 +122,7 @@ pub fn app() -> Command {
             Command::new("config")
                 .about("Manage the Antegen network config")
                 .arg_required_else_help(true)
-                .subcommand(Command::new("get").about("Get a config value"))
+                .subcommand(Command::new("view").about("Get a config value"))
                 .subcommand(
                     Command::new("set")
                         .about("Set a config value")
@@ -220,7 +214,7 @@ pub fn app() -> Command {
                         ),
                 )
                 .subcommand(
-                    Command::new("get")
+                    Command::new("info")
                         .about("Get a delegation")
                         .arg_required_else_help(true)
                         .arg(
@@ -274,33 +268,6 @@ pub fn app() -> Command {
                                 .help("The ID of the worker"),
                         ),
                 ),
-        )
-        .subcommand(
-            Command::new("explorer")
-                .about("Prints Explorer Urls")
-                .arg_required_else_help(true)
-                .subcommand(
-                    Command::new("get")
-                        .about("Prints thread explorer url")
-                        .arg_required_else_help(true)
-                        .arg(
-                            Arg::new("id")
-                                .index(1)
-                                .value_name("ID")
-                                .num_args(1)
-                                .required(false)
-                                .help("The label of the thread to lookup (only works if you \
-                                are the signer of that thread)")
-                        )
-                        .arg(
-                            Arg::new("address")
-                                .short('k')
-                                .long("address")
-                                .value_name("ADDRESS")
-                                .num_args(1)
-                                .help("The address of the thread to lookup"),
-                        ),
-                )
         )
         .subcommand(
             Command::new("initialize")
@@ -430,6 +397,19 @@ pub fn app() -> Command {
                                 .required(false)
                                 .help("The size of the pool"),
                         ),
+                )
+                .subcommand(
+                    Command::new("rotate")
+                        .about("Rotate worker into pool if space is available")
+                        .arg_required_else_help(true)
+                        .arg(
+                            Arg::new("id")
+                                .index(1)
+                                .value_name("ID")
+                                .num_args(1)
+                                .required(false)
+                                .help("The ID of the worker to rotate in"),
+                        )
                 ),
         )
         .subcommand(
@@ -489,6 +469,31 @@ pub fn app() -> Command {
                                 .args(&["account", "cron", "immediate"])
                                 .required(true),
                         ),
+                )
+                .subcommand(
+                    Command::new("memo-test")
+                        .about("Create a test thread (localnet only)")
+                        .arg(
+                            Arg::new("id")
+                                .short('i')
+                                .long("id")
+                                .required(true)
+                                .help("Thread identifier")
+                        )
+                        .arg(
+                            Arg::new("schedule")
+                                .long("schedule")
+                                .required(false)
+                                .help("Cron schedule (default: */10 * * * * *)")
+                        )
+                        .arg(
+                            Arg::new("skippable")
+                                .long("skippable")
+                                .required(false)
+                                .action(ArgAction::SetTrue)
+                                .default_value("false")
+                                .help("Whether to skip missed triggers")
+                        )
                 )
                 .subcommand(
                     Command::new("delete")
@@ -620,7 +625,7 @@ pub fn app() -> Command {
                         ),
                 )
                 .subcommand(
-                    Command::new("get")
+                    Command::new("find")
                         .about("Lookup a worker on the Antegen network")
                         .arg(
                             Arg::new("id")

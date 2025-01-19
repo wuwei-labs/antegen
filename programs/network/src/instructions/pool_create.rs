@@ -34,7 +34,7 @@ pub struct PoolCreate<'info> {
         mut,
         seeds = [SEED_REGISTRY],
         bump,
-        constraint = !registry.locked @ ClockworkError::RegistryLocked
+        constraint = !registry.locked @ AntegenError::RegistryLocked
     )]
     pub registry: Box<Account<'info, Registry>>,
 

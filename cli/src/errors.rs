@@ -1,4 +1,5 @@
 use thiserror::Error;
+use solana_client::client_error::ClientError;
 
 #[derive(Debug, Error)]
 pub enum CliError {
@@ -25,4 +26,27 @@ pub enum CliError {
     #[error("No default signer found in {0}, \
      run `solana-keygen new`, or `solana config set —keypair <FILEPATH>`")]
     KeypairNotFound(String),
+    #[error("Failed to kill validator process: {0}")]
+    ValidatorCleanup(String),
+    #[error("{0}")]
+    Custom(String),
+}
+
+impl From<anyhow::Error> for CliError {
+    fn from(err: anyhow::Error) -> Self {
+        CliError::FailedLocalnet(err.to_string())
+    }
+}
+
+// For errors that should become FailedTransaction
+impl From<ClientError> for CliError {
+    fn from(err: ClientError) -> Self {
+        CliError::FailedTransaction(err.to_string())
+    }
+}
+
+impl From<std::io::Error> for CliError {
+    fn from(err: std::io::Error) -> Self {
+        CliError::ValidatorCleanup(err.to_string())
+    }
 }

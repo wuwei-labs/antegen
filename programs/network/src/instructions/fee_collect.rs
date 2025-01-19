@@ -51,7 +51,7 @@ pub fn handler(ctx: Context<FeeCollect>, amount: u64, penalty: bool) -> Result<(
             .checked_add(min_rent_balance)
             .unwrap()
             .ge(&lamport_balance),
-        ClockworkError::InsufficientFeeBalance
+        AntegenError::InsufficientFeeBalance
     );
 
     Ok(())

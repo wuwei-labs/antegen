@@ -73,16 +73,13 @@ impl ThreadAccount for Account<'_, Thread> {
 
     fn realloc(&mut self) -> Result<()> {
         // Realloc memory for the thread account
-        let data_len = vec![
-            8,
-            size_of::<Thread>(),
-            self.id.len(),
-            self.instructions.try_to_vec()?.len(),
-            self.trigger.try_to_vec()?.len(),
-            NEXT_INSTRUCTION_SIZE,
-        ]
-        .iter()
-        .sum();
+        let data_len = 8 +                              // discriminator
+            size_of::<Thread>() +            // base struct
+            self.id.len() +                       // id length
+            4 + (self.instructions.len() * size_of::<SerializableInstruction>()) + // vec length prefix + items
+            size_of::<Trigger>() +           // trigger enum
+            NEXT_INSTRUCTION_SIZE;            // next instruction
+
         self.to_account_info().realloc(data_len, false)?;
         Ok(())
     }

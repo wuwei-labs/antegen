@@ -78,6 +78,7 @@ impl Executors {
 
         // Process the slot on the observers.
         let executable_threads = observers.thread.clone().process_slot(slot).await?;
+        info!("executable_threads: {:#?}", executable_threads);
 
         // Process the slot in the transaction executor.
         self.tx
