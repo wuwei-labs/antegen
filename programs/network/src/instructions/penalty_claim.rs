@@ -37,7 +37,7 @@ pub fn handler(ctx: Context<PenaltyClaim>) -> Result<()> {
     let claimable_balance = lamport_balance.checked_sub(min_rent_balance).unwrap();
     require!(
         claimable_balance.gt(&0),
-        ClockworkError::InsufficientPenaltyBalance
+        AntegenError::InsufficientPenaltyBalance
     );
 
     // Pay reimbursment for base transaction fee

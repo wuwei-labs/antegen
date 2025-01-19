@@ -77,11 +77,13 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
 #### 2. Install Solana CLI
+
 ```sh
 sh -c "$(curl -sSfL https://release.anza.xyz/v2.1.6/install)"
 ```
 
 #### 3. Install Anchor (avm)
+
 ```sh
 cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
 ```
@@ -101,7 +103,8 @@ sudo apt-get update && sudo apt-get upgrade && sudo apt-get install -y pkg-confi
 Install with cargo:
 
 ```sh
-cargo install -f --locked antegen-cli
+cargo build --workspace
+cargo install -p cli
 ```
 
 #### 5. Anchor Build
@@ -109,7 +112,7 @@ cargo install -f --locked antegen-cli
 > <https://solana.stackexchange.com/questions/17777/unexpected-cfg-condition-value-solana>
 
 ```sh
-RUSTUP_TOOLCHAIN="nightly-2024-11-19" anchor build
+anchor build
 ```
 
 #### 6. Run a localnet node

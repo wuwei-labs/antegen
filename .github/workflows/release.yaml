@@ -118,6 +118,6 @@ jobs:
             - ⚓️ Anchor `${{ steps.anchor-lang.outputs.result }}`
 
             ---
-            📝 For installation instructions and documentation, visit [docs.antegen.xyz](https://docs.antegen.xyz)
+            📝 For documentation, visit [docs.antegen.xyz](https://docs.antegen.xyz)
           files: |
             antegen-geyser-plugin-release-*

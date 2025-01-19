@@ -1,22 +1,28 @@
-use std::{fmt::Debug, sync::Arc};
-
-use log::info;
-use agave_geyser_plugin_interface::geyser_plugin_interface::{
-    GeyserPlugin, ReplicaAccountInfo, ReplicaAccountInfoVersions, Result as PluginResult,
-    SlotStatus,
+use {
+    crate::{
+        config::PluginConfig,
+        events::AccountUpdateEvent,
+        executors::Executors,
+        observers::Observers,
+    },
+    agave_geyser_plugin_interface::geyser_plugin_interface::{
+        GeyserPlugin,
+        ReplicaAccountInfo,
+        ReplicaAccountInfoVersions,
+        Result as PluginResult,
+        SlotStatus,
+    },
+    log::info,
+    solana_program::pubkey::Pubkey,
+    std::{fmt::Debug, sync::Arc},
+    tokio::runtime::{Builder, Runtime},
 };
-use solana_program::pubkey::Pubkey;
-use tokio::runtime::{Builder, Runtime};
 
-use crate::{
-    config::PluginConfig, events::AccountUpdateEvent, executors::Executors, observers::Observers,
-};
-
-pub struct ClockworkPlugin {
+pub struct AntegenPlugin {
     pub inner: Arc<Inner>,
 }
 
-impl Debug for ClockworkPlugin {
+impl Debug for AntegenPlugin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "inner: {:?}", self.inner)
     }
@@ -30,7 +36,7 @@ pub struct Inner {
     pub runtime: Arc<Runtime>,
 }
 
-impl GeyserPlugin for ClockworkPlugin {
+impl GeyserPlugin for AntegenPlugin {
     fn name(&self) -> &'static str {
         "antegen-plugin"
     }
@@ -46,7 +52,7 @@ impl GeyserPlugin for ClockworkPlugin {
         info!("Loading snapshot..., isReload: {}", is_reload);
         let config = PluginConfig::read_from(config_file)?;
         println!("config_file: {:?}", config_file);
-        *self = ClockworkPlugin::new_from_config(config);
+        *self = AntegenPlugin::new_from_config(config);
         Ok(())
     }
 
@@ -193,7 +199,7 @@ impl GeyserPlugin for ClockworkPlugin {
     }
 }
 
-impl ClockworkPlugin {
+impl AntegenPlugin {
     fn new_from_config(config: PluginConfig) -> Self {
         let runtime = build_runtime(config.clone());
         let observers = Arc::new(Observers::new());
@@ -209,7 +215,7 @@ impl ClockworkPlugin {
     }
 }
 
-impl Default for ClockworkPlugin {
+impl Default for AntegenPlugin {
     fn default() -> Self {
         Self::new_from_config(PluginConfig::default())
     }

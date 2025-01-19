@@ -4,7 +4,7 @@ use anchor_lang::prelude::*;
 
 /// Errors for the the Antegen thread program.
 #[error_code]
-pub enum ClockworkError {
+pub enum AntegenError {
     /// Thrown if a exec response has an invalid program ID or cannot be parsed.
     #[msg("The exec response could not be parsed")]
     InvalidThreadResponse,

@@ -1,6 +1,6 @@
-const EXPLORER_URL: &str = "https://explorer.solana.com";
-const CK_EXPLORER_URL: &str = "https://explorer.antegen.xyz";
+use terminal_link::Link;
 
+const EXPLORER_URL: &str = "https://solscan.io";
 
 #[derive(Default)]
 pub struct Explorer {
@@ -50,11 +50,8 @@ impl Explorer {
         }
     }
 
-    /// Ex: https://explorer.solana.com/tx/{tx}
-    ///     ?cluster=custom
-    ///     &customUrl=http://localhost:8899
-    pub fn tx_url<T: std::fmt::Display>(&self, tx: T) -> String {
-        let url = format!("{}/tx/{}?cluster={}", EXPLORER_URL, tx, self.cluster);
+    pub fn base(&self) -> String {
+        let url = format!("{}?cluster={}", EXPLORER_URL, self.cluster);
         if self.cluster == "custom" {
             url + "&customUrl=" + self.custom_rpc.as_ref().unwrap()
         } else {
@@ -62,17 +59,32 @@ impl Explorer {
         }
     }
 
-    /// Ex: https://explorer.antegen.xyz/thread/{thread}
-    ///     ?network=custom
-    ///     &customRPC=http://localhost:8899
-    pub fn thread_url<T: std::fmt::Display, U: std::fmt::Display>(&self, thread: T, program_id: U) -> String {
-        let url = format!("{}/address/{}?programID={}&network={}", CK_EXPLORER_URL,
-                          thread, program_id, self
-            .cluster);
+    fn build_url(&self, path: &str) -> String {
+        let url = format!("{}/{}?cluster={}", EXPLORER_URL, path, self.cluster);
         if self.cluster == "custom" {
-            url + "&customRPC=" + self.custom_rpc.as_ref().unwrap()
+            url + "&customUrl=" + self.custom_rpc.as_ref().unwrap()
         } else {
             url
         }
+    }
+
+    pub fn tx<T: std::fmt::Display>(&self, tx: T) -> String {
+        let url = self.build_url(&format!("tx/{}", tx));
+        Link::new(tx.to_string().as_str(), url.as_str()).to_string()
+    }
+
+    pub fn account<T: std::fmt::Display>(&self, account: T) -> String {
+        let url = self.build_url(&format!("account/{}", account));
+        Link::new(account.to_string().as_str(), url.as_str()).to_string()
+    }
+
+    pub fn portfolio<T: std::fmt::Display>(&self, account: T) -> String {
+        let url = self.build_url(&format!("account/{}#portfolio", account));
+        Link::new(account.to_string().as_str(), url.as_str()).to_string()
+    }
+
+    pub fn token<T: std::fmt::Display>(&self, token: T) -> String {
+        let url = self.build_url(&format!("token/{}", token));
+        Link::new(token.to_string().as_str(), url.as_str()).to_string()
     }
 }

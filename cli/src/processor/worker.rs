@@ -9,11 +9,40 @@ use anchor_spl::{associated_token, associated_token::get_associated_token_addres
 use antegen_network_program::state::{
     Config, Fee, Penalty, Registry, Snapshot, SnapshotFrame, Worker, WorkerSettings,
 };
-use solana_sdk::signature::{Keypair, Signer};
+use solana_sdk::{pubkey::Pubkey, signature::{Keypair, Signer}};
 
 use crate::{client::Client, errors::CliError};
 
-pub fn get(client: &Client, id: u64) -> Result<(), CliError> {
+#[derive(Debug)]
+pub struct WorkerInfo {
+    pub worker: Worker,
+    pub worker_pubkey: Pubkey,
+    pub fees_total: u64,
+    pub fee_pubkey: Pubkey,
+    pub penalty_total: u64,
+    pub penalty_pubkey: Pubkey,
+    pub snapshot_frame: Option<SnapshotFrame>,
+}
+
+impl WorkerInfo {
+    pub fn print_status(&self) {
+        println!(
+            "Address: {}\nFees: {}\nFee account: {}\nPenalty: {}\nPenalty account: {}\n{:#?}",
+            self.worker_pubkey, 
+            self.fees_total, 
+            self.fee_pubkey, 
+            self.penalty_total, 
+            self.penalty_pubkey, 
+            self.worker
+        );
+        
+        if let Some(frame) = &self.snapshot_frame {
+            println!("{:#?}", frame);
+        }
+    }
+}
+
+pub fn get(client: &Client, id: u64) -> Result<WorkerInfo, CliError> {
     let worker_pubkey = Worker::pubkey(id);
     let worker = client
         .get::<Worker>(&worker_pubkey)
@@ -41,11 +70,6 @@ pub fn get(client: &Client, id: u64) -> Result<(), CliError> {
     let penalty_balance = client.get_balance(&penalty_pubkey).unwrap();
     let penalty_total = penalty_balance - penalty_min_rent;
 
-    println!(
-        "Address: {}\nFees: {}\nFee account: {}\nPenalty: {}\nPenalty account: {}\n{:#?}",
-        worker_pubkey, fees_total, fee_pubkey, penalty_total, penalty_pubkey, worker
-    );
-
     // Get registry
     let registry_pubkey = Registry::pubkey();
     let registry_data = client
@@ -57,17 +81,31 @@ pub fn get(client: &Client, id: u64) -> Result<(), CliError> {
     // Get snapshot frame
     let snapshot_pubkey = Snapshot::pubkey(registry.current_epoch);
     let snapshot_frame_pubkey = SnapshotFrame::pubkey(snapshot_pubkey, worker.id);
-    match client.get_account_data(&snapshot_frame_pubkey) {
-        Err(_err) => {}
+    let snapshot_frame = match client.get_account_data(&snapshot_frame_pubkey) {
         Ok(snapshot_frame_data) => {
-            let snapshot_frame = SnapshotFrame::try_deserialize(
+            Some(SnapshotFrame::try_deserialize(
                 &mut snapshot_frame_data.as_slice(),
-            )
-            .map_err(|_err| CliError::AccountDataNotParsable(registry_pubkey.to_string()))?;
-            println!("{:#?}", snapshot_frame);
+            ).map_err(|_err| CliError::AccountDataNotParsable(registry_pubkey.to_string()))?)
         }
-    }
+        Err(_) => None,
+    };
 
+    let worker_info = WorkerInfo {
+        worker,
+        worker_pubkey,
+        fees_total,
+        fee_pubkey,
+        penalty_total,
+        penalty_pubkey,
+        snapshot_frame,
+    };
+
+    Ok(worker_info)
+}
+
+pub fn find(client: &Client, id: u64) -> Result<(), CliError> {
+    let worker_info = get(client, id);
+    worker_info?.print_status();
     Ok(())
 }
 
@@ -113,8 +151,9 @@ pub fn create(client: &Client, signatory: Keypair, silent: bool) -> Result<(), C
     client
         .send_and_confirm(&[ix], &[client.payer(), &signatory])
         .unwrap();
+
     if !silent {
-        get(client, worker_id)?;
+        find(client, worker_id)?;
     }
     Ok(())
 }
@@ -141,6 +180,6 @@ pub fn update(client: &Client, id: u64, signatory: Option<Keypair>) -> Result<()
         data: antegen_network_program::instruction::WorkerUpdate { settings }.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
-    get(client, worker.id)?;
+    find(client, worker.id)?;
     Ok(())
 }
