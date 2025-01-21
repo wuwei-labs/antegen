@@ -21,3 +21,6 @@ antegen_thread_program = "AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1"
 
 [registry]
 url = "https://api.apr.dev"
+
+[toolchain]
+rust_version = "1.81.0"

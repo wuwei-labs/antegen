@@ -92,8 +92,6 @@ pub fn start(
     let mint_pubkey = mint_antegen_token(client)?;
     super::initialize::initialize(client, mint_pubkey)?;
     register_worker(client, config)?;
-
-    
     create_threads(client, mint_pubkey)?;
 
     Ok(())
@@ -261,7 +259,7 @@ fn create_threads(client: &Client, mint_pubkey: Pubkey) -> Result<()> {
                 ix_a6.into(),
             ],
             trigger: Trigger::Cron {
-                schedule: "0 * * * * * *".into(),
+                schedule: "*/5 * * * *".into(),
                 skippable: true,
             },
         }

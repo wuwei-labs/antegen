@@ -19,13 +19,9 @@ use solana_program::{
     pubkey::Pubkey,
 };
 use solana_sdk::{
-    message::{
-        v0,
-        VersionedMessage
-    },
-    transaction::VersionedTransaction,
     account::Account, commitment_config::CommitmentConfig,
-    compute_budget::ComputeBudgetInstruction, signature::Keypair, signer::Signer
+    compute_budget::ComputeBudgetInstruction, signature::Keypair, signer::Signer,
+    transaction::Transaction,
 };
 
 /// Max byte size of a serialized transaction.
@@ -44,13 +40,14 @@ pub async fn build_thread_exec_tx(
     thread: VersionedThread,
     thread_pubkey: Pubkey,
     worker_id: u64,
-) -> PluginResult<Option<VersionedTransaction>> {
+) -> PluginResult<Option<Transaction>> {
+    // Grab the thread and relevant data.
     let now = std::time::Instant::now();
     let blockhash = client.get_latest_blockhash().await.unwrap();
     let signatory_pubkey = payer.pubkey();
     let worker_pubkey = Worker::pubkey(worker_id);
 
-    // Build the first instruction
+    // Build the first instruction of the transaction.
     let first_instruction = if thread.next_instruction().is_some() {
         build_exec_ix(
             thread.clone(),
@@ -67,37 +64,24 @@ pub async fn build_thread_exec_tx(
         )
     };
 
-    // Initialize instructions vector
+    // Simulate the transaction and pack as many instructions as possible until we hit mem/cpu limits.
+    // TODO Migrate to versioned transactions.
     let mut ixs: Vec<Instruction> = vec![
         ComputeBudgetInstruction::set_compute_unit_limit(TRANSACTION_COMPUTE_UNIT_LIMIT),
         first_instruction,
     ];
     let mut successful_ixs: Vec<Instruction> = vec![];
     let mut units_consumed: Option<u64> = None;
-
     loop {
-        // Create versioned message
-        let message = v0::Message::try_compile(
-            &signatory_pubkey,
-            &ixs,
-            &[],  // address table lookups
-            blockhash,
-        ).map_err(|e| GeyserPluginError::Custom(format!("Failed to compile message: {}", e).into()))?;
+        let mut sim_tx = Transaction::new_with_payer(&ixs, Some(&signatory_pubkey));
+        sim_tx.sign(&[payer], blockhash);
 
-        let versioned_message = VersionedMessage::V0(message);
-
-        // Create versioned transaction
-        let sim_tx = VersionedTransaction::try_new(
-            versioned_message,
-            &[payer],
-        ).map_err(|e| GeyserPluginError::Custom(format!("Failed to create transaction: {}", e).into()))?;
-
-        // Check transaction size limit
-        if sim_tx.message.serialize().len() > TRANSACTION_MESSAGE_SIZE_LIMIT {
+        // Exit early if the transaction exceeds the size limit.
+        if sim_tx.message_data().len() > TRANSACTION_MESSAGE_SIZE_LIMIT {
             break;
         }
 
-        // Run simulation
+        // Run the simulation.
         match client
             .simulate_transaction_with_config(
                 &sim_tx,
@@ -115,6 +99,7 @@ pub async fn build_thread_exec_tx(
             )
             .await
         {
+            // If there was a simulation error, stop packing and exit now.
             Err(err) => {
                 match err.kind {
                     solana_client::client_error::ClientErrorKind::RpcError(rpc_err) => {
@@ -126,7 +111,8 @@ pub async fn build_thread_exec_tx(
                             } => {
                                 if code.eq(&JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED) {
                                     return Err(GeyserPluginError::Custom(
-                                        "RPC client has not reached min context slot".into(),
+                                        format!("RPC client has not reached min context slot")
+                                            .into(),
                                     ));
                                 }
                             }
@@ -138,6 +124,7 @@ pub async fn build_thread_exec_tx(
                 break;
             }
 
+            // If the simulation was successful, pack the ix into the tx.
             Ok(response) => {
                 if response.value.err.is_some() {
                     if successful_ixs.is_empty() {
@@ -152,17 +139,25 @@ pub async fn build_thread_exec_tx(
                     break;
                 }
 
+                // Update flag tracking if at least one instruction succeed.
                 successful_ixs = ixs.clone();
-                units_consumed = response.value.units_consumed;
 
-                // Parse resulting thread account
+                // Record the compute units consumed by the simulation.
+                if response.value.units_consumed.is_some() {
+                    units_consumed = response.value.units_consumed;
+                }
+
+                // Parse the resulting thread account for the next instruction to simulate.
                 if let Some(ui_accounts) = response.value.accounts {
                     if let Some(Some(ui_account)) = ui_accounts.get(0) {
                         if let Some(account) = ui_account.decode::<Account>() {
                             if let Ok(sim_thread) = VersionedThread::try_from(account.data) {
                                 if sim_thread.next_instruction().is_some() {
                                     if let Some(exec_context) = sim_thread.exec_context() {
-                                        if exec_context.execs_since_slot.lt(&sim_thread.rate_limit()) {
+                                        if exec_context
+                                            .execs_since_slot
+                                            .lt(&sim_thread.rate_limit())
+                                        {
                                             ixs.push(build_exec_ix(
                                                 sim_thread,
                                                 thread_pubkey,
@@ -170,6 +165,7 @@ pub async fn build_thread_exec_tx(
                                                 worker_pubkey,
                                             ));
                                         } else {
+                                            // Exit early if the thread has reached its rate limit.
                                             break;
                                         }
                                     }
@@ -184,34 +180,27 @@ pub async fn build_thread_exec_tx(
         }
     }
 
-    // Exit if no successful instructions
+    // If there were no successful instructions, then exit early. There is nothing to do.
+    // Alternatively, exit early if only the kickoff instruction (and no execs) succeeded.
     if successful_ixs.is_empty() {
         return Ok(None);
     }
 
-    // Update compute unit limit based on simulation
+    // Set the transaction's compute unit limit to be exactly the amount that was used in simulation.
     if let Some(units_consumed) = units_consumed {
         let units_committed = std::cmp::min(
             (units_consumed as u32) + TRANSACTION_COMPUTE_UNIT_BUFFER,
             TRANSACTION_COMPUTE_UNIT_LIMIT,
         );
-        successful_ixs[0] = ComputeBudgetInstruction::set_compute_unit_limit(units_committed);
+        _ = std::mem::replace(
+            &mut successful_ixs[0],
+            ComputeBudgetInstruction::set_compute_unit_limit(units_committed),
+        );
     }
 
-    // Build final versioned transaction
-    let message = v0::Message::try_compile(
-        &signatory_pubkey,
-        &successful_ixs,
-        &[],
-        blockhash,
-    ).map_err(|e| GeyserPluginError::Custom(format!("Failed to compile final message: {}", e).into()))?;
-
-    let versioned_message = VersionedMessage::V0(message);
-    let tx = VersionedTransaction::try_new(
-        versioned_message,
-        &[payer],
-    ).map_err(|e| GeyserPluginError::Custom(format!("Failed to create final transaction: {}", e).into()))?;
-
+    // Build and return the signed transaction.
+    let mut tx = Transaction::new_with_payer(&successful_ixs, Some(&signatory_pubkey));
+    tx.sign(&[payer], blockhash);
     info!(
         "slot: {:?} thread: {:?} sim_duration: {:?} instruction_count: {:?} compute_units: {:?} tx_sig: {:?}",
         slot,
@@ -221,7 +210,6 @@ pub async fn build_thread_exec_tx(
         units_consumed,
         tx.signatures[0]
     );
-
     Ok(Some(tx))
 }
 

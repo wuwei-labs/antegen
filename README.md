@@ -90,6 +90,7 @@ cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
 
 ```sh
 avm install latest
+avm use latest
 ```
 
 #### 4. Install antegen-cli
@@ -104,7 +105,7 @@ Install with cargo:
 
 ```sh
 cargo build --workspace
-cargo install -p cli
+cargo install --path cli
 ```
 
 #### 5. Anchor Build
@@ -124,5 +125,5 @@ antegen localnet --dev
 #### 7. Stream program logs
 
 ```sh
-solana logs --url localhost
+tail -f validator.log
 ```

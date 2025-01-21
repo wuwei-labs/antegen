@@ -22,6 +22,12 @@ pub struct AntegenPlugin {
     pub inner: Arc<Inner>,
 }
 
+impl Default for AntegenPlugin {
+    fn default() -> Self {
+        Self::new_from_config(PluginConfig::default())
+    }
+}
+
 impl Debug for AntegenPlugin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "inner: {:?}", self.inner)
@@ -201,23 +207,20 @@ impl GeyserPlugin for AntegenPlugin {
 
 impl AntegenPlugin {
     fn new_from_config(config: PluginConfig) -> Self {
-        let runtime = build_runtime(config.clone());
-        let observers = Arc::new(Observers::new());
-        let executors = Arc::new(Executors::new(config.clone()));
         Self {
             inner: Arc::new(Inner {
-                config,
-                executors,
-                observers,
-                runtime,
+                config: config.clone(),
+                executors: Arc::new(Executors::new(config.clone())),
+                observers: Arc::new(Observers::new()),
+                runtime: build_runtime(config),
             }),
         }
     }
-}
 
-impl Default for AntegenPlugin {
-    fn default() -> Self {
-        Self::new_from_config(PluginConfig::default())
+    pub async fn initialize(self) -> PluginResult<Self> {
+        // Initialize without creating new instances
+        self.inner.executors.initialize().await?;
+        Ok(self)
     }
 }
 
