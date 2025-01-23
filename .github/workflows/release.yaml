@@ -1,16 +1,45 @@
 name: Release
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
+    inputs:
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: true
+  release:
+    types: [prereleased]
 
 env:
   CARGO_TERM_COLOR: always
   PUBLISH_PREFIX: antegen
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.tag_version.outputs.new_tag }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Bump version and push tag
+        id: tag_version
+        if: github.event_name == 'workflow_dispatch'
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump version
+        uses: tj-actions/cargo-bump@v3
+
   release:
+    needs: version
+    if: |
+      github.event_name == 'workflow_dispatch' && needs.version.outputs.version != ''
     permissions:
       contents: write 
     runs-on: ${{ matrix.os }}
@@ -27,7 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: awalsh128/cache-apt-pkgs-action@latest
+      - uses: awalsh128/cache-apt-pkgs-action@v1.4.3
         if: contains(runner.os, 'linux')
         with:
           packages: jq pkg-config build-essential libudev-dev libssl-dev
@@ -38,21 +67,13 @@ jobs:
         run: |
           sudo snap install yq
 
-      - name: Get version from tag
+      - name: Get version information
         id: versions
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=dev" >> $GITHUB_OUTPUT
-            echo "version=dev" >> $GITHUB_OUTPUT
-          else
-            TAG=${GITHUB_REF#refs/tags/}
-            echo "tag=${TAG}" >> $GITHUB_OUTPUT
-            VERSION=${TAG#v}
-            echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          fi
+          # Add pre suffix for push triggers
+          echo "version=${{ needs.version.outputs.version }}" >> $GITHUB_OUTPUT
           echo "solana_version=$(yq -oy '.workspace.dependencies."solana-sdk".version' Cargo.toml)" >> $GITHUB_OUTPUT
           echo "anchor_rev=$(yq -oy '.workspace.dependencies."anchor-lang".rev' Cargo.toml)" >> $GITHUB_OUTPUT
-          echo "antegen_version=$(yq -oy '.workspace.package.version' Cargo.toml)" >> $GITHUB_OUTPUT
           echo "rust_version=$(yq -oy '.toolchain.channel' rust-toolchain.toml)" >> $GITHUB_OUTPUT
           echo "commit_full=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
@@ -116,27 +137,18 @@ jobs:
           cd staging
           tar -cJf ../antegen-${{ steps.versions.outputs.version }}-${{ matrix.target }}.tar.xz *
 
-      - name: Verify tag matches Cargo.toml version
-        if: github.event_name != 'workflow_dispatch'
-        run: |
-          CARGO_VERSION="${{ steps.versions.outputs.antegen_version }}"
-          TAG_VERSION="${{ steps.versions.outputs.version }}"
-          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
-            echo "Error: Tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
-            exit 1
-          fi
-
       - name: Upload Release Assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2.2.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fail_on_unmatched_files: true
-          tag_name: ${{ steps.versions.outputs.tag }}
+          tag_name: ${{ steps.versions.outputs.version }}
+          prerelease: ${{ (github.event_name == 'workflow_dispatch' && inputs.prerelease) || github.event.release.prerelease }}
           body: |
             # 🚀 Release Details
 
             ### 🔌 Plugin Version
-            - antegen-geyser-plugin `v${{ steps.versions.outputs.antegen_version }}`
+            - antegen-geyser-plugin `${{ steps.versions.outputs.version }}`
 
             ### ⚡ Runtime Versions
             - 🌟 Solana `${{ steps.versions.outputs.solana_version }}`
