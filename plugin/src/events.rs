@@ -42,10 +42,19 @@ impl TryFrom<&mut ReplicaAccountInfo<'_>> for AccountUpdateEvent {
         // If the account belongs to the thread v1 program, parse it.
         if owner_pubkey == antegen_thread_program::ID && account_info.data.len() > 8 {
             let data = account_info.data.to_vec();
-            let thread = VersionedThread::try_deserialize(&mut data.as_slice()).unwrap();
-        
-            info!("Successfully parsed thread program {}", account_pubkey);
-            return Ok(AccountUpdateEvent::Thread { thread });
+            match VersionedThread::try_deserialize(&mut data.as_slice()) {
+                Ok(thread) => {
+                    info!("Successfully parsed thread program {}", account_pubkey);
+                    return Ok(AccountUpdateEvent::Thread { thread })
+                },
+                Err(e) => {
+                    info!("Failed to parse VersionedThread: {:?}", e);
+                    info!("Raw account data: {:?}", &data[..8]);
+                    return Err(GeyserPluginError::AccountsUpdateError {
+                        msg: format!("Failed to deserialize VersionedThread for {}", account_pubkey),
+                    });
+                }
+            };
         }
 
         // If the account belongs to Pyth, attempt to parse it.

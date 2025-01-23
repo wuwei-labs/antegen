@@ -7,11 +7,6 @@ on:
         description: 'Mark as pre-release'
         type: boolean
         default: true
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'Cargo.toml'
-      - 'Cargo.lock'
 
 env:
   CARGO_TERM_COLOR: always
