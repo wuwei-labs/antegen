@@ -7,6 +7,8 @@ on:
         description: 'Mark as pre-release'
         type: boolean
         default: true
+  release:
+    types: [prereleased]
 
 env:
   CARGO_TERM_COLOR: always
@@ -26,6 +28,7 @@ jobs:
 
       - name: Bump version and push tag
         id: tag_version
+        if: github.event_name == 'workflow_dispatch'
         uses: mathieudutour/github-tag-action@v6.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -35,7 +38,8 @@ jobs:
 
   release:
     needs: version
-    if: needs.version.outputs.version != ''
+    if: |
+      github.event_name == 'workflow_dispatch' && needs.version.outputs.version != ''
     permissions:
       contents: write 
     runs-on: ${{ matrix.os }}
@@ -67,14 +71,15 @@ jobs:
         id: versions
         run: |
           # Add pre suffix for push triggers
-          if [ "${{ github.event_name }}" = "push" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "version=${{ needs.version.outputs.version }}-dev" >> $GITHUB_OUTPUT
+            echo "antegen_version=${{ needs.version.outputs.version }}" >> $GITHUB_OUTPUT
           else
             echo "version=${{ needs.version.outputs.version }}" >> $GITHUB_OUTPUT
+            echo "antegen_version=$(yq -oy '.workspace.package.version' Cargo.toml)" >> $GITHUB_OUTPUT
           fi
           echo "solana_version=$(yq -oy '.workspace.dependencies."solana-sdk".version' Cargo.toml)" >> $GITHUB_OUTPUT
           echo "anchor_rev=$(yq -oy '.workspace.dependencies."anchor-lang".rev' Cargo.toml)" >> $GITHUB_OUTPUT
-          echo "antegen_version=$(yq -oy '.workspace.package.version' Cargo.toml)" >> $GITHUB_OUTPUT
           echo "rust_version=$(yq -oy '.toolchain.channel' rust-toolchain.toml)" >> $GITHUB_OUTPUT
           echo "commit_full=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
@@ -144,11 +149,11 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fail_on_unmatched_files: true
           tag_name: ${{ steps.versions.outputs.version }}
-          prerelease: ${{ github.event_name == 'push' || inputs.prerelease }}
+          prerelease: ${{ (github.event_name == 'workflow_dispatch' && inputs.prerelease) || github.event.release.prerelease }}
           body: |
             # 🚀 Release Details
-            
-            ${{ github.event_name == 'push' && '> ⚠️ This is a pre-release version' || '' }}
+
+            ${{ (github.event.inputs.prerelease == 'true' || github.event.release.prerelease) && '> ⚠️ This is a pre-release version' || '' }}
 
             ### 🔌 Plugin Version
             - antegen-geyser-plugin `v${{ steps.versions.outputs.antegen_version }}`
