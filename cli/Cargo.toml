@@ -4,7 +4,7 @@ description = "Command line interface for Antegen"
 documentation = "https://antegen.wuwei.dev/docs"
 build = "build.rs"
 
-version = { workspace = true }
+version = "1.0.0"
 authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
