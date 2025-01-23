@@ -16,19 +16,20 @@ jobs:
   version:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.semver.outputs.next }}
+      version: ${{ steps.tag_version.outputs.new_tag }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
-      - name: Get Next Version
-        id: semver
-        uses: ietf-tools/semver-action@v1
+      - name: Bump version and push tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
         with:
-          token: ${{ github.token }}
-          branch: main
-          majorList: 'major'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump version
+        uses: tj-actions/cargo-bump@v3
 
   release:
     needs: version
@@ -65,10 +66,8 @@ jobs:
         run: |
           # Add pre suffix for push triggers
           if [ "${{ github.event_name }}" = "push" ]; then
-            echo "tag=v${{ needs.version.outputs.version }}-alpha" >> $GITHUB_OUTPUT
-            echo "version=${{ needs.version.outputs.version }}-alpha" >> $GITHUB_OUTPUT
+            echo "version=${{ needs.version.outputs.version }}-dev" >> $GITHUB_OUTPUT
           else
-            echo "tag=v${{ needs.version.outputs.version }}" >> $GITHUB_OUTPUT
             echo "version=${{ needs.version.outputs.version }}" >> $GITHUB_OUTPUT
           fi
           echo "solana_version=$(yq -oy '.workspace.dependencies."solana-sdk".version' Cargo.toml)" >> $GITHUB_OUTPUT
@@ -142,7 +141,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fail_on_unmatched_files: true
-          tag_name: ${{ steps.versions.outputs.tag }}
+          tag_name: ${{ steps.versions.outputs.version }}
           prerelease: ${{ github.event_name == 'push' || inputs.prerelease }}
           body: |
             # 🚀 Release Details
