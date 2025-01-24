@@ -15,11 +15,13 @@ path = "src/lib.rs"
 
 [profile.release]
 overflow-checks = true
-panic = "abort"         # Aborts on panic instead of unwinding
-lto = "thin"            # Enable link-time optimization
-codegen-units = 1       # Optimize for size
-strip = true            # Strip symbols from binary
-opt-level = 3           # Maximum optimizations
+lto = "fat"
+codegen-units = 1
+ 
+[profile.release.build-override]
+opt-level = 3
+incremental = false
+codegen-units = 1
 
 [workspace]
 resolver = "2"
@@ -33,7 +35,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.0.0"
+version = "0.1.12"
 authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
 repository = "https://github.com/wuwei-labs/antegen"
 homepage = "https://antegen.xyz/"
