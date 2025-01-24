@@ -41,7 +41,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cargo workspaces version custom ${{ steps.semver.outputs.nextStrict }} --yes
+          cargo workspaces version custom ${{ steps.semver.outputs.nextStrict }} --no-individual-tags --yes
 
   release:
     needs: version
