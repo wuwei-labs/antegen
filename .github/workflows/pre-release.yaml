@@ -121,14 +121,8 @@ jobs:
           for program_dir in programs/*/; do
             if [ -f "${program_dir}Cargo.toml" ]; then
               library_name=$(yq -oy '.lib.name' "${program_dir}Cargo.toml")
-              echo "Building ${library_name}"
-
-              # Debug information
               echo "Current directory: $(pwd)"
-              echo "Program directory contents:"
-              ls -la "${program_dir}"
-              echo "Full path to program directory: $(realpath "${program_dir}")"
-
+              ls -la
               solana-verify build --library-name "${library_name}"
             fi
           done
