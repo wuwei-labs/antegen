@@ -367,11 +367,11 @@ dependencies = [
 
 [[package]]
 name = "antegen"
-version = "0.1.7"
+version = "0.1.9"
 
 [[package]]
 name = "antegen-cli"
-version = "0.1.7"
+version = "0.1.9"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
@@ -409,7 +409,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-network-program"
-version = "0.1.7"
+version = "0.1.9"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
@@ -420,7 +420,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-plugin"
-version = "0.1.7"
+version = "0.1.9"
 dependencies = [
  "agave-geyser-plugin-interface",
  "anchor-lang",
@@ -461,7 +461,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-plugin-utils"
-version = "0.1.7"
+version = "0.1.9"
 dependencies = [
  "agave-geyser-plugin-interface",
  "serde",
@@ -470,7 +470,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-sdk"
-version = "0.1.7"
+version = "0.1.9"
 dependencies = [
  "anchor-lang",
  "antegen-thread-program",
@@ -481,7 +481,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-thread-program"
-version = "0.1.7"
+version = "0.1.9"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
@@ -496,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-utils"
-version = "0.1.7"
+version = "0.1.9"
 dependencies = [
  "anchor-lang",
  "base64 0.22.1",
@@ -4367,7 +4367,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cron"
-version = "0.1.7"
+version = "0.1.9"
 dependencies = [
  "chrono",
  "nom",
