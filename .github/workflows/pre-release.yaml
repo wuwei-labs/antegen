@@ -1,18 +1,10 @@
-name: Release
+name: Pre-release
 
 on:
   workflow_dispatch:
-    inputs:
-      prerelease:
-        description: 'Mark as pre-release'
-        type: boolean
-        default: true
-  release:
-    types: [prereleased]
 
 env:
   CARGO_TERM_COLOR: always
-  PUBLISH_PREFIX: antegen
 
 jobs:
   version:
@@ -20,26 +12,28 @@ jobs:
     permissions:
       contents: write
     outputs:
-      version: ${{ steps.tag_version.outputs.new_tag }}
+      version: ${{ steps.semver.outputs.next }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
-      - name: Bump version and push tag
-        id: tag_version
-        if: github.event_name == 'workflow_dispatch'
-        uses: mathieudutour/github-tag-action@v6.2
+      - name: Get Next Version
+        id: semver
+        uses: ietf-tools/semver-action@v1
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ github.token }}
+          fallbackTag: 1.0.0
+          majorList: major
 
-      - name: Bump version
+      - name: Bump Cargo Version
         uses: tj-actions/cargo-bump@v3
+        with:
+          release_type: ${{ steps.semver.outputs.bump }}
 
   release:
     needs: version
-    if: |
-      github.event_name == 'workflow_dispatch' && needs.version.outputs.version != ''
+    if: needs.version.outputs.version != ''
     permissions:
       contents: write 
     runs-on: ${{ matrix.os }}
@@ -80,17 +74,10 @@ jobs:
       - name: Install Rust Stable to use with tools
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Install Solana CLI (beta)
-        run: |
-          sh -c "$(curl -sSfL https://release.anza.xyz/v${{ steps.versions.outputs.solana_version }}/install)"
-          echo "/home/runner/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
-
       - name: Install Anchor CLI from git
         uses: baptiste0928/cargo-install@v3
         with:
-          crate: anchor-cli
-          git: https://github.com/coral-xyz/anchor
-          commit: ${{ steps.versions.outputs.anchor_rev }}
+          crate: solana-verify
       
       - name: Verify installations
         run: |
@@ -102,7 +89,7 @@ jobs:
           fi
           cargo --version
           solana --version
-          anchor --version
+          solana-verify --version
 
       - name: Build workspace and programs
         run: |
@@ -114,7 +101,7 @@ jobs:
           fi
 
           cargo build --workspace --release --target ${{ matrix.target }}
-          anchor build
+          solana-verify build
 
           mkdir -p staging/lib staging/bin
           install -m 644 target/deploy/*.so staging/lib/
@@ -143,7 +130,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fail_on_unmatched_files: true
           tag_name: ${{ steps.versions.outputs.version }}
-          prerelease: ${{ (github.event_name == 'workflow_dispatch' && inputs.prerelease) || github.event.release.prerelease }}
+          prerelease: true
           body: |
             # 🚀 Release Details
 
