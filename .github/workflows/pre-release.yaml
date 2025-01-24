@@ -106,7 +106,6 @@ jobs:
           solana-verify --version
 
       - name: Build workspace and programs
-        working-directory: .
         run: |
           source "$HOME/.cargo/env"
           if [[ "${{ matrix.os }}" == "macos-"* ]]; then
@@ -115,13 +114,21 @@ jobs:
             source "$HOME/.profile"
           fi
 
-          mkdir -p staging/lib staging/bin build
+          mkdir -p staging/lib staging/bin
           cargo build --workspace --release --target ${{ matrix.target }}
 
           # Find and build all programs
           for program_dir in programs/*/; do
             if [ -f "${program_dir}Cargo.toml" ]; then
               library_name=$(yq -oy '.lib.name' "${program_dir}Cargo.toml")
+              echo "Building ${library_name}"
+
+              # Debug information
+              echo "Current directory: $(pwd)"
+              echo "Program directory contents:"
+              ls -la "${program_dir}"
+              echo "Full path to program directory: $(realpath "${program_dir}")"
+
               solana-verify build --library-name "${library_name}"
             fi
           done
