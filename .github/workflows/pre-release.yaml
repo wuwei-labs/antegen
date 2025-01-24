@@ -76,16 +76,8 @@ jobs:
         run: |
           sudo snap install yq
 
-      # Set up Docker
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # Ensure Docker is running on macOS
-      - name: Start Docker on macOS
-        if: runner.os == 'macOS'
-        run: |
-          colima start
-          docker info
+      - name: Set up Docker
+        uses: docker/setup-docker-action@v4
 
       - name: Get version information
         id: versions
