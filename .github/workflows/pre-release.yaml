@@ -43,6 +43,47 @@ jobs:
         run: |
           cargo workspaces version custom ${{ steps.semver.outputs.nextStrict }} --no-individual-tags --yes
 
+  build-programs:
+    needs: version
+    if: needs.version.outputs.version != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Install yq
+        run: sudo snap install yq
+
+      - name: Set up Docker
+        uses: docker/setup-docker-action@v4
+
+      - name: Install Rust Stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install Solana Verify
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: solana-verify
+
+      - name: Build Solana Programs
+        run: |
+          mkdir -p target/deploy
+          for program_dir in programs/*/; do
+            if [ -f "${program_dir}Cargo.toml" ]; then
+              library_name=$(yq -oy '.lib.name' "${program_dir}Cargo.toml")
+              solana-verify build --library-name ${library_name}
+            fi
+          done
+
+      - name: Upload Program Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: solana-programs
+          path: target/deploy/*.so
+          retention-days: 1
+
   release:
     needs: version
     if: needs.version.outputs.version != ''
@@ -76,9 +117,6 @@ jobs:
         run: |
           sudo snap install yq
 
-      - name: Set up Docker
-        uses: docker/setup-docker-action@v4
-
       - name: Get version information
         id: versions
         run: |
@@ -92,10 +130,11 @@ jobs:
       - name: Install Rust Stable to use with tools
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Install Solana Verify
-        uses: baptiste0928/cargo-install@v3
+      - name: Download Solana Programs
+        uses: actions/download-artifact@v4
         with:
-          crate: solana-verify
+          name: solana-programs
+          path: staging/lib
 
       - name: Build workspace and programs
         run: |
@@ -106,18 +145,9 @@ jobs:
             source "$HOME/.profile"
           fi
 
-          mkdir -p staging/lib staging/bin
+          mkdir -p staging/bin
           cargo build --workspace --release --target ${{ matrix.target }}
 
-          # Find and build all programs
-          for program_dir in programs/*/; do
-            if [ -f "${program_dir}Cargo.toml" ]; then
-              library_name=$(yq -oy '.lib.name' "${program_dir}Cargo.toml")
-              solana-verify build --library-name ${library_name}
-            fi
-          done
-
-          install -m 644 target/deploy/*.so staging/lib/
           if [[ "${{ matrix.target }}" == *"darwin"* ]]; then
             install -m 644 target/${{ matrix.target }}/release/libantegen_plugin.dylib staging/lib/libantegen_plugin.so
             install -m 755 target/${{ matrix.target }}/release/antegen staging/bin/
