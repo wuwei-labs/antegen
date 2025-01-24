@@ -22,15 +22,21 @@ jobs:
         id: semver
         uses: ietf-tools/semver-action@v1
         with:
-          token: ${{ github.token }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           fallbackTag: 1.0.0
           majorList: major
           noNewCommitBehavior: current
 
-      - name: Bump Cargo Version
-        uses: tj-actions/cargo-bump@v3
+      - name: Install Cargo Workspaces
+        uses: baptiste0928/cargo-install@v3
         with:
-          release_type: ${{ steps.semver.outputs.bump }}
+          crate: cargo-workspaces
+
+      - name: Bump Cargo Version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cargo workspaces version custom ${{ steps.semver.outputs.nextStrict }}
 
   release:
     needs: version
@@ -75,7 +81,7 @@ jobs:
       - name: Install Rust Stable to use with tools
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Install Anchor CLI from git
+      - name: Install Solana Verify
         uses: baptiste0928/cargo-install@v3
         with:
           crate: solana-verify
