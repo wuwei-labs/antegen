@@ -25,6 +25,7 @@ jobs:
           token: ${{ github.token }}
           fallbackTag: 1.0.0
           majorList: major
+          noNewCommitBehavior: current
 
       - name: Bump Cargo Version
         uses: tj-actions/cargo-bump@v3
