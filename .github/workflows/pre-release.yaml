@@ -85,7 +85,7 @@ jobs:
           retention-days: 1
 
   release:
-    needs: version
+    needs: [version, build-programs]
     if: needs.version.outputs.version != ''
     permissions:
       contents: write 
