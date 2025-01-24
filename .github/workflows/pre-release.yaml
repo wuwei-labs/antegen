@@ -32,6 +32,11 @@ jobs:
         with:
           crate: cargo-workspaces
 
+      - name: Configure Git
+        run: |
+          git config --global user.name 'GitHub Actions'
+          git config --global user.email 'github-actions@github.com'
+
       - name: Bump Cargo Version
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
