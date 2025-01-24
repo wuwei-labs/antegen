@@ -114,7 +114,7 @@ jobs:
             source "$HOME/.profile"
           fi
 
-          mkdir -p staging/lib staging/bin
+          mkdir -p staging/lib staging/bin build
           cargo build --workspace --release --target ${{ matrix.target }}
 
           # Find and build all programs
