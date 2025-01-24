@@ -123,7 +123,7 @@ jobs:
               library_name=$(yq -oy '.lib.name' "${program_dir}Cargo.toml")
               echo "Current directory: $(pwd)"
               ls -la
-              solana-verify build --library-name "${library_name}"
+              solana-verify build --library-name ${library_name}
             fi
           done
 
