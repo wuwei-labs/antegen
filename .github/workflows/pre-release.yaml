@@ -89,11 +89,6 @@ jobs:
       - name: Install Rust Stable to use with tools
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Install Solana CLI (beta)
-        run: |
-          sh -c "$(curl -sSfL https://release.anza.xyz/v${{ steps.versions.outputs.solana_version }}/install)"
-          echo "/home/runner/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
-
       - name: Install Solana Verify
         uses: baptiste0928/cargo-install@v3
         with:
@@ -121,7 +116,15 @@ jobs:
           fi
 
           cargo build --workspace --release --target ${{ matrix.target }}
-          solana-verify build
+
+          # Find and build all programs
+          for program_dir in programs/*/; do
+            if [ -f "${program_dir}Cargo.toml" ]; then
+              library_name=$(yq -oy '.lib.name' "${program_dir}Cargo.toml")
+              echo "Building ${library_name}"
+              solana-verify build --library-name "${library_name}"
+            fi
+          done
 
           mkdir -p staging/lib staging/bin
           install -m 644 target/deploy/*.so staging/lib/
