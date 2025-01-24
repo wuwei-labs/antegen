@@ -1,5 +1,5 @@
 [package]
-name = "antegen-cli"
+name = "antegen"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
