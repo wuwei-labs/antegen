@@ -100,7 +100,6 @@ jobs:
             source "$HOME/.profile"
           fi
           cargo --version
-          solana --version
           solana-verify --version
 
       - name: Build workspace and programs
