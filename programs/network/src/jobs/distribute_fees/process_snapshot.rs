@@ -3,24 +3,6 @@ use antegen_utils::thread::ThreadResponse;
 
 use crate::state::*;
 
-// DONE Payout yield.
-//      Transfer lamports collected by Fee accounts to Delegation accounts based on the stake balance distributions of the current Epoch's SnapshotEntries.
-
-// DONE Process unstake requests.
-//      For each "unstake request" transfer tokens from the Worker stake account to the Delegation authority's token account.
-//      Decrement the Delegation's stake balance by the amount unstaked.
-
-// DONE Lock delegated stakes.
-//      Transfer tokens from the Delegation's stake account to the Worker's stake account.
-//      Increment the Delegation's stake balance by the amount moved.
-
-// DONE Take a snapshot.
-//      Capture a snapshot (cumulative sum) of the total stake and broken-down delegation balances.
-//      SnapshotFrames capture worker-level aggregate stake balances.
-//      SnapshotEntries capture delegation-level individual stake balances.
-
-// DONE Cutover from current epoch to new epoch.
-
 #[derive(Accounts)]
 pub struct DistributeFeesProcessSnapshot<'info> {
     #[account(address = Config::pubkey())]
@@ -50,17 +32,18 @@ pub fn handler(ctx: Context<DistributeFeesProcessSnapshot>) -> Result<ThreadResp
             Some(
                 Instruction {
                     program_id: crate::ID,
-                    accounts: crate::accounts::DistributeFeesProcessFrame {
+                    accounts: crate::accounts::DistributeFeesProcessWorker {
                         config: config.key(),
-                        fee: Fee::pubkey(Worker::pubkey(0)),
+                        commission: WorkerCommission::pubkey(Worker::pubkey(0)),
                         registry: registry.key(),
+                        registry_fee: RegistryFee::pubkey(registry.key()),
                         snapshot: snapshot.key(),
                         snapshot_frame: SnapshotFrame::pubkey(snapshot.key(), 0),
                         thread: thread.key(),
                         worker: Worker::pubkey(0),
                     }
                     .to_account_metas(Some(true)),
-                    data: crate::instruction::DistributeFeesProcessFrame {}.data(),
+                    data: crate::instruction::DistributeFeesProcessWorker {}.data(),
                 }
                 .into(),
             )

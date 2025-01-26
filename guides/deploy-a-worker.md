@@ -12,8 +12,8 @@ To turn your Solana validator or RPC into a Antegen worker, you simply need to i
 
 ```
 curl -s https://api.github.com/repos/wuwei-labs/antegen/releases/latest | grep "antegen-geyser-plugin-release-x86_64-unknown-linux-gnu.tar" | cut -d : -f 2,3 | tr -d \" | wget -qi -
-tar -xjvf antegen-geyser-plugin-release-x86_64-unknown-linux-gnu.tar.bz2
-rm antegen-geyser-plugin-release-x86_64-unknown-linux-gnu.tar.bz2
+tar -xjvf antegen-geyser-plugin-release-x86_64-unknown-linux-gnu.tar.xz
+rm antegen-geyser-plugin-release-x86_64-unknown-linux-gnu.tar.xz
 ```
 
 ## 2. Create a keypair
@@ -82,5 +82,5 @@ exec solana-validator \
 
 Now simply restart your validator however you normally would!
 
-> These steps installs the geyser plugin but the worker is not yet registered with the "network". Once the programs are deployed you'll need to run...
+> These steps installs the geyser plugin but the worker is not yet registered with the "network". To register your worker run
 > ``` antegen worker create antegen-worker-keypair.json ```

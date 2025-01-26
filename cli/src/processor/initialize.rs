@@ -1,25 +1,31 @@
 use anchor_lang::{
     solana_program::{
         instruction::Instruction,
-        pubkey::Pubkey,
         system_program,
     },
     InstructionData, ToAccountMetas,
 };
-use antegen_network_program::state::{Config, Pool, Registry, Snapshot};
-
+use antegen_network_program::{state::{Config, Pool, Registry, RegistryFee, Snapshot}, ANTEGEN_SQUADS};
 use crate::{client::Client, errors::CliError};
 
-pub fn initialize(client: &Client, mint: Pubkey) -> Result<(), CliError> {
+pub fn initialize(client: &Client) -> Result<(), CliError> {
     // Initialize the programs
-    let admin = client.payer_pubkey();
+    let payer = client.payer_pubkey();
+    let admin = if cfg!(feature = "mainnet") {
+        ANTEGEN_SQUADS
+    } else {
+        payer
+    };
+
+    let registry = Registry::pubkey();
     let ix_a = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::Initialize {
+            payer: admin,
             admin,
             config: Config::pubkey(),
-            mint,
-            registry: Registry::pubkey(),
+            registry,
+            registry_fee: RegistryFee::pubkey(registry),
             snapshot: Snapshot::pubkey(0),
             system_program: system_program::ID,
         }.to_account_metas(Some(false)),
@@ -28,9 +34,9 @@ pub fn initialize(client: &Client, mint: Pubkey) -> Result<(), CliError> {
     let ix_b = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::PoolCreate {
+            payer: admin,
             admin,
             config: Config::pubkey(),
-            payer: admin,
             pool: Pool::pubkey(0),
             registry: Registry::pubkey(),
             system_program: system_program::ID,

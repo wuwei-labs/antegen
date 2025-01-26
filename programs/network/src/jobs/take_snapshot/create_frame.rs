@@ -1,13 +1,13 @@
-use anchor_lang::{
-    prelude::*,
-    solana_program::{instruction::Instruction, system_program},
-    InstructionData,
+use {
+    crate::state::*,
+    anchor_lang::{
+        prelude::*,
+        solana_program::{instruction::Instruction, system_program},
+        InstructionData,
+    },
+    antegen_utils::thread::{ThreadResponse, PAYER_PUBKEY},
+    std::mem::size_of,
 };
-use anchor_spl::{ associated_token::get_associated_token_address, token::TokenAccount };
-use antegen_utils::thread::{ ThreadResponse, PAYER_PUBKEY };
-use std::mem::size_of;
-
-use crate::state::*;
 
 #[derive(Accounts)]
 pub struct TakeSnapshotCreateFrame<'info> {
@@ -59,12 +59,6 @@ pub struct TakeSnapshotCreateFrame<'info> {
         constraint = worker.id.eq(&snapshot.total_frames),
     )]
     pub worker: Account<'info, Worker>,
-
-    #[account(
-        associated_token::authority = worker,
-        associated_token::mint = config.mint,
-    )]
-    pub worker_stake: Account<'info, TokenAccount>,
 }
 
 pub fn handler(ctx: Context<TakeSnapshotCreateFrame>) -> Result<ThreadResponse> {
@@ -76,51 +70,19 @@ pub fn handler(ctx: Context<TakeSnapshotCreateFrame>) -> Result<ThreadResponse> 
     let system_program = &ctx.accounts.system_program;
     let thread = &ctx.accounts.thread;
     let worker = &ctx.accounts.worker;
-    let worker_stake = &ctx.accounts.worker_stake;
 
     // Initialize snapshot frame account.
     snapshot_frame.init(
         snapshot.total_frames,
         snapshot.key(),
-        worker_stake.amount,
-        snapshot.total_stake,
         worker.key(),
     )?;
 
     // Update snapshot total workers.
-    snapshot.total_stake = snapshot
-        .total_stake
-        .checked_add(worker_stake.amount)
-        .unwrap();
     snapshot.total_frames = snapshot.total_frames.checked_add(1).unwrap();
 
     // Build the next instruction for the thread.
-    let dynamic_instruction = if worker.total_delegations.gt(&0) {
-        // This worker has delegations. Create a snapshot entry for each delegation associated with this worker.
-        let zeroth_delegation_pubkey = Delegation::pubkey(worker.pubkey(), 0);
-        let zeroth_snapshot_entry_pubkey = SnapshotEntry::pubkey(snapshot_frame.key(), 0);
-        Some(
-            Instruction {
-                program_id: crate::ID,
-                accounts: crate::accounts::TakeSnapshotCreateEntry {
-                    config: config.key(),
-                    delegation: zeroth_delegation_pubkey,
-                    payer: PAYER_PUBKEY,
-                    registry: registry.key(),
-                    snapshot: snapshot.key(),
-                    snapshot_entry: zeroth_snapshot_entry_pubkey,
-                    snapshot_frame: snapshot_frame.key(),
-                    system_program: system_program.key(),
-                    thread: thread.key(),
-                    worker: worker.key(),
-                }
-                .to_account_metas(Some(true)),
-                data: crate::instruction::TakeSnapshotCreateEntry {}.data(),
-            }
-            .into(),
-        )
-    } else if snapshot.total_frames.lt(&registry.total_workers) {
-        // This worker has no delegations. Create a snapshot frame for the next worker.
+    let dynamic_instruction = if snapshot.total_frames.lt(&registry.total_workers) {
         let next_snapshot_frame_pubkey =
             SnapshotFrame::pubkey(snapshot.key(), snapshot_frame.id.checked_add(1).unwrap());
         let next_worker_pubkey = Worker::pubkey(worker.id.checked_add(1).unwrap());
@@ -135,8 +97,7 @@ pub fn handler(ctx: Context<TakeSnapshotCreateFrame>) -> Result<ThreadResponse> 
                     snapshot_frame: next_snapshot_frame_pubkey,
                     system_program: system_program.key(),
                     thread: thread.key(),
-                    worker: next_worker_pubkey,
-                    worker_stake: get_associated_token_address(&next_worker_pubkey, &config.mint),
+                    worker: next_worker_pubkey
                 }
                 .to_account_metas(Some(true)),
                 data: crate::instruction::TakeSnapshotCreateFrame {}.data(),

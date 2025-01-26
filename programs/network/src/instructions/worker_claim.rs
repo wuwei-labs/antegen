@@ -1,7 +1,6 @@
 use {crate::state::*, anchor_lang::prelude::*};
 
 #[derive(Accounts)]
-#[instruction(amount: u64)]
 pub struct WorkerClaim<'info> {
     #[account()]
     pub authority: Signer<'info>,
@@ -12,33 +11,46 @@ pub struct WorkerClaim<'info> {
     #[account(
         mut,
         seeds = [
+            SEED_WORKER_COMMISSION,
+            worker.key().as_ref(),
+        ],
+        bump,
+    )]
+    pub commission: Account<'info, WorkerCommission>,
+
+    #[account(
+        mut,
+        seeds = [
             SEED_WORKER,
             worker.id.to_be_bytes().as_ref()
         ],
         bump,
-        has_one = authority
+        has_one = authority,
+        constraint = commission.worker == worker.key()
     )]
     pub worker: Account<'info, Worker>,
 }
 
-pub fn handler(ctx: Context<WorkerClaim>, amount: u64) -> Result<()> {
+pub fn handler(ctx: Context<WorkerClaim>) -> Result<()> {
     // Get accounts
-    let pay_to = &mut ctx.accounts.pay_to;
-    let worker = &mut ctx.accounts.worker;
+    let commission = &ctx.accounts.commission;
+    let pay_to = &ctx.accounts.pay_to;
 
-    // Decrement the worker's commission balance.
-    worker.commission_balance = worker.commission_balance.checked_sub(amount).unwrap();
+    let commission_data_len = 8 + commission.try_to_vec()?.len();
+    let commission_rent_balance = Rent::get()?.minimum_balance(commission_data_len);
+    let commission_lamports = commission.to_account_info().lamports();
+    let available_lamports = commission_lamports
+        .checked_sub(commission_rent_balance)
+        .unwrap_or(0);
 
-    // Transfer commission to the worker.
-    **worker.to_account_info().try_borrow_mut_lamports()? = worker
-        .to_account_info()
-        .lamports()
-        .checked_sub(amount)
+    // Transfer commission to the pay_to account
+    **commission.to_account_info().try_borrow_mut_lamports()? = commission_lamports
+        .checked_sub(available_lamports)
         .unwrap();
     **pay_to.to_account_info().try_borrow_mut_lamports()? = pay_to
         .to_account_info()
         .lamports()
-        .checked_add(amount)
+        .checked_add(available_lamports)
         .unwrap();
 
     Ok(())

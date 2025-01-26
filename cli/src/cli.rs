@@ -1,4 +1,5 @@
-use clap::{Arg, ArgAction, ArgGroup, Command};
+use antegen_network_program::state::MAX_COMMISSION_RATE;
+use clap::{value_parser, Arg, ArgAction, ArgGroup, Command};
 use antegen_thread_program::state::{SerializableInstruction, Trigger};
 use solana_sdk::{pubkey::Pubkey, signature::Keypair};
 
@@ -18,28 +19,7 @@ pub enum CliCommand {
     Crontab {
         schedule: String,
     },
-
-    // Delegation
-    DelegationCreate {
-        worker_id: u64,
-    },
-    DelegationDeposit {
-        amount: u64,
-        delegation_id: u64,
-        worker_id: u64,
-    },
-    DelegationInfo {
-        delegation_id: u64,
-        worker_id: u64,
-    },
-    DelegationWithdraw {
-        amount: u64,
-        delegation_id: u64,
-        worker_id: u64,
-    },
-    Initialize {
-        mint: Pubkey,
-    },
+    Initialize {},
     Localnet {
         force_init: bool,
         clone_addresses: Vec<Pubkey>,
@@ -108,6 +88,7 @@ pub enum CliCommand {
     },
     WorkerUpdate {
         id: u64,
+        commission_rate: Option<u64>,
         signatory: Option<Keypair>,
     },
 }
@@ -162,111 +143,6 @@ pub fn app() -> Command {
                         .num_args(1)
                         .required(true)
                         .help("The schedule to generate a cron table for"),
-                ),
-        )
-        .subcommand(
-            Command::new("delegation")
-                .about("Manage a stake delegation to a Antegen worker")
-                .subcommand(
-                    Command::new("create")
-                        .about("Create a new delegation")
-                        .arg_required_else_help(true)
-                        .arg(
-                            Arg::new("worker_id")
-                                .long("worker_id")
-                                .short('w')
-                                .value_name("WORKER_ID")
-                                .num_args(1)
-                                .required(false)
-                                .help("The ID of the worker to create a delegation with"),
-                        ),
-                )
-                .subcommand(
-                    Command::new("deposit")
-                        .about("Deposit CLOCK to a delegation account")
-                        .arg_required_else_help(true)
-                        .arg(
-                            Arg::new("amount")
-                                .long("amount")
-                                .short('a')
-                                .value_name("AMOUNT")
-                                .num_args(1)
-                                .required(false)
-                                .help("The number of tokens to deposit"),
-                        )
-                        .arg(
-                            Arg::new("delegation_id")
-                                .long("delegation_id")
-                                .short('i')
-                                .value_name("DELEGATION_ID")
-                                .num_args(1)
-                                .required(false)
-                                .help("The ID of the delegation to deposit into"),
-                        )
-                        .arg(
-                            Arg::new("worker_id")
-                                .long("worker_id")
-                                .short('w')
-                                .value_name("WORKER_ID")
-                                .num_args(1)
-                                .required(false)
-                                .help("The ID of the worker"),
-                        ),
-                )
-                .subcommand(
-                    Command::new("info")
-                        .about("Get a delegation")
-                        .arg_required_else_help(true)
-                        .arg(
-                            Arg::new("delegation_id")
-                                .long("delegation_id")
-                                .short('i')
-                                .value_name("DELEGATION_ID")
-                                .num_args(1)
-                                .required(false)
-                                .help("The ID of the delegation"),
-                        )
-                        .arg(
-                            Arg::new("worker_id")
-                                .long("worker_id")
-                                .short('w')
-                                .value_name("WORKER_ID")
-                                .num_args(1)
-                                .required(false)
-                                .help("The ID of the worker"),
-                        ),
-                )
-                .subcommand(
-                    Command::new("withdraw")
-                        .about("Withdraw CLOCK from a delegation account")
-                        .arg_required_else_help(true)
-                        .arg(
-                            Arg::new("amount")
-                                .long("amount")
-                                .short('a')
-                                .value_name("AMOUNT")
-                                .num_args(1)
-                                .required(false)
-                                .help("The number of tokens to withdraw"),
-                        )
-                        .arg(
-                            Arg::new("delegation_id")
-                                .long("delegation_id")
-                                .short('i')
-                                .value_name("DELEGATION_ID")
-                                .num_args(1)
-                                .required(false)
-                                .help("The ID of the delegation to withdraw from"),
-                        )
-                        .arg(
-                            Arg::new("worker_id")
-                                .long("worker_id")
-                                .short('w')
-                                .value_name("WORKER_ID")
-                                .num_args(1)
-                                .required(false)
-                                .help("The ID of the worker"),
-                        ),
                 ),
         )
         .subcommand(
@@ -638,7 +514,7 @@ pub fn app() -> Command {
                 )
                 .subcommand(
                     Command::new("update")
-                        .about("Update a new worker")
+                        .about("Update a worker")
                         .arg(
                             Arg::new("id")
                                 .index(1)
@@ -646,6 +522,15 @@ pub fn app() -> Command {
                                 .num_args(1)
                                 .required(true)
                                 .help("The ID of the worker to edit"),
+                        )
+                        .arg(
+                            Arg::new("commission_rate")
+                                .value_name("COMMISSION_RATE")
+                                .num_args(1)
+                                .required(false)
+                                .value_parser(value_parser!(u64))
+                                .value_parser(value_parser!(u64).range(0..=MAX_COMMISSION_RATE))
+                                .help("The commission rate (0-90)"),
                         )
                         .arg(
                             Arg::new("signatory_keypair")

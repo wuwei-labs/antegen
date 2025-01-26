@@ -282,7 +282,7 @@ fn build_exec_ix(
         VersionedThread::V1(_) => Instruction {
             program_id: antegen_thread_program::ID,
             accounts: antegen_thread_program::accounts::ThreadExec {
-                fee: antegen_network_program::state::Fee::pubkey(worker_pubkey),
+                commission: antegen_network_program::state::WorkerCommission::pubkey(worker_pubkey),
                 pool: antegen_network_program::state::Pool::pubkey(0),
                 signatory: signatory_pubkey,
                 thread: thread_pubkey,

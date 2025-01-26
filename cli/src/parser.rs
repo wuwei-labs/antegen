@@ -18,8 +18,7 @@ impl TryFrom<&ArgMatches> for CliCommand {
         match matches.subcommand() {
             Some(("config", matches)) => parse_config_command(matches),
             Some(("crontab", matches)) => parse_crontab_command(matches),
-            Some(("delegation", matches)) => parse_delegation_command(matches),
-            Some(("initialize", matches)) => parse_initialize_command(matches),
+            Some(("initialize", _)) => parse_initialize_command(),
             Some(("localnet", matches)) => parse_bpf_command(matches),
             Some(("pool", matches)) => parse_pool_command(matches),
             Some(("thread", matches)) => parse_thread_command(matches),
@@ -111,35 +110,8 @@ fn parse_crontab_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     })
 }
 
-fn parse_delegation_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
-    match matches.subcommand() {
-        Some(("create", matches)) => Ok(CliCommand::DelegationCreate {
-            worker_id: parse_u64("worker_id", matches)?,
-        }),
-        Some(("deposit", matches)) => Ok(CliCommand::DelegationDeposit {
-            amount: parse_u64("amount", matches)?,
-            delegation_id: parse_u64("delegation_id", matches)?,
-            worker_id: parse_u64("worker_id", matches)?,
-        }),
-        Some(("info", matches)) => Ok(CliCommand::DelegationInfo {
-            delegation_id: parse_u64("delegation_id", matches)?,
-            worker_id: parse_u64("worker_id", matches)?,
-        }),
-        Some(("withdraw", matches)) => Ok(CliCommand::DelegationWithdraw {
-            amount: parse_u64("amount", matches)?,
-            delegation_id: parse_u64("delegation_id", matches)?,
-            worker_id: parse_u64("worker_id", matches)?,
-        }),
-        _ => Err(CliError::CommandNotRecognized(
-            matches.subcommand().unwrap().0.into(),
-        )),
-    }
-}
-
-fn parse_initialize_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
-    Ok(CliCommand::Initialize {
-        mint: parse_pubkey("mint", matches)?,
-    })
+fn parse_initialize_command() -> Result<CliCommand, CliError> {
+    Ok(CliCommand::Initialize {})
 }
 
 fn parse_pool_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
@@ -221,6 +193,7 @@ fn parse_worker_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
         }),
         Some(("update", matches)) => Ok(CliCommand::WorkerUpdate {
             id: parse_u64("id", matches)?,
+            commission_rate: parse_u64("commission_rate", matches).ok(),
             signatory: parse_keypair_file("signatory_keypair", matches).ok(),
         }),
         _ => Err(CliError::CommandNotRecognized(

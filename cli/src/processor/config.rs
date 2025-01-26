@@ -36,8 +36,7 @@ pub fn set(
     let settings = ConfigSettings {
         admin: admin.unwrap_or(config.admin),
         epoch_thread: epoch_thread.unwrap_or(config.epoch_thread),
-        hasher_thread: hasher_thread.unwrap_or(config.hasher_thread),
-        mint: config.mint,
+        hasher_thread: hasher_thread.unwrap_or(config.hasher_thread)
     };
 
     // Submit tx

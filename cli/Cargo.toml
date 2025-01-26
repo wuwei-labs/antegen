@@ -13,6 +13,10 @@ edition = { workspace = true }
 readme = { workspace = true }
 keywords = { workspace = true }
 
+[features]
+mainnet = []
+default = []
+
 [dependencies]
 solana-cron = { workspace = true }
 antegen-utils = { workspace = true }

@@ -2,7 +2,7 @@ use terminal_link::Link;
 
 const EXPLORER_URL: &str = "https://solscan.io";
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Explorer {
     cluster: String,
     custom_rpc: Option<String>,

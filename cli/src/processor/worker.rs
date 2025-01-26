@@ -1,41 +1,35 @@
-use anchor_lang::{
-    solana_program::{
-        instruction::Instruction,
-        system_program, sysvar,
-    },
-    AccountDeserialize, InstructionData, ToAccountMetas
+use {
+    crate::{client::Client, errors::CliError}, anchor_lang::{
+        solana_program::{instruction::Instruction, system_program, sysvar},
+        AccountDeserialize, InstructionData, ToAccountMetas,
+    }, anchor_spl::{associated_token, token}, antegen_network_program::state::{
+        Config, Registry, Snapshot, SnapshotFrame, Worker, WorkerCommission, WorkerSettings,
+    }, antegen_utils::explorer::Explorer, solana_sdk::{
+        pubkey::Pubkey,
+        signature::{Keypair, Signer},
+    }
 };
-use anchor_spl::{associated_token, associated_token::get_associated_token_address, token};
-use antegen_network_program::state::{
-    Config, Fee, Penalty, Registry, Snapshot, SnapshotFrame, Worker, WorkerSettings,
-};
-use solana_sdk::{pubkey::Pubkey, signature::{Keypair, Signer}};
-
-use crate::{client::Client, errors::CliError};
 
 #[derive(Debug)]
 pub struct WorkerInfo {
     pub worker: Worker,
     pub worker_pubkey: Pubkey,
-    pub fees_total: u64,
-    pub fee_pubkey: Pubkey,
-    pub penalty_total: u64,
-    pub penalty_pubkey: Pubkey,
+    pub worker_commission_balance: u64,
+    pub worker_commissions_pubkey: Pubkey,
     pub snapshot_frame: Option<SnapshotFrame>,
+    pub explorer: Explorer,
 }
 
 impl WorkerInfo {
     pub fn print_status(&self) {
         println!(
-            "Address: {}\nFees: {}\nFee account: {}\nPenalty: {}\nPenalty account: {}\n{:#?}",
-            self.worker_pubkey, 
-            self.fees_total, 
-            self.fee_pubkey, 
-            self.penalty_total, 
-            self.penalty_pubkey, 
+            "Address: {}\nCommissions: {} lamports\nCommissions Account: {}\n{:#?}",
+            self.explorer.account(&self.worker_pubkey),
+            self.worker_commission_balance,
+            self.explorer.account(&self.worker_commissions_pubkey),
             self.worker
         );
-        
+
         if let Some(frame) = &self.snapshot_frame {
             println!("{:#?}", frame);
         }
@@ -47,28 +41,17 @@ pub fn get(client: &Client, id: u64) -> Result<WorkerInfo, CliError> {
     let worker = client
         .get::<Worker>(&worker_pubkey)
         .map_err(|_err| CliError::AccountDataNotParsable(worker_pubkey.to_string()))?;
-
-    // Get fee balance
-    let fee_pubkey = Fee::pubkey(worker_pubkey);
-    let fee_data = client
-        .get_account_data(&fee_pubkey)
-        .map_err(|_err| CliError::AccountNotFound(fee_pubkey.to_string()))?;
-    let fees_min_rent = client
-        .get_minimum_balance_for_rent_exemption(fee_data.len())
+    let worker_commissions_pubkey = WorkerCommission::pubkey(worker_pubkey);
+    
+    // Get commission account data and calculate available balance
+    let commission_data = client
+        .get_account_data(&worker_commissions_pubkey)
+        .map_err(|_err| CliError::AccountNotFound(worker_commissions_pubkey.to_string()))?;
+    let commission_min_rent = client
+        .get_minimum_balance_for_rent_exemption(commission_data.len())
         .unwrap();
-    let fees_balance = client.get_balance(&fee_pubkey).unwrap();
-    let fees_total = fees_balance - fees_min_rent;
-
-    // Get penalty balance
-    let penalty_pubkey = Penalty::pubkey(worker_pubkey);
-    let penalty_data = client
-        .get_account_data(&penalty_pubkey)
-        .map_err(|_err| CliError::AccountNotFound(penalty_pubkey.to_string()))?;
-    let penalty_min_rent = client
-        .get_minimum_balance_for_rent_exemption(penalty_data.len())
-        .unwrap();
-    let penalty_balance = client.get_balance(&penalty_pubkey).unwrap();
-    let penalty_total = penalty_balance - penalty_min_rent;
+    let commission_balance = client.get_balance(&worker_commissions_pubkey).unwrap();
+    let worker_commission_balance = commission_balance.saturating_sub(commission_min_rent);
 
     // Get registry
     let registry_pubkey = Registry::pubkey();
@@ -93,11 +76,10 @@ pub fn get(client: &Client, id: u64) -> Result<WorkerInfo, CliError> {
     let worker_info = WorkerInfo {
         worker,
         worker_pubkey,
-        fees_total,
-        fee_pubkey,
-        penalty_total,
-        penalty_pubkey,
+        worker_commission_balance,
+        worker_commissions_pubkey,
         snapshot_frame,
+        explorer: Explorer::from(client.client.url().clone()),  // Add this
     };
 
     Ok(worker_info)
@@ -110,14 +92,6 @@ pub fn find(client: &Client, id: u64) -> Result<(), CliError> {
 }
 
 pub fn create(client: &Client, signatory: Keypair, silent: bool) -> Result<(), CliError> {
-    // Get config data
-    let config_pubkey = Config::pubkey();
-    let config_data = client
-        .get_account_data(&config_pubkey)
-        .map_err(|_err| CliError::AccountNotFound(config_pubkey.to_string()))?;
-    let config = Config::try_deserialize(&mut config_data.as_slice())
-        .map_err(|_err| CliError::AccountDataNotParsable(config_pubkey.to_string()))?;
-
     // Get registry
     let registry_pubkey = Registry::pubkey();
     let registry_data = client
@@ -126,7 +100,6 @@ pub fn create(client: &Client, signatory: Keypair, silent: bool) -> Result<(), C
     let registry = Registry::try_deserialize(&mut registry_data.as_slice())
         .map_err(|_err| CliError::AccountDataNotParsable(registry_pubkey.to_string()))?;
 
-    // Build ix
     let worker_id = registry.total_workers;
     let worker_pubkey = Worker::pubkey(worker_id);
     let ix = Instruction {
@@ -135,16 +108,13 @@ pub fn create(client: &Client, signatory: Keypair, silent: bool) -> Result<(), C
             associated_token_program: associated_token::ID,
             authority: client.payer_pubkey(),
             config: Config::pubkey(),
-            fee: Fee::pubkey(worker_pubkey),
-            penalty: Penalty::pubkey(worker_pubkey),
-            mint: config.mint,
+            commission: WorkerCommission::pubkey(worker_pubkey),
             registry: Registry::pubkey(),
             rent: sysvar::rent::ID,
             signatory: signatory.pubkey(),
             system_program: system_program::ID,
             token_program: token::ID,
             worker: worker_pubkey,
-            worker_tokens: get_associated_token_address(&worker_pubkey, &config.mint),
         }.to_account_metas(Some(false)),
         data: antegen_network_program::instruction::WorkerCreate {}.data(),
     };
@@ -158,7 +128,7 @@ pub fn create(client: &Client, signatory: Keypair, silent: bool) -> Result<(), C
     Ok(())
 }
 
-pub fn update(client: &Client, id: u64, signatory: Option<Keypair>) -> Result<(), CliError> {
+pub fn update(client: &Client, id: u64, commission_rate: Option<u64>, signatory: Option<Keypair>) -> Result<(), CliError> {
     // Derive worker keypair.
     let worker_pubkey = Worker::pubkey(id);
     let worker = client
@@ -167,7 +137,7 @@ pub fn update(client: &Client, id: u64, signatory: Option<Keypair>) -> Result<()
 
     // Build and submit tx.
     let settings = WorkerSettings {
-        commission_rate: 0,
+        commission_rate: commission_rate.unwrap_or(worker.commission_rate),
         signatory: signatory.map_or(worker.signatory, |v| v.pubkey()),
     };
     let ix = Instruction {
