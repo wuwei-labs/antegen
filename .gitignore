@@ -3,10 +3,13 @@
 .DS_Store
 target
 **/*.rs.bk
+.idea/
 
 # Antegen
 bin/
 lib/
+dist/
+keys/
 .env
 
 # Docker

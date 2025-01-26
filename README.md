@@ -26,7 +26,7 @@ Antegen is a **hard** fork from [Clockwork](https://github.com/clockwork-xyz/clo
 Antegen maintains the core protocol design from Clockwork while modernizing the codebase for compatibility with the latest Solana ecosystem dependencies. This includes support for:
 
 - Anchor 30.1 and above
-- Solana 2.1.6 (Agave) and above
+- Solana 2.1.13 (Agave) and above
 - Latest ecosystem dependencies and standards
 - Modern development tooling
 
@@ -79,7 +79,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 #### 2. Install Solana CLI
 
 ```sh
-sh -c "$(curl -sSfL https://release.anza.xyz/v2.1.6/install)"
+sh -c "$(curl -sSfL https://release.anza.xyz/v2.1.13/install)"
 ```
 
 #### 3. Install Anchor (avm)

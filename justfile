@@ -5,7 +5,7 @@ build:
     anchor build
 
 make:
-    ./scripts/build-all.sh .
+    ./scripts/build-all.sh --release dist/
 
 tarball:
     ./scripts/ci/create-tarball.sh
