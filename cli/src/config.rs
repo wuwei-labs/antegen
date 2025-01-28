@@ -170,6 +170,6 @@ impl CliConfig {
 
     pub fn solana_release_archive() -> String {
         let target_triplet = Self::detect_target_triplet();
-        format!("solana-release-{}.tar.xz", target_triplet)
+        format!("solana-release-{}.tar.bz2", target_triplet)
     }
 }

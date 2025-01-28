@@ -148,15 +148,6 @@ pub fn app() -> Command {
         .subcommand(
             Command::new("initialize")
                 .about("Initialize the Antegen network program")
-                .arg(
-                    Arg::new("mint")
-                        .long("mint")
-                        .short('m')
-                        .value_name("MINT")
-                        .num_args(1)
-                        .required(true)
-                        .help("Mint address of network token"),
-                ),
         )
         .subcommand(
             Command::new("localnet")
