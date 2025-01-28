@@ -1,35 +1,50 @@
 use {
-    crate::state::*,
+    crate::{state::*, ANTEGEN_SQUADS},
     anchor_lang::{prelude::*, solana_program::system_program},
-    anchor_spl::token::Mint,
     std::mem::size_of,
 };
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
     #[account(mut)]
-    pub admin: Signer<'info>,
+    pub payer: Signer<'info>,
+
+    /// CHECK: This is the predefined SQUAD multisig that will be the admin
+    #[account(
+        address = if cfg!(feature = "mainnet") {
+            ANTEGEN_SQUADS
+        } else {
+            payer.key()
+        }
+    )]
+    pub admin: UncheckedAccount<'info>,
 
     #[account(
         init,
         seeds = [SEED_CONFIG],
         bump,
-        payer = admin,
+        payer = payer,
         space = 8 + size_of::<Config>(),
     )]
     pub config: Account<'info, Config>,
-
-    #[account()]
-    pub mint: Account<'info, Mint>,
 
     #[account(
         init,
         seeds = [SEED_REGISTRY],
         bump,
-        payer = admin,
+        payer = payer,
         space = 8 + size_of::<Registry>(),
     )]
     pub registry: Account<'info, Registry>,
+
+    #[account(
+        init,
+        payer = payer,
+        space = 8 + std::mem::size_of::<RegistryFee>(),
+        seeds = [SEED_REGISTRY_FEE, registry.key().as_ref()],
+        bump
+    )]
+    pub registry_fee: Account<'info, RegistryFee>,
 
     #[account(
         init,
@@ -38,7 +53,7 @@ pub struct Initialize<'info> {
             (0 as u64).to_be_bytes().as_ref(),
         ],
         bump,
-        payer = admin,
+        payer = payer,
         space = 8 + size_of::<Snapshot>(),
     )]
     pub snapshot: Account<'info, Snapshot>,
@@ -49,15 +64,15 @@ pub struct Initialize<'info> {
 
 pub fn handler(ctx: Context<Initialize>) -> Result<()> {
     // Get accounts
-    let admin = &ctx.accounts.admin;
     let config = &mut ctx.accounts.config;
-    let mint = &ctx.accounts.mint;
     let registry = &mut ctx.accounts.registry;
+    let registry_fee = &mut ctx.accounts.registry_fee;
     let snapshot = &mut ctx.accounts.snapshot;
 
     // Initialize accounts.
-    config.init(admin.key(), mint.key())?;
+    config.init(ctx.accounts.admin.key())?;
     registry.init()?;
+    registry_fee.init(registry.key())?;
     snapshot.init(0)?;
 
     Ok(())

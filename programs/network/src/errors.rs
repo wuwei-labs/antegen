@@ -8,12 +8,6 @@ pub enum AntegenError {
     #[msg("The commission rate must be an integer between 0 and 100")]
     InvalidCommissionRate,
 
-    #[msg("You cannot request to unstake more tokens than are currently locked")]
-    InvalidUnstakeAmount,
-
-    #[msg("The penalty account has an insufficient balance for this operation")]
-    InsufficientPenaltyBalance,
-
     #[msg("The authority address cannot be used as the worker signatory")]
     InvalidSignatory,
 

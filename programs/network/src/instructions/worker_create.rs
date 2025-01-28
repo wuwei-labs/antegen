@@ -6,7 +6,7 @@ use {
     },
     anchor_spl::{
         associated_token::AssociatedToken,
-        token::{Mint, Token, TokenAccount},
+        token::Token,
     },
     std::mem::size_of,
 };
@@ -26,29 +26,14 @@ pub struct WorkerCreate<'info> {
     #[account(
         init,
         seeds = [
-            SEED_FEE,
+            SEED_WORKER_COMMISSION,
             worker.key().as_ref(),
         ],
         bump,
         payer = authority,
-        space = 8 + size_of::<Fee>(),
+        space = 8 + size_of::<WorkerCommission>(),
     )]
-    pub fee: Account<'info, Fee>,
-
-    #[account(
-        init,
-        seeds = [
-            SEED_PENALTY,
-            worker.key().as_ref(),
-        ],
-        bump,
-        payer = authority,
-        space = 8 + size_of::<Penalty>(),
-    )]
-    pub penalty: Account<'info, Penalty>,
-
-    #[account(address = config.mint)]
-    pub mint: Account<'info, Mint>,
+    pub commission: Account<'info, WorkerCommission>,
 
     #[account(
         mut, 
@@ -81,30 +66,19 @@ pub struct WorkerCreate<'info> {
         space = 8 + size_of::<Worker>(),
     )]
     pub worker: Account<'info, Worker>,
-
-    #[account(
-        init,
-        payer = authority,
-        associated_token::authority = worker,
-        associated_token::mint = mint,
-    )]
-    pub worker_tokens: Account<'info, TokenAccount>,
-
 }
 
 pub fn handler(ctx: Context<WorkerCreate>) -> Result<()> {
     // Get accounts
     let authority = &mut ctx.accounts.authority;
-    let fee = &mut ctx.accounts.fee;
-    let penalty = &mut ctx.accounts.penalty;
+    let commission = &mut ctx.accounts.commission;
     let registry = &mut ctx.accounts.registry;
     let signatory = &mut ctx.accounts.signatory;
     let worker = &mut ctx.accounts.worker;
 
     // Initialize the worker accounts.
     worker.init(authority, registry.total_workers, signatory)?;
-    fee.init(worker.key())?;
-    penalty.init(worker.key())?;
+    commission.init(worker.key())?;
 
     // Update the registry's worker counter.
     registry.total_workers = registry.total_workers.checked_add(1).unwrap();

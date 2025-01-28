@@ -1,14 +1,12 @@
 use anchor_lang::{
     prelude::*,
     solana_program::{
-        instruction::Instruction,
-        program::{get_return_data, invoke_signed},
+        instruction::Instruction, program::{get_return_data, invoke_signed}
     },
     AnchorDeserialize, InstructionData,
 };
-use antegen_network_program::state::{Fee, Pool, Worker, WorkerAccount};
+use antegen_network_program::state::{Pool, Worker, WorkerAccount, WorkerCommission};
 use antegen_utils::thread::{SerializableInstruction, ThreadResponse, PAYER_PUBKEY};
-
 use crate::{errors::AntegenError, state::*};
 
 /// The ID of the pool workers must be a member of to collect fees.
@@ -17,6 +15,28 @@ const POOL_ID: u64 = 0;
 /// The number of lamports to reimburse the worker with after they've submitted a transaction's worth of exec instructions.
 pub const TRANSACTION_BASE_FEE_REIMBURSEMENT: u64 = 5_000;
 
+#[derive(Debug, Clone, Copy)]
+struct BalanceSnapshot {
+    signatory: u64,
+    commission: u64,
+}
+
+/// Represents changes in lamport balances between two snapshots
+#[derive(Debug)]
+struct BalanceChanges {
+    signatory: i64,
+    commission: i64,
+}
+
+impl BalanceSnapshot {
+    fn difference(&self, other: &Self) -> BalanceChanges {
+        BalanceChanges {
+            signatory: self.signatory as i64 - other.signatory as i64,
+            commission: self.commission as i64 - other.commission as i64,
+        }
+    }
+}
+
 /// Accounts required by the `thread_exec` instruction.
 #[derive(Accounts)]
 pub struct ThreadExec<'info> {
@@ -24,14 +44,14 @@ pub struct ThreadExec<'info> {
     #[account(
         mut,
         seeds = [
-            antegen_network_program::state::SEED_FEE,
+            antegen_network_program::state::SEED_WORKER_COMMISSION,
             worker.key().as_ref(),
         ],
         bump,
         seeds::program = antegen_network_program::ID,
         has_one = worker,
     )]
-    pub fee: Account<'info, Fee>,
+    pub commission: Account<'info, WorkerCommission>,
 
     /// The active worker pool.
     #[account(address = Pool::pubkey(POOL_ID))]
@@ -64,7 +84,7 @@ pub struct ThreadExec<'info> {
 pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
     // Get accounts
     let clock = Clock::get().unwrap();
-    let fee = &mut ctx.accounts.fee;
+    let commission = &mut ctx.accounts.commission;
     let pool = &ctx.accounts.pool;
     let signatory = &mut ctx.accounts.signatory;
     let thread = &mut ctx.accounts.thread;
@@ -77,14 +97,14 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
         return Err(AntegenError::RateLimitExeceeded.into());
     }
 
-    // Record the worker's lamports before invoking inner ixs.
-    let signatory_lamports_pre = signatory.lamports();
+    let initial_balances = BalanceSnapshot {
+        signatory: signatory.lamports(),
+        commission: commission.to_account_info().lamports(),
+    };
 
     // Get the instruction to execute.
     // We have already verified that it is not null during account validation.
     let instruction: &mut SerializableInstruction = &mut thread.next_instruction.clone().unwrap();
-
-    // Inject the signatory's pubkey for the Antegen payer ID.
     for acc in instruction.accounts.iter_mut() {
         if acc.pubkey.eq(&PAYER_PUBKEY) {
             acc.pubkey = signatory.key();
@@ -178,7 +198,6 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
     }
 
     // Update the exec context.
-    let should_reimburse_transaction = clock.slot > thread.exec_context.unwrap().last_exec_at;
     thread.exec_context = Some(ExecContext {
         exec_index,
         execs_since_slot: if clock.slot == thread.exec_context.unwrap().last_exec_at {
@@ -195,36 +214,51 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
         ..thread.exec_context.unwrap()
     });
 
-    // Reimbursement signatory for lamports paid during inner ix.
-    let signatory_lamports_post = signatory.lamports();
-    let mut signatory_reimbursement =
-        signatory_lamports_pre.saturating_sub(signatory_lamports_post);
+    // Calculate actual balance changes from inner instruction
+    let post_inner_balances = BalanceSnapshot {
+        signatory: signatory.lamports(),
+        commission: commission.to_account_info().lamports(),
+    };
+
+    let balance_changes = post_inner_balances.difference(&initial_balances);
+    // Calculate reimbursement needs
+    let should_reimburse_transaction = clock.slot > thread.exec_context.unwrap().last_exec_at;
+    let mut required_reimbursement = if balance_changes.signatory.lt(&0) {
+        balance_changes.signatory.unsigned_abs()
+    } else {
+        0
+    };
+
     if should_reimburse_transaction {
-        signatory_reimbursement = signatory_reimbursement
+        required_reimbursement = required_reimbursement
             .checked_add(TRANSACTION_BASE_FEE_REIMBURSEMENT)
             .unwrap();
     }
-    if signatory_reimbursement.gt(&0) {
+
+    // Handle reimbursement if needed
+    if required_reimbursement.gt(&0) {
         **thread.to_account_info().try_borrow_mut_lamports()? = thread
             .to_account_info()
             .lamports()
-            .checked_sub(signatory_reimbursement)
+            .checked_sub(required_reimbursement)
             .unwrap();
         **signatory.to_account_info().try_borrow_mut_lamports()? = signatory
             .to_account_info()
             .lamports()
-            .checked_add(signatory_reimbursement)
+            .checked_add(required_reimbursement)
             .unwrap();
     }
 
-    // If the worker is in the pool, debit from the thread account and payout to the worker's fee account.
-    if pool.clone().into_inner().workers.contains(&worker.key()) {
+    // Only process worker fees if they haven't already been processed by inner instruction
+    if pool.clone().into_inner().workers.contains(&worker.key())
+        && balance_changes.commission.eq(&0)  // Only pay if commission hasn't changed
+    {
         **thread.to_account_info().try_borrow_mut_lamports()? = thread
             .to_account_info()
             .lamports()
             .checked_sub(thread.fee)
             .unwrap();
-        **fee.to_account_info().try_borrow_mut_lamports()? = fee
+        **commission.to_account_info().try_borrow_mut_lamports()? = commission
             .to_account_info()
             .lamports()
             .checked_add(thread.fee)

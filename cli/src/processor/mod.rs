@@ -1,6 +1,5 @@
 mod config;
 mod crontab;
-mod delegation;
 mod initialize;
 mod localnet;
 mod pool;
@@ -8,16 +7,17 @@ mod registry;
 mod thread;
 mod worker;
 
-use anyhow::Result;
-use clap::ArgMatches;
-use solana_sdk::signature::read_keypair_file;
-
-use crate::{
-    client::Client,
-    cli::CliCommand,
-    config::CliConfig,
-    errors::CliError,
-    processor::thread::parse_pubkey_from_id_or_address,
+use {
+    anyhow::Result,
+    clap::ArgMatches,
+    solana_sdk::signature::read_keypair_file,
+    crate::{
+        client::Client,
+        cli::CliCommand,
+        config::CliConfig,
+        errors::CliError,
+        processor::thread::parse_pubkey_from_id_or_address,
+    },
 };
 
 pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
@@ -49,22 +49,7 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             hasher_thread,
         } => config::set(&client, admin, epoch_thread, hasher_thread),
         CliCommand::Crontab { schedule } => crontab::get(&client, schedule),
-        CliCommand::DelegationCreate { worker_id } => delegation::create(&client, worker_id),
-        CliCommand::DelegationDeposit {
-            amount,
-            delegation_id,
-            worker_id,
-        } => delegation::deposit(&client, amount, delegation_id, worker_id),
-        CliCommand::DelegationInfo {
-            delegation_id,
-            worker_id,
-        } => delegation::info(&client, delegation_id, worker_id),
-        CliCommand::DelegationWithdraw {
-            amount,
-            delegation_id,
-            worker_id,
-        } => delegation::withdraw(&client, amount, delegation_id, worker_id),
-        CliCommand::Initialize { mint } => initialize::initialize(&client, mint),
+        CliCommand::Initialize {} => initialize::initialize(&client),
         CliCommand::Localnet {
             clone_addresses,
             program_infos,
@@ -116,7 +101,7 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
         CliCommand::RegistryUnlock => registry::unlock(&client),
         CliCommand::WorkerCreate { signatory } => worker::create(&client, signatory, false),
         CliCommand::WorkerFind { id} => worker::find(&client, id),
-        CliCommand::WorkerUpdate { id, signatory } => worker::update(&client, id, signatory),
+        CliCommand::WorkerUpdate { id, commission_rate, signatory } => worker::update(&client, id, commission_rate, signatory),
     }
 }
 

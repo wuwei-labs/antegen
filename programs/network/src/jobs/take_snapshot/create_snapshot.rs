@@ -1,14 +1,13 @@
-use std::mem::size_of;
-
-use anchor_lang::{
-    prelude::*,
-    solana_program::{instruction::Instruction, system_program},
-    InstructionData,
+use {
+    crate::state::*,
+    anchor_lang::{
+        prelude::*,
+        solana_program::{instruction::Instruction, system_program},
+        InstructionData,
+    },
+    antegen_utils::thread::{ThreadResponse, PAYER_PUBKEY},
+    std::mem::size_of,
 };
-use anchor_spl::associated_token::get_associated_token_address;
-use antegen_utils::thread::{ThreadResponse, PAYER_PUBKEY};
-
-use crate::state::*;
 
 #[derive(Accounts)]
 pub struct TakeSnapshotCreateSnapshot<'info> {
@@ -71,7 +70,6 @@ pub fn handler(ctx: Context<TakeSnapshotCreateSnapshot>) -> Result<ThreadRespons
                         system_program: system_program.key(),
                         thread: thread.key(),
                         worker: worker_pubkey,
-                        worker_stake: get_associated_token_address(&worker_pubkey, &config.mint),
                     }
                     .to_account_metas(Some(true)),
                     data: crate::instruction::TakeSnapshotCreateFrame {}.data(),

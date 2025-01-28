@@ -6,6 +6,9 @@ use {
 
 #[derive(Accounts)]
 pub struct PoolCreate<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
     #[account(address = config.admin)]
     pub admin: Signer<'info>,
 
@@ -14,9 +17,6 @@ pub struct PoolCreate<'info> {
         has_one = admin
     )]
     pub config: Account<'info, Config>,
-
-    #[account(mut)]
-    pub payer: Signer<'info>,
 
     #[account(
         init,

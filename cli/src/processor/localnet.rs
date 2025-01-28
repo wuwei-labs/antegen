@@ -23,25 +23,11 @@ use {
     solana_sdk::{
         commitment_config::CommitmentConfig,
         native_token::LAMPORTS_PER_SOL,
-        program_pack::Pack,
         pubkey::Pubkey,
         signature::{
             read_keypair_file,
-            Keypair,
             Signer,
         },
-        system_instruction,
-    },
-    spl_associated_token_account::{
-        create_associated_token_account,
-        get_associated_token_address,
-    },
-    spl_token::{
-        instruction::{
-            initialize_mint,
-            mint_to,
-        },
-        state::Mint,
     },
     std::fs,
     std::process::{
@@ -89,70 +75,11 @@ pub fn start(
     wait_for_validator(client, 10)?;
 
     // Initialize Antegen
-    let mint_pubkey = mint_antegen_token(client)?;
-    super::initialize::initialize(client, mint_pubkey)?;
+    super::initialize::initialize(client)?;
+    create_threads(client)?;
     register_worker(client, config)?;
 
-    
-    create_threads(client, mint_pubkey)?;
-
     Ok(())
-}
-
-fn mint_antegen_token(client: &Client) -> Result<Pubkey> {
-    let explorer = Explorer::from(client.client.url());
-    // Calculate rent and pubkeys
-    let mint_keypair = Keypair::new();
-    let mint_rent = client
-        .get_minimum_balance_for_rent_exemption(Mint::LEN)
-        .context("Failed to calculate mint rent")?;
-    let token_account_pubkey =
-        get_associated_token_address(&client.payer_pubkey(), &mint_keypair.pubkey());
-
-    // Build ixs
-    let ixs = vec![
-        // Create mint account
-        system_instruction::create_account(
-            &client.payer_pubkey(),
-            &mint_keypair.pubkey(),
-            mint_rent,
-            Mint::LEN as u64,
-            &spl_token::ID,
-        ),
-        initialize_mint(
-            &spl_token::ID,
-            &mint_keypair.pubkey(),
-            &client.payer_pubkey(),
-            None,
-            8,
-        )
-        .unwrap(),
-        // Create associated token account
-        #[allow(deprecated)]
-        create_associated_token_account(
-            &client.payer_pubkey(),
-            &client.payer_pubkey(),
-            &mint_keypair.pubkey(),
-        ),
-        // Mint 10 tokens to the local user
-        mint_to(
-            &spl_token::ID,
-            &mint_keypair.pubkey(),
-            &token_account_pubkey,
-            &client.payer_pubkey(),
-            &[&client.payer_pubkey()],
-            1000000000,
-        )
-        .unwrap(),
-    ];
-
-    // Submit tx
-    client
-        .send_and_confirm(&ixs, &[client.payer(), &mint_keypair])
-        .context("Failed to mint Antegen tokens")?;
-
-    print_status!("Mint     💰", "{}", explorer.token(mint_keypair.pubkey()));
-    Ok(mint_keypair.pubkey())
 }
 
 fn register_worker(client: &Client, config: &CliConfig) -> Result<()> {
@@ -173,16 +100,10 @@ fn register_worker(client: &Client, config: &CliConfig) -> Result<()> {
 
     let worker_info = super::worker::get(client, 0);
     print_status!("Worker   👷", "{}", explorer.account(worker_info?.worker_pubkey));
-
-    // Delegate stake to the worker
-    super::delegation::create(client, 0).context("delegation::create failed")?;
-    super::delegation::deposit(client, 100000000, 0, 0).context("delegation::deposit failed")?;
-    let delegation_info = super::delegation::get(client,0, 0);
-    print_status!("Delegate 🤝", "{}", explorer.account(delegation_info?.delegation_pubkey));
     Ok(())
 }
 
-fn create_threads(client: &Client, mint_pubkey: Pubkey) -> Result<()> {
+fn create_threads(client: &Client) -> Result<()> {
     let explorer = Explorer::from(client.client.url());
     // Create epoch thread.
     let epoch_thread_id = "antegen.network.epoch";
@@ -198,24 +119,6 @@ fn create_threads(client: &Client, mint_pubkey: Pubkey) -> Result<()> {
     };
     let ix_a2 = Instruction {
         program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::ProcessUnstakesJob {
-            config: Config::pubkey(),
-            registry: Registry::pubkey(),
-            thread: epoch_thread_pubkey,
-        }.to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::ProcessUnstakesJob {}.data(),
-    };
-    let ix_a3 = Instruction {
-        program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::StakeDelegationsJob {
-            config: Config::pubkey(),
-            registry: Registry::pubkey(),
-            thread: epoch_thread_pubkey,
-        }.to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::StakeDelegationsJob {}.data(),
-    };
-    let ix_a4 = Instruction {
-        program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::TakeSnapshotJob {
             config: Config::pubkey(),
             registry: Registry::pubkey(),
@@ -223,7 +126,7 @@ fn create_threads(client: &Client, mint_pubkey: Pubkey) -> Result<()> {
         }.to_account_metas(Some(false)),
         data: antegen_network_program::instruction::TakeSnapshotJob {}.data(),
     };
-    let ix_a5 = Instruction {
+    let ix_a3 = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::EpochCutover {
             config: Config::pubkey(),
@@ -232,7 +135,7 @@ fn create_threads(client: &Client, mint_pubkey: Pubkey) -> Result<()> {
         }.to_account_metas(Some(false)),
         data: antegen_network_program::instruction::IncrementEpoch {}.data(),
     };
-    let ix_a6 = Instruction {
+    let ix_a4 = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::DeleteSnapshotJob {
             config: Config::pubkey(),
@@ -257,8 +160,6 @@ fn create_threads(client: &Client, mint_pubkey: Pubkey) -> Result<()> {
                 ix_a2.into(),
                 ix_a3.into(),
                 ix_a4.into(),
-                ix_a5.into(),
-                ix_a6.into(),
             ],
             trigger: Trigger::Cron {
                 schedule: "0 * * * * * *".into(),
@@ -306,8 +207,7 @@ fn create_threads(client: &Client, mint_pubkey: Pubkey) -> Result<()> {
     let settings = ConfigSettings {
         admin: client.payer_pubkey(),
         epoch_thread: epoch_thread_pubkey,
-        hasher_thread: hasher_thread_pubkey,
-        mint: mint_pubkey,
+        hasher_thread: hasher_thread_pubkey
     };
     let ix_c = Instruction {
         program_id: antegen_network_program::ID,

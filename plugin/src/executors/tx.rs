@@ -1,36 +1,36 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
+use {
+    std::{
+        collections::{HashMap, HashSet},
+        fmt::Debug,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        },
     },
+    bincode::serialize,
+    antegen_network_program::state::{Pool, Registry, Worker},
+    antegen_thread_program::state::VersionedThread,
+    log::info,
+    solana_client::{
+        nonblocking::{rpc_client::RpcClient, tpu_client::TpuClient},
+        rpc_config::RpcSimulateTransactionConfig,
+        tpu_client::TpuClientConfig,
+    },
+    agave_geyser_plugin_interface::geyser_plugin_interface::{
+        GeyserPluginError, 
+        Result as PluginResult,
+    },
+    solana_program::pubkey::Pubkey,
+    solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
+    solana_sdk::{
+        commitment_config::CommitmentConfig,
+        signature::{Keypair, Signature},
+        transaction::{Transaction, VersionedTransaction},
+    },
+    tokio::{runtime::Runtime, sync::RwLock},
+    crate::{config::PluginConfig, pool_position::PoolPosition, utils::read_or_new_keypair},
+    super::AccountGet,
 };
-
-use bincode::serialize;
-use antegen_network_program::state::{Pool, Registry, Snapshot, SnapshotFrame, Worker};
-use antegen_thread_program::state::VersionedThread;
-use log::info;
-use solana_client::{
-    nonblocking::{rpc_client::RpcClient, tpu_client::TpuClient},
-    rpc_config::RpcSimulateTransactionConfig,
-    tpu_client::TpuClientConfig,
-};
-use agave_geyser_plugin_interface::geyser_plugin_interface::{
-    GeyserPluginError, Result as PluginResult,
-};
-use solana_program::pubkey::Pubkey;
-use solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool};
-use solana_sdk::{
-    commitment_config::CommitmentConfig,
-    signature::{Keypair, Signature},
-    transaction::{Transaction, VersionedTransaction},
-};
-use tokio::{runtime::Runtime, sync::RwLock};
-
-use crate::{config::PluginConfig, pool_position::PoolPosition, utils::read_or_new_keypair};
-
-use super::AccountGet;
 
 /// Number of slots to wait before checking for a confirmed transaction.
 static TRANSACTION_CONFIRMATION_PERIOD: u64 = 24;
@@ -280,32 +280,24 @@ impl TxExecutor {
             return Ok(());
         }
         let registry = client.get::<Registry>(&Registry::pubkey()).await.unwrap();
-        let snapshot_pubkey = Snapshot::pubkey(registry.current_epoch);
-        let snapshot_frame_pubkey = SnapshotFrame::pubkey(snapshot_pubkey, self.config.worker_id);
-        if let Ok(snapshot) = client.get::<Snapshot>(&snapshot_pubkey).await {
-            if let Ok(snapshot_frame) = client.get::<SnapshotFrame>(&snapshot_frame_pubkey).await {
-                if let Some(tx) = crate::builders::build_pool_rotation_tx(
-                    client.clone(),
-                    &self.keypair,
-                    pool_position,
-                    registry,
-                    snapshot,
-                    snapshot_frame,
-                    self.config.worker_id,
-                )
-                .await
-                {
-                    self.clone().simulate_tx(&tx).await?;
-                    self.clone().submit_tx(&tx).await?;
-                    let mut w_rotation_history = self.rotation_history.write().await;
-                    *w_rotation_history = Some(TransactionMetadata {
-                        due_slot: slot,
-                        sent_slot: slot,
-                        signature: tx.signatures[0],
-                    });
-                    drop(w_rotation_history);
-                }
-            }
+        if let Some(tx) = crate::builders::build_pool_rotation_tx(
+            client.clone(),
+            &self.keypair,
+            pool_position,
+            registry,
+            self.config.worker_id,
+        )
+        .await
+        {
+            self.clone().simulate_tx(&tx).await?;
+            self.clone().submit_tx(&tx).await?;
+            let mut w_rotation_history = self.rotation_history.write().await;
+            *w_rotation_history = Some(TransactionMetadata {
+                due_slot: slot,
+                sent_slot: slot,
+                signature: tx.signatures[0],
+            });
+            drop(w_rotation_history);
         }
         Ok(())
     }

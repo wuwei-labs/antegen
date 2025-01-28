@@ -8,7 +8,6 @@ pub const SEED_SNAPSHOT: &[u8] = b"snapshot";
 pub struct Snapshot {
     pub id: u64,
     pub total_frames: u64,
-    pub total_stake: u64,
 }
 
 impl Snapshot {
@@ -32,7 +31,6 @@ impl SnapshotAccount for Account<'_, Snapshot> {
     fn init(&mut self, id: u64) -> Result<()> {
         self.id = id;
         self.total_frames = 0;
-        self.total_stake = 0;
         Ok(())
     }
 }

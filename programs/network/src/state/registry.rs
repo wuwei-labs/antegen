@@ -8,7 +8,6 @@ use anchor_lang::{prelude::*, AnchorDeserialize};
 pub const SEED_REGISTRY: &[u8] = b"registry";
 
 /// Registry
-
 #[account]
 #[derive(Debug)]
 pub struct Registry {
@@ -16,23 +15,24 @@ pub struct Registry {
     pub locked: bool,
     pub nonce: u64,
     pub total_pools: u64,
-    pub total_unstakes: u64,
-    pub total_workers: u64,
+    pub total_workers: u64
 }
 
 impl Registry {
     pub fn pubkey() -> Pubkey {
-        Pubkey::find_program_address(&[SEED_REGISTRY], &crate::ID).0
+        Pubkey::find_program_address(
+            &[SEED_REGISTRY],
+            &crate::ID,
+        )
+        .0
     }
 }
 
 /**
  * RegistryAccount
  */
-
 pub trait RegistryAccount {
     fn init(&mut self) -> Result<()>;
-
     fn hash_nonce(&mut self) -> Result<()>;
 }
 

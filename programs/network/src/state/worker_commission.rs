@@ -1,26 +1,30 @@
 use anchor_lang::{prelude::*, AnchorDeserialize};
 
-pub const SEED_FEE: &[u8] = b"fee";
+pub const SEED_WORKER_COMMISSION: &[u8] = b"commission";
 
 /// Escrows the lamport balance owed to a particular worker.
 #[account]
 #[derive(Debug)]
-pub struct Fee {
-    /// The number of lamports that are distributable for this epoch period.
-    pub distributable_balance: u64,
-    /// The worker who received the fees.
-    pub worker: Pubkey,
+pub struct WorkerCommission {
+    pub bump: u8,
+    pub worker: Pubkey
 }
 
-impl Fee {
-    /// Derive the pubkey of a fee account.
+impl WorkerCommission {
     pub fn pubkey(worker: Pubkey) -> Pubkey {
-        Pubkey::find_program_address(&[SEED_FEE, worker.as_ref()], &crate::ID).0
+        Pubkey::find_program_address(
+            &[
+                SEED_WORKER_COMMISSION,
+                worker.as_ref(),
+            ],
+            &crate::ID,
+        )
+        .0
     }
 }
 
 /// Trait for reading and writing to a fee account.
-pub trait FeeAccount {
+pub trait WorkerCommissionAccount {
     /// Get the pubkey of the fee account.
     fn pubkey(&self) -> Pubkey;
 
@@ -28,13 +32,12 @@ pub trait FeeAccount {
     fn init(&mut self, worker: Pubkey) -> Result<()>;
 }
 
-impl FeeAccount for Account<'_, Fee> {
+impl WorkerCommissionAccount for Account<'_, WorkerCommission> {
     fn pubkey(&self) -> Pubkey {
-        Fee::pubkey(self.worker)
+        WorkerCommission::pubkey(self.worker)
     }
 
     fn init(&mut self, worker: Pubkey) -> Result<()> {
-        self.distributable_balance = 0;
         self.worker = worker;
         Ok(())
     }

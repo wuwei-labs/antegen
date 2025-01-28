@@ -11,8 +11,7 @@ pub const SEED_CONFIG: &[u8] = b"config";
 pub struct Config {
     pub admin: Pubkey,
     pub epoch_thread: Pubkey,
-    pub hasher_thread: Pubkey,
-    pub mint: Pubkey,
+    pub hasher_thread: Pubkey
 }
 
 impl Config {
@@ -29,8 +28,7 @@ impl Config {
 pub struct ConfigSettings {
     pub admin: Pubkey,
     pub epoch_thread: Pubkey,
-    pub hasher_thread: Pubkey,
-    pub mint: Pubkey,
+    pub hasher_thread: Pubkey
 }
 
 /**
@@ -38,15 +36,14 @@ pub struct ConfigSettings {
  */
 
 pub trait ConfigAccount {
-    fn init(&mut self, admin: Pubkey, mint: Pubkey) -> Result<()>;
+    fn init(&mut self, admin: Pubkey) -> Result<()>;
 
     fn update(&mut self, settings: ConfigSettings) -> Result<()>;
 }
 
 impl ConfigAccount for Account<'_, Config> {
-    fn init(&mut self, admin: Pubkey, mint: Pubkey) -> Result<()> {
+    fn init(&mut self, admin: Pubkey) -> Result<()> {
         self.admin = admin;
-        self.mint = mint;
         Ok(())
     }
 
@@ -54,7 +51,6 @@ impl ConfigAccount for Account<'_, Config> {
         self.admin = settings.admin;
         self.epoch_thread = settings.epoch_thread;
         self.hasher_thread = settings.hasher_thread;
-        self.mint = settings.mint;
         Ok(())
     }
 }

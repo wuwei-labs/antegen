@@ -10,9 +10,6 @@ pub const SEED_SNAPSHOT_FRAME: &[u8] = b"snapshot_frame";
 pub struct SnapshotFrame {
     pub id: u64,
     pub snapshot: Pubkey,
-    pub stake_amount: u64,
-    pub stake_offset: u64,
-    pub total_entries: u64,
     pub worker: Pubkey,
 }
 
@@ -41,8 +38,6 @@ pub trait SnapshotFrameAccount {
         &mut self,
         id: u64,
         snapshot: Pubkey,
-        stake_amount: u64,
-        stake_offset: u64,
         worker: Pubkey,
     ) -> Result<()>;
 }
@@ -56,15 +51,10 @@ impl SnapshotFrameAccount for Account<'_, SnapshotFrame> {
         &mut self,
         id: u64,
         snapshot: Pubkey,
-        stake_amount: u64,
-        stake_offset: u64,
         worker: Pubkey,
     ) -> Result<()> {
         self.id = id;
         self.snapshot = snapshot;
-        self.stake_offset = stake_offset;
-        self.stake_amount = stake_amount;
-        self.total_entries = 0;
         self.worker = worker;
         Ok(())
     }
