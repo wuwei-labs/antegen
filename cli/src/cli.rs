@@ -7,19 +7,18 @@ use crate::parser::ProgramInfo;
 
 #[derive(Debug, PartialEq)]
 pub enum CliCommand {
-    // Config commands
-    ConfigView,
-    ConfigSet {
-        admin: Option<Pubkey>,
-        epoch_thread: Option<Pubkey>,
-        hasher_thread: Option<Pubkey>,
-    },
-
     // Crontab
     Crontab {
         schedule: String,
     },
-    Initialize {},
+    NetworkInitialize {},
+    NetworkThreadCreate { amount: u64 },
+    NetworkConfigSet {
+        admin: Option<Pubkey>,
+        epoch_thread: Option<Pubkey>,
+        hasher_thread: Option<Pubkey>,
+    },
+    NetworkConfigGet,
     Localnet {
         force_init: bool,
         clone_addresses: Vec<Pubkey>,
@@ -146,8 +145,62 @@ pub fn app() -> Command {
                 ),
         )
         .subcommand(
-            Command::new("initialize")
-                .about("Initialize the Antegen network program")
+            Command::new("network")
+                .about("Manage the Antegen Network Program")
+                .subcommand(
+                    Command::new("config")
+                    .about("Antegen Network Configuration")
+                    .arg_required_else_help(true)
+                    .subcommand(Command::new("get")
+                        .about("Get current config settings")
+                    )
+                    .subcommand(
+                        Command::new("set")
+                            .about("Set a config setting")
+                            .arg(
+                                Arg::new("admin")
+                                    .long("admin")
+                                    .value_name("ADMIN")
+                                    .num_args(1)
+                            )
+                            .arg(
+                                Arg::new("epoch_thread")
+                                    .long("epoch_thread")
+                                    .value_name("EPOCH_THREAD")
+                                    .num_args(1)
+                            )
+                            .arg(
+                                Arg::new("hasher_thread")
+                                    .long("hasher_thread")
+                                    .value_name("HASHER_THREAD")
+                                    .num_args(1)
+                            )
+                            .group(
+                                ArgGroup::new("config_settings")
+                                    .args(&["admin", "epoch_thread", "hasher_thread"])
+                                    .multiple(true),
+                            ),
+                    )
+                )
+                .subcommand(
+                    Command::new("initialize")
+                        .about("Initialize the Network Program")
+                )
+                .subcommand(
+                    Command::new("threads")
+                        .about("Manage Network threads")
+                        .subcommand(
+                            Command::new("create")
+                                .about("Create Epoch and Hasher threads")
+                                .arg(
+                                    Arg::new("amount")
+                                        .long("amount")
+                                        .help("Amount in SOL to deposit")
+                                        .value_parser(value_parser!(f64))
+                                        .default_value("1.0")
+                                )
+                        )
+                )
         )
         .subcommand(
             Command::new("localnet")

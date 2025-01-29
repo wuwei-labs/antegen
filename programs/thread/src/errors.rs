@@ -4,7 +4,7 @@ use anchor_lang::prelude::*;
 
 /// Errors for the the Antegen thread program.
 #[error_code]
-pub enum AntegenError {
+pub enum AntegenThreadError {
     /// Thrown if a exec response has an invalid program ID or cannot be parsed.
     #[msg("The exec response could not be parsed")]
     InvalidThreadResponse,
@@ -43,4 +43,7 @@ pub enum AntegenError {
     /// Thrown if the user attempts to withdraw SOL that would put a thread below it's minimum rent threshold.
     #[msg("Withdrawing this amount would leave the thread with less than the minimum required SOL for rent exemption")]
     WithdrawalTooLarge,
+
+    #[msg("Thread IDs are limited to 32 bytes")]
+    ThreadIdTooLong,
 }

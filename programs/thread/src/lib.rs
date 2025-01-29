@@ -18,6 +18,48 @@ use state::*;
 
 declare_id!("AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1");
 
+#[derive(AnchorSerialize, AnchorDeserialize)]
+pub enum ThreadId {
+    Bytes(Vec<u8>),
+    Pubkey(Pubkey),
+}
+
+impl AsRef<[u8]> for ThreadId {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            ThreadId::Bytes(bytes) => bytes.as_ref(),
+            ThreadId::Pubkey(pubkey) => pubkey.as_ref(),
+        }
+    }
+}
+
+impl ThreadId {
+    pub fn len(&self) -> usize {
+        match self {
+            ThreadId::Bytes(bytes) => bytes.len(),
+            ThreadId::Pubkey(_) => 32,
+        }
+    }
+}
+
+impl From<String> for ThreadId {
+    fn from(s: String) -> Self {
+        ThreadId::Bytes(s.into_bytes())
+    }
+}
+
+impl From<&str> for ThreadId {
+    fn from(s: &str) -> Self {
+        ThreadId::Bytes(s.as_bytes().to_vec())
+    }
+}
+
+impl From<Pubkey> for ThreadId {
+    fn from(pubkey: Pubkey) -> Self {
+        ThreadId::Pubkey(pubkey)
+    }
+}
+
 #[program]
 pub mod thread_program {
     use super::*;
@@ -36,7 +78,7 @@ pub mod thread_program {
     pub fn thread_create(
         ctx: Context<ThreadCreate>,
         amount: u64,
-        id: Vec<u8>,
+        id: ThreadId,
         instructions: Vec<SerializableInstruction>,
         trigger: Trigger,
     ) -> Result<()> {

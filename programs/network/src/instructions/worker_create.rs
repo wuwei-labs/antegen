@@ -39,14 +39,14 @@ pub struct WorkerCreate<'info> {
         mut, 
         seeds = [SEED_REGISTRY],
         bump,
-        constraint = !registry.locked @ AntegenError::RegistryLocked
+        constraint = !registry.locked @ AntegenNetworkError::RegistryLocked
     )]
     pub registry: Account<'info, Registry>,
 
     #[account(address = sysvar::rent::ID)]
     pub rent: Sysvar<'info, Rent>,
 
-    #[account(constraint = signatory.key().ne(&authority.key()) @ AntegenError::InvalidSignatory)]
+    #[account(constraint = signatory.key().ne(&authority.key()) @ AntegenNetworkError::InvalidSignatory)]
     pub signatory: Signer<'info>,
 
     #[account(address = system_program::ID)]

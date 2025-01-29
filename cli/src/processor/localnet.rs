@@ -13,12 +13,6 @@ use {
         Context,
         Result,
     },
-    anchor_lang::{
-        solana_program::{instruction::Instruction, system_program},
-        InstructionData, ToAccountMetas
-    },
-    antegen_network_program::state::{Config, ConfigSettings, Registry},
-    antegen_thread_program::state::{Thread, Trigger},
     antegen_utils::explorer::Explorer,
     solana_sdk::{
         commitment_config::CommitmentConfig,
@@ -75,8 +69,8 @@ pub fn start(
     wait_for_validator(client, 10)?;
 
     // Initialize Antegen
-    super::initialize::initialize(client)?;
-    create_threads(client)?;
+    super::network::initialize(client)?;
+    super::network::create_threads(client, LAMPORTS_PER_SOL)?;
     register_worker(client, config)?;
 
     Ok(())
@@ -100,138 +94,6 @@ fn register_worker(client: &Client, config: &CliConfig) -> Result<()> {
 
     let worker_info = super::worker::get(client, 0);
     print_status!("Worker   👷", "{}", explorer.account(worker_info?.worker_pubkey));
-    Ok(())
-}
-
-fn create_threads(client: &Client) -> Result<()> {
-    let explorer = Explorer::from(client.client.url());
-    // Create epoch thread.
-    let epoch_thread_id = "antegen.network.epoch";
-    let epoch_thread_pubkey = Thread::pubkey(client.payer_pubkey(), epoch_thread_id.into());
-    let ix_a1 = Instruction {
-        program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::DistributeFeesJob {
-            config: Config::pubkey(),
-            registry: Registry::pubkey(),
-            thread: epoch_thread_pubkey,
-        }.to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::DistributeFeesJob {}.data(),
-    };
-    let ix_a2 = Instruction {
-        program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::TakeSnapshotJob {
-            config: Config::pubkey(),
-            registry: Registry::pubkey(),
-            thread: epoch_thread_pubkey,
-        }.to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::TakeSnapshotJob {}.data(),
-    };
-    let ix_a3 = Instruction {
-        program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::EpochCutover {
-            config: Config::pubkey(),
-            registry: Registry::pubkey(),
-            thread: epoch_thread_pubkey,
-        }.to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::IncrementEpoch {}.data(),
-    };
-    let ix_a4 = Instruction {
-        program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::DeleteSnapshotJob {
-            config: Config::pubkey(),
-            registry: Registry::pubkey(),
-            thread: epoch_thread_pubkey,
-        }.to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::DeleteSnapshotJob {}.data(),
-    };
-    let ix_a = Instruction {
-        program_id: antegen_thread_program::ID,
-        accounts: antegen_thread_program::accounts::ThreadCreate {
-            authority: client.payer_pubkey(),
-            payer: client.payer_pubkey(),
-            system_program: system_program::ID,
-            thread: epoch_thread_pubkey,
-        }.to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::ThreadCreate {
-            amount: LAMPORTS_PER_SOL,
-            id: epoch_thread_id.into(),
-            instructions: vec![
-                ix_a1.into(),
-                ix_a2.into(),
-                ix_a3.into(),
-                ix_a4.into(),
-            ],
-            trigger: Trigger::Cron {
-                schedule: "0 * * * * * *".into(),
-                skippable: true,
-            },
-        }
-        .data(),
-    };
-
-    // Create hasher thread.
-    let hasher_thread_id = "antegen.network.hasher";
-    let hasher_thread_pubkey = Thread::pubkey(client.payer_pubkey(), hasher_thread_id.into());
-    let registry_hash_ix = Instruction {
-        program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::RegistryNonceHash {
-            config: Config::pubkey(),
-            registry: Registry::pubkey(),
-            thread: hasher_thread_pubkey,
-        }.to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::RegistryNonceHash {}.data(),
-    };
-    let ix_b = Instruction {
-        program_id: antegen_thread_program::ID,
-        accounts: antegen_thread_program::accounts::ThreadCreate {
-            authority: client.payer_pubkey(),
-            payer: client.payer_pubkey(),
-            system_program: system_program::ID,
-            thread: hasher_thread_pubkey,
-        }.to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::ThreadCreate {
-            amount: LAMPORTS_PER_SOL,
-            id: hasher_thread_id.into(),
-            instructions: vec![
-                registry_hash_ix.into(),
-            ],
-            trigger: Trigger::Cron {
-                schedule: "*/15 * * * * * *".into(),
-                skippable: true,
-            },
-        }
-        .data(),
-    };
-
-    // Update config with thread pubkeys
-    let settings = ConfigSettings {
-        admin: client.payer_pubkey(),
-        epoch_thread: epoch_thread_pubkey,
-        hasher_thread: hasher_thread_pubkey
-    };
-    let ix_c = Instruction {
-        program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::ConfigUpdate {
-            admin: client.payer_pubkey(),
-            config: Config::pubkey()
-        }.to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::ConfigUpdate { settings }.data(),
-    };
-
-    client
-        .send_and_confirm(&vec![ix_a], &[client.payer()])
-        .context(format!(
-            "Failed to create thread: {} or update config",
-            epoch_thread_id,
-        ))?;
-    client
-        .send_and_confirm(&vec![ix_b, ix_c], &[client.payer()])
-        .context(format!("Failed to create thread: {}", hasher_thread_id))?;
-
-    let config = super::config::get(client)?;
-    print_status!("Epoch    🧵", "{}", explorer.account(config.clone().epoch_thread));
-    print_status!("Hasher   🧵", "{}", explorer.account(config.clone().hasher_thread));
-    print_status!("Admin    👔", "{}", explorer.account(config.clone().admin));
     Ok(())
 }
 

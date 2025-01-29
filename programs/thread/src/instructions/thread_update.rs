@@ -1,4 +1,4 @@
-use crate::{errors::AntegenError, state::*};
+use crate::{errors::*, state::*};
 
 use anchor_lang::{
     prelude::*,
@@ -58,7 +58,7 @@ pub fn handler(ctx: Context<ThreadUpdate>, settings: ThreadSettings) -> Result<(
         // Require the thread is not in the middle of processing.
         require!(
             std::mem::discriminant(&thread.trigger) == std::mem::discriminant(&trigger),
-            AntegenError::InvalidTriggerVariant
+            AntegenThreadError::InvalidTriggerVariant
         );
         thread.trigger = trigger.clone();
 

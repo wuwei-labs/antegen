@@ -30,8 +30,8 @@ pub struct ThreadKickoff<'info> {
             thread.id.as_slice(),
         ],
         bump = thread.bump,
-        constraint = !thread.paused @ AntegenError::ThreadPaused,
-        constraint = thread.next_instruction.is_none() @ AntegenError::ThreadBusy,
+        constraint = !thread.paused @ AntegenThreadError::ThreadPaused,
+        constraint = thread.next_instruction.is_none() @ AntegenThreadError::ThreadBusy,
     )]
     pub thread: Box<Account<'info, Thread>>,
 
@@ -55,13 +55,13 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
             // Verify proof that account data has been updated.
             match ctx.remaining_accounts.first() {
                 None => {
-                    return Err(AntegenError::TriggerConditionFailed.into());
+                    return Err(AntegenThreadError::TriggerConditionFailed.into());
                 }
                 Some(account_info) => {
                     // Verify the remaining account is the account this thread is listening for.
                     require!(
                         address.eq(account_info.key),
-                        AntegenError::TriggerConditionFailed
+                        AntegenThreadError::TriggerConditionFailed
                     );
 
                     // Begin computing the data hash of this account.
@@ -84,10 +84,10 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                             } => {
                                 require!(
                                     data_hash.ne(&prior_data_hash),
-                                    AntegenError::TriggerConditionFailed
+                                    AntegenThreadError::TriggerConditionFailed
                                 )
                             }
-                            _ => return Err(AntegenError::InvalidThreadState.into()),
+                            _ => return Err(AntegenThreadError::InvalidThreadState.into()),
                         }
                     }
 
@@ -111,16 +111,16 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 None => thread.created_at.unix_timestamp,
                 Some(exec_context) => match exec_context.trigger_context {
                     TriggerContext::Cron { started_at } => started_at,
-                    _ => return Err(AntegenError::InvalidThreadState.into()),
+                    _ => return Err(AntegenThreadError::InvalidThreadState.into()),
                 },
             };
 
             // Verify the current timestamp is greater than or equal to the threshold timestamp.
             let threshold_timestamp = next_timestamp(reference_timestamp, schedule.clone())
-                .ok_or(AntegenError::TriggerConditionFailed)?;
+                .ok_or(AntegenThreadError::TriggerConditionFailed)?;
             require!(
                 clock.unix_timestamp.ge(&threshold_timestamp),
-                AntegenError::TriggerConditionFailed
+                AntegenThreadError::TriggerConditionFailed
             );
 
             // If the schedule is marked as skippable, set the started_at of the exec context to be the current timestamp.
@@ -144,7 +144,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
             // Set the exec context.
             require!(
                 thread.exec_context.is_none(),
-                AntegenError::InvalidThreadState
+                AntegenThreadError::InvalidThreadState
             );
             thread.exec_context = Some(ExecContext {
                 exec_index: 0,
@@ -155,7 +155,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
             });
         }
         Trigger::Slot { slot } => {
-            require!(clock.slot.ge(&slot), AntegenError::TriggerConditionFailed);
+            require!(clock.slot.ge(&slot), AntegenThreadError::TriggerConditionFailed);
             thread.exec_context = Some(ExecContext {
                 exec_index: 0,
                 execs_since_reimbursement: 0,
@@ -167,7 +167,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
         Trigger::Epoch { epoch } => {
             require!(
                 clock.epoch.ge(&epoch),
-                AntegenError::TriggerConditionFailed
+                AntegenThreadError::TriggerConditionFailed
             );
             thread.exec_context = Some(ExecContext {
                 exec_index: 0,
@@ -180,7 +180,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
         Trigger::Timestamp { unix_ts } => {
             require!(
                 clock.unix_timestamp.ge(&unix_ts),
-                AntegenError::TriggerConditionFailed
+                AntegenThreadError::TriggerConditionFailed
             );
             thread.exec_context = Some(ExecContext {
                 exec_index: 0,
@@ -200,12 +200,12 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
             // Verify price limit has been reached.
             match ctx.remaining_accounts.first() {
                 None => {
-                    return Err(AntegenError::TriggerConditionFailed.into());
+                    return Err(AntegenThreadError::TriggerConditionFailed.into());
                 }
                 Some(account_info) => {
                     require!(
                         price_feed_pubkey.eq(account_info.key),
-                        AntegenError::TriggerConditionFailed
+                        AntegenThreadError::TriggerConditionFailed
                     );
                     const STALENESS_THRESHOLD: u64 = 60; // staleness threshold in seconds
                     let price_feed = SolanaPriceAccount::account_info_to_feed(account_info).unwrap();
@@ -217,7 +217,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                         Equality::GreaterThanOrEqual => {
                             require!(
                                 current_price.price.ge(&limit),
-                                AntegenError::TriggerConditionFailed
+                                AntegenThreadError::TriggerConditionFailed
                             );
                             thread.exec_context = Some(ExecContext {
                                 exec_index: 0,
@@ -232,7 +232,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                         Equality::LessThanOrEqual => {
                             require!(
                                 current_price.price.le(&limit),
-                                AntegenError::TriggerConditionFailed
+                                AntegenThreadError::TriggerConditionFailed
                             );
                             thread.exec_context = Some(ExecContext {
                                 exec_index: 0,
