@@ -21,11 +21,12 @@ pub mod cpi {
         ThreadCreate, ThreadDelete, ThreadPause, ThreadReset, ThreadResume, ThreadUpdate,
         ThreadWithdraw,
     };
+    use antegen_thread_program::ThreadId;
 
     pub fn thread_create<'info>(
         ctx: CpiContext<'_, '_, '_, 'info, ThreadCreate<'info>>,
         amount: u64,
-        id: Vec<u8>,
+        id: ThreadId,
         instructions: Vec<crate::state::SerializableInstruction>,
         trigger: crate::state::Trigger,
     ) -> Result<()> {

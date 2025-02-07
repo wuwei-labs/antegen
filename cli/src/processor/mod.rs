@@ -1,6 +1,6 @@
 mod config;
 mod crontab;
-mod initialize;
+mod network;
 mod localnet;
 mod pool;
 mod registry;
@@ -42,14 +42,15 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
 
     // Process the command
     match command {
-        CliCommand::ConfigView => config::view(&client),
-        CliCommand::ConfigSet {
+        CliCommand::Crontab { schedule } => crontab::get(&client, schedule),
+        CliCommand::NetworkInitialize {} => network::initialize(&client),
+        CliCommand::NetworkThreadCreate { amount } => network::create_threads(&client, amount),
+        CliCommand::NetworkConfigGet => config::get(&client),
+        CliCommand::NetworkConfigSet {
             admin,
             epoch_thread,
             hasher_thread,
         } => config::set(&client, admin, epoch_thread, hasher_thread),
-        CliCommand::Crontab { schedule } => crontab::get(&client, schedule),
-        CliCommand::Initialize {} => initialize::initialize(&client),
         CliCommand::Localnet {
             clone_addresses,
             program_infos,

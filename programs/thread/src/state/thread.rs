@@ -40,9 +40,12 @@ pub struct Thread {
 
 impl Thread {
     /// Derive the pubkey of a thread account.
-    pub fn pubkey(authority: Pubkey, id: Vec<u8>) -> Pubkey {
+    pub fn pubkey(authority: Pubkey, id: impl AsRef<[u8]>) -> Pubkey {
+        let id_bytes = id.as_ref();
+        assert!(id_bytes.len() <= 32, "Thread ID must not exceed 32 bytes");
+
         Pubkey::find_program_address(
-            &[SEED_THREAD, authority.as_ref(), id.as_slice()],
+            &[SEED_THREAD, authority.as_ref(), id_bytes],
             &crate::ID,
         )
         .0

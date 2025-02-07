@@ -36,7 +36,7 @@ pub fn create(
         }.to_account_metas(Some(false)),
         data: antegen_thread_program::instruction::ThreadCreate {
             amount: 0,
-            id: id.into_bytes(),
+            id: id.into(),
             instructions,
             trigger,
         }
@@ -197,6 +197,6 @@ pub fn parse_pubkey_from_id_or_address(
     id: Option<String>,
     address: Option<Pubkey>,
 ) -> Result<Pubkey, CliError> {
-    let address_from_id = id.map(|str| Thread::pubkey(authority, str.into()));
+    let address_from_id = id.map(|str| Thread::pubkey(authority, str));
     address.or(address_from_id).ok_or(CliError::InvalidAddress)
 }

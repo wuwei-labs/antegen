@@ -7,7 +7,7 @@ use anchor_lang::{
 };
 use antegen_network_program::state::{Pool, Worker, WorkerAccount, WorkerCommission};
 use antegen_utils::thread::{SerializableInstruction, ThreadResponse, PAYER_PUBKEY};
-use crate::{errors::AntegenError, state::*};
+use crate::{errors::*, state::*};
 
 /// The ID of the pool workers must be a member of to collect fees.
 const POOL_ID: u64 = 0;
@@ -70,7 +70,7 @@ pub struct ThreadExec<'info> {
             thread.id.as_slice(),
         ],
         bump = thread.bump,
-        constraint = !thread.paused @ AntegenError::ThreadPaused,
+        constraint = !thread.paused @ AntegenThreadError::ThreadPaused,
         constraint = thread.next_instruction.is_some(),
         constraint = thread.exec_context.is_some()
     )]
@@ -94,7 +94,7 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
     if thread.exec_context.unwrap().last_exec_at == clock.slot
         && thread.exec_context.unwrap().execs_since_slot >= thread.rate_limit
     {
-        return Err(AntegenError::RateLimitExeceeded.into());
+        return Err(AntegenThreadError::RateLimitExeceeded.into());
     }
 
     let initial_balances = BalanceSnapshot {
@@ -124,7 +124,7 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
     )?;
 
     // Verify the inner instruction did not write data to the signatory address.
-    require!(signatory.data_is_empty(), AntegenError::UnauthorizedWrite);
+    require!(signatory.data_is_empty(), AntegenThreadError::UnauthorizedWrite);
 
     // Parse the thread response
     let thread_response: Option<ThreadResponse> = match get_return_data() {
@@ -132,7 +132,7 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
         Some((program_id, return_data)) => {
             require!(
                 program_id.eq(&instruction.program_id),
-                AntegenError::InvalidThreadResponse
+                AntegenThreadError::InvalidThreadResponse
             );
             ThreadResponse::try_from_slice(return_data.as_slice()).ok()
         }
@@ -149,7 +149,7 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
         if let Some(trigger) = thread_response.trigger {
             require!(
                 std::mem::discriminant(&thread.trigger) == std::mem::discriminant(&trigger),
-                AntegenError::InvalidTriggerVariant
+                AntegenThreadError::InvalidTriggerVariant
             );
             thread.trigger = trigger.clone();
 

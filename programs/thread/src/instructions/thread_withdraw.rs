@@ -44,7 +44,7 @@ pub fn handler(ctx: Context<ThreadWithdraw>, amount: u64) -> Result<()> {
         .unwrap();
     require!(
         post_balance.gt(&minimum_rent),
-        AntegenError::WithdrawalTooLarge
+        AntegenThreadError::WithdrawalTooLarge
     );
 
     // Withdraw balance from thread to the pay_to account

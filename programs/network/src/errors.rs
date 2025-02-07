@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 
 #[error_code]
-pub enum AntegenError {
+pub enum AntegenNetworkError {
     #[msg("The worker is already in the pool")]
     AlreadyInPool,
 

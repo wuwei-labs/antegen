@@ -4,9 +4,7 @@ use clap::ArgMatches;
 use antegen_thread_program::state::{SerializableAccount, SerializableInstruction, Trigger};
 use serde::{Deserialize as JsonDeserialize, Serialize as JsonSerialize};
 use solana_sdk::{
-    pubkey::Pubkey,
-    signature::{read_keypair_file, Keypair},
-    signer::Signer,
+    native_token::LAMPORTS_PER_SOL, pubkey::Pubkey, signature::{read_keypair_file, Keypair}, signer::Signer
 };
 
 use crate::{cli::CliCommand, errors::CliError};
@@ -16,9 +14,8 @@ impl TryFrom<&ArgMatches> for CliCommand {
 
     fn try_from(matches: &ArgMatches) -> Result<Self, Self::Error> {
         match matches.subcommand() {
-            Some(("config", matches)) => parse_config_command(matches),
             Some(("crontab", matches)) => parse_crontab_command(matches),
-            Some(("initialize", _)) => parse_initialize_command(),
+            Some(("network", matches)) => parse_network_command(matches),
             Some(("localnet", matches)) => parse_bpf_command(matches),
             Some(("pool", matches)) => parse_pool_command(matches),
             Some(("thread", matches)) => parse_thread_command(matches),
@@ -90,28 +87,43 @@ fn parse_bpf_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     })
 }
 
-fn parse_config_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
-    match matches.subcommand() {
-        Some(("view", _)) => Ok(CliCommand::ConfigView {}),
-        Some(("set", matches)) => Ok(CliCommand::ConfigSet {
-            admin: parse_pubkey("admin", matches).ok(),
-            epoch_thread: parse_pubkey("epoch_thread", matches).ok(),
-            hasher_thread: parse_pubkey("hasher_thread", matches).ok(),
-        }),
-        _ => Err(CliError::CommandNotRecognized(
-            matches.subcommand().unwrap().0.into(),
-        )),
-    }
-}
-
 fn parse_crontab_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     Ok(CliCommand::Crontab {
         schedule: parse_string("schedule", matches)?,
     })
 }
 
-fn parse_initialize_command() -> Result<CliCommand, CliError> {
-    Ok(CliCommand::Initialize {})
+fn parse_network_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
+    match matches.subcommand() {
+        Some(("config", config_matches)) => match config_matches.subcommand() {
+            Some(("set", matches)) => Ok(CliCommand::NetworkConfigSet {
+                admin: parse_pubkey("admin", matches).ok(),
+                epoch_thread: parse_pubkey("epoch_thread", matches).ok(),
+                hasher_thread: parse_pubkey("hasher_thread", matches).ok(),
+            }),
+            Some(("get", _)) => Ok(CliCommand::NetworkConfigGet {}),
+            _ => Err(CliError::CommandNotRecognized(
+                matches.subcommand().unwrap().0.into(),
+            )),
+        },
+        Some(("initialize", _)) => Ok(CliCommand::NetworkInitialize {}),
+        Some(("threads", thread_matches)) => match thread_matches.subcommand() {
+            Some(("create", create_matches)) => {
+                let sol_amount = create_matches
+                    .get_one::<f64>("amount")
+                    .copied()
+                    .unwrap_or(1.0);
+                let amount = (sol_amount * LAMPORTS_PER_SOL as f64) as u64;
+                Ok(CliCommand::NetworkThreadCreate { amount })
+            },
+            _ => Err(CliError::CommandNotRecognized(
+                matches.subcommand().unwrap().0.into(),
+            )),
+        },
+        _ => Err(CliError::CommandNotRecognized(
+            matches.subcommand().unwrap().0.into(),
+        )),
+    }
 }
 
 fn parse_pool_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {

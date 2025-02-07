@@ -36,13 +36,13 @@ pub fn handler(ctx: Context<PoolRotate>) -> Result<()> {
     // Verify the pool has excess space.
     require!(
         pool.workers.len() < (pool.size as usize),
-        AntegenError::PoolFull
+        AntegenNetworkError::PoolFull
     );
 
     // Verify the worker is not already in the pool.
     require!(
         !pool.workers.contains(&worker.key()),
-        AntegenError::AlreadyInPool
+        AntegenNetworkError::AlreadyInPool
     );
 
     // Rotate the worker into the pool.
