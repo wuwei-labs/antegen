@@ -44,7 +44,6 @@ pub fn handler(ctx: Context<DistributeFeesJob>) -> Result<ThreadResponse> {
             }
             .into(),
         ),
-        close_to: None,
-        trigger: None,
+        ..ThreadResponse::default()
     })
 }

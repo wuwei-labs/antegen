@@ -46,4 +46,11 @@ pub enum AntegenThreadError {
 
     #[msg("Thread IDs are limited to 32 bytes")]
     ThreadIdTooLong,
+
+    #[msg("InsufficientFunds")]
+    InsufficientFunds,
+
+    #[msg("MathOverflow")]
+    MathOverflow,
+
 }

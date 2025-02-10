@@ -13,7 +13,7 @@ pub struct ThreadDelete<'info> {
     #[account(mut)]
     pub close_to: SystemAccount<'info>,
 
-    /// The thread to be delete.
+    /// The thread to be deleted.
     #[account(
         mut,
         seeds = [
@@ -22,25 +22,11 @@ pub struct ThreadDelete<'info> {
             thread.id.as_slice(),
         ],
         bump = thread.bump,
+        close = close_to
     )]
     pub thread: Account<'info, Thread>,
 }
 
-pub fn handler(ctx: Context<ThreadDelete>) -> Result<()> {
-    let thread = &ctx.accounts.thread;
-    let close_to = &ctx.accounts.close_to;
-
-    let thread_lamports = thread.to_account_info().lamports();
-    **thread.to_account_info().try_borrow_mut_lamports()? = thread
-        .to_account_info()
-        .lamports()
-        .checked_sub(thread_lamports)
-        .unwrap();
-    **close_to.to_account_info().try_borrow_mut_lamports()? = close_to
-        .to_account_info()
-        .lamports()
-        .checked_add(thread_lamports)
-        .unwrap();
-
+pub fn handler(_ctx: Context<ThreadDelete>) -> Result<()> {
     Ok(())
 }

@@ -99,6 +99,7 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             schedule,
         } => thread::update(&client, id, rate_limit, schedule),
         CliCommand::RegistryGet => registry::get(&client),
+        CliCommand::RegistryReset => registry::reset(&client),
         CliCommand::RegistryUnlock => registry::unlock(&client),
         CliCommand::WorkerCreate { signatory } => worker::create(&client, signatory, false),
         CliCommand::WorkerFind { id} => worker::find(&client, id),

@@ -188,6 +188,7 @@ fn parse_thread_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
 fn parse_registry_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     match matches.subcommand() {
         Some(("get", _)) => Ok(CliCommand::RegistryGet {}),
+        Some(("reset", _)) => Ok(CliCommand::RegistryReset {}),
         Some(("unlock", _)) => Ok(CliCommand::RegistryUnlock {}),
         _ => Err(CliError::CommandNotRecognized(
             matches.subcommand().unwrap().0.into(),

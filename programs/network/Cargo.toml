@@ -39,7 +39,7 @@ no-log-ix-name = []
 [dependencies]
 antegen-utils = { workspace = true }
 
-anchor-lang = { workspace = true }
+anchor-lang = { workspace = true, features = ["init-if-needed"]}
 anchor-spl = { workspace = true }
 
 winnow = { workspace = true }

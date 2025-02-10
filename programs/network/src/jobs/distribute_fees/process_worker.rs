@@ -145,7 +145,6 @@ pub fn handler(ctx: Context<DistributeFeesProcessWorker>) -> Result<ThreadRespon
 
     Ok(ThreadResponse {
         dynamic_instruction,
-        close_to: None,
-        trigger: None,
+        ..ThreadResponse::default()
     })
 }

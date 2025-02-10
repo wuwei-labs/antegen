@@ -38,7 +38,6 @@ pub fn handler(ctx: Context<DeleteSnapshotJob>) -> Result<ThreadResponse> {
             }
             .into(),
         ),
-        close_to: None,
-        trigger: None,
+        ..ThreadResponse::default()
     })
 }

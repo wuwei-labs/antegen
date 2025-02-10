@@ -18,6 +18,6 @@ pub struct RegistryUnlock<'info> {
 
 pub fn handler(ctx: Context<RegistryUnlock>) -> Result<()> {
     let registry = &mut ctx.accounts.registry;
-    registry.locked = true;
+    registry.locked = false;
     Ok(())
 }

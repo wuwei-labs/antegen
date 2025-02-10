@@ -4,13 +4,13 @@ use std::{
     str::FromStr,
 };
 
+use crate::{errors::*, state::*};
 use anchor_lang::prelude::*;
-use chrono::{DateTime, Utc};
-use solana_cron::Schedule;
 use antegen_network_program::state::{Worker, WorkerAccount};
 use antegen_utils::thread::Trigger;
+use chrono::{DateTime, Utc};
 use pyth_sdk_solana::state::SolanaPriceAccount;
-use crate::{errors::*, state::*};
+use solana_cron::Schedule;
 
 use super::TRANSACTION_BASE_FEE_REIMBURSEMENT;
 
@@ -97,6 +97,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                         execs_since_reimbursement: 0,
                         execs_since_slot: 0,
                         last_exec_at: clock.slot,
+                        last_exec_timestamp: clock.unix_timestamp,
                         trigger_context: TriggerContext::Account { data_hash },
                     })
                 }
@@ -114,7 +115,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                     _ => return Err(AntegenThreadError::InvalidThreadState.into()),
                 },
             };
-
+            msg!("reference_timestamp: {}", reference_timestamp);
             // Verify the current timestamp is greater than or equal to the threshold timestamp.
             let threshold_timestamp = next_timestamp(reference_timestamp, schedule.clone())
                 .ok_or(AntegenThreadError::TriggerConditionFailed)?;
@@ -137,6 +138,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 execs_since_reimbursement: 0,
                 execs_since_slot: 0,
                 last_exec_at: clock.slot,
+                last_exec_timestamp: reference_timestamp,
                 trigger_context: TriggerContext::Cron { started_at },
             });
         }
@@ -151,16 +153,21 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 execs_since_reimbursement: 0,
                 execs_since_slot: 0,
                 last_exec_at: clock.slot,
+                last_exec_timestamp: clock.unix_timestamp,
                 trigger_context: TriggerContext::Now,
             });
         }
         Trigger::Slot { slot } => {
-            require!(clock.slot.ge(&slot), AntegenThreadError::TriggerConditionFailed);
+            require!(
+                clock.slot.ge(&slot),
+                AntegenThreadError::TriggerConditionFailed
+            );
             thread.exec_context = Some(ExecContext {
                 exec_index: 0,
                 execs_since_reimbursement: 0,
                 execs_since_slot: 0,
                 last_exec_at: clock.slot,
+                last_exec_timestamp: clock.unix_timestamp,
                 trigger_context: TriggerContext::Slot { started_at: slot },
             });
         }
@@ -174,6 +181,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 execs_since_reimbursement: 0,
                 execs_since_slot: 0,
                 last_exec_at: clock.slot,
+                last_exec_timestamp: clock.unix_timestamp,
                 trigger_context: TriggerContext::Epoch { started_at: epoch },
             })
         }
@@ -187,6 +195,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 execs_since_reimbursement: 0,
                 execs_since_slot: 0,
                 last_exec_at: clock.slot,
+                last_exec_timestamp: clock.unix_timestamp,
                 trigger_context: TriggerContext::Timestamp {
                     started_at: unix_ts,
                 },
@@ -208,7 +217,8 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                         AntegenThreadError::TriggerConditionFailed
                     );
                     const STALENESS_THRESHOLD: u64 = 60; // staleness threshold in seconds
-                    let price_feed = SolanaPriceAccount::account_info_to_feed(account_info).unwrap();
+                    let price_feed =
+                        SolanaPriceAccount::account_info_to_feed(account_info).unwrap();
                     let current_timestamp = Clock::get()?.unix_timestamp;
                     let current_price = price_feed
                         .get_price_no_older_than(current_timestamp, STALENESS_THRESHOLD)
@@ -224,6 +234,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                                 execs_since_reimbursement: 0,
                                 execs_since_slot: 0,
                                 last_exec_at: clock.slot,
+                                last_exec_timestamp: clock.unix_timestamp,
                                 trigger_context: TriggerContext::Pyth {
                                     price: current_price.price,
                                 },
@@ -239,6 +250,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                                 execs_since_reimbursement: 0,
                                 execs_since_slot: 0,
                                 last_exec_at: clock.slot,
+                                last_exec_timestamp: clock.unix_timestamp,
                                 trigger_context: TriggerContext::Pyth {
                                     price: current_price.price,
                                 },
@@ -255,7 +267,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
         thread.next_instruction = Some(kickoff_instruction.clone());
     }
 
-    // Realloc the thread account
+    // Now that the account is sufficiently funded, reallocate
     thread.realloc()?;
 
     // Reimburse signatory for transaction fee.

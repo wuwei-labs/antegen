@@ -24,9 +24,5 @@ pub fn handler(ctx: Context<EpochCutover>) -> Result<ThreadResponse> {
     registry.current_epoch = registry.current_epoch.checked_add(1).unwrap();
     registry.locked = false;
 
-    Ok(ThreadResponse {
-        close_to: None,
-        dynamic_instruction: None,
-        trigger: None,
-    })
+    Ok(ThreadResponse::default())
 }

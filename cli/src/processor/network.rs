@@ -72,6 +72,18 @@ pub fn initialize(client: &Client) -> Result<(), CliError> {
 }
 
 pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
+    #[cfg(feature = "mainnet")]
+    let cron_epoch = "@hourly";
+
+    #[cfg(not(feature = "mainnet"))]
+    let cron_epoch = "0 * * * * * *";
+
+    #[cfg(feature = "mainnet")]
+    let cron_hasher = "0 */15 * * * * *";
+
+    #[cfg(not(feature = "mainnet"))]
+    let cron_hasher = "*/15 * * * * * *";
+
     let explorer = Explorer::from(client.client.url());
     let payer = client.payer_pubkey();
     let admin = if cfg!(feature = "mainnet") {
@@ -137,11 +149,10 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
                 ix_a4.into(),
             ],
             trigger: Trigger::Cron {
-                schedule: "0 * * * * * *".into(),
+                schedule: cron_epoch.into(),
                 skippable: true,
             },
-        }
-        .data(),
+        }.data(),
     };
 
     // Create hasher thread.
@@ -171,11 +182,10 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
                 registry_hash_ix.into(),
             ],
             trigger: Trigger::Cron {
-                schedule: "*/15 * * * * * *".into(),
+                schedule: cron_hasher.into(),
                 skippable: true,
             },
-        }
-        .data(),
+        }.data(),
     };
 
     // Update config with thread pubkeys

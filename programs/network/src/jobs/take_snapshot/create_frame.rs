@@ -36,7 +36,7 @@ pub struct TakeSnapshotCreateFrame<'info> {
     pub snapshot: Account<'info, Snapshot>,
 
     #[account(
-        init,
+        init_if_needed,
         seeds = [
             SEED_SNAPSHOT_FRAME,
             snapshot.key().as_ref(),
@@ -110,7 +110,6 @@ pub fn handler(ctx: Context<TakeSnapshotCreateFrame>) -> Result<ThreadResponse> 
 
     Ok(ThreadResponse {
         dynamic_instruction,
-        close_to: None,
-        trigger: None,
+        ..ThreadResponse::default()
     })
 }
