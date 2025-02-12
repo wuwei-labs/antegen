@@ -146,7 +146,7 @@ jobs:
           fi
 
           mkdir -p staging/bin
-          cargo build --workspace --release --target ${{ matrix.target }}
+          cargo build --workspace --release --target ${{ matrix.target }} --features mainnet
 
           if [[ "${{ matrix.target }}" == *"darwin"* ]]; then
             install -m 644 target/${{ matrix.target }}/release/libantegen_plugin.dylib staging/lib/libantegen_plugin.so
