@@ -16,17 +16,19 @@ pub struct ThreadDelete<'info> {
     /// The thread to be deleted.
     #[account(
         mut,
+        close = close_to,
         seeds = [
             SEED_THREAD,
             thread.authority.as_ref(),
             thread.id.as_slice(),
         ],
-        bump = thread.bump,
-        close = close_to
+        bump = thread.bump
     )]
     pub thread: Account<'info, Thread>,
 }
 
-pub fn handler(_ctx: Context<ThreadDelete>) -> Result<()> {
+pub fn handler(
+    _ctx: Context<ThreadDelete>
+) -> Result<()> {
     Ok(())
 }

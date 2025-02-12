@@ -98,7 +98,7 @@ pub fn delete(client: &Client, id: String) -> Result<(), CliError> {
             close_to: client.payer_pubkey(),
             thread: thread_pubkey,
         }.to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::ThreadDelete {}.data(),
+        data: antegen_thread_program::instruction::ThreadDelete { }.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
     Ok(())

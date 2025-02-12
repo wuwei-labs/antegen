@@ -35,7 +35,7 @@ members = [
 ]
 
 [workspace.package]
-version = "2.1.0"
+version = "2.1.1"
 authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
 repository = "https://github.com/wuwei-labs/antegen"
 homepage = "https://antegen.xyz/"
