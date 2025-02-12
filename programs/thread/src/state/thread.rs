@@ -76,11 +76,11 @@ impl ThreadAccount for Account<'_, Thread> {
 
     fn realloc(&mut self) -> Result<()> {
         // Realloc memory for the thread account
-        let data_len = 8 +                              // discriminator
+        let data_len = 8 +            // discriminator
             size_of::<Thread>() +            // base struct
-            self.id.len() +                       // id length
+            self.id.len() +                  // id length
             4 + (self.instructions.len() * size_of::<SerializableInstruction>()) + // vec length prefix + items
-            size_of::<Trigger>() +           // trigger enum
+            size_of::<Trigger>() +            // trigger enum
             NEXT_INSTRUCTION_SIZE;            // next instruction
 
         self.to_account_info().realloc(data_len, false)?;
@@ -103,6 +103,9 @@ pub struct ExecContext {
 
     /// Slot of the last exec
     pub last_exec_at: u64,
+
+    /// Unix timestamp of last exec
+    pub last_exec_timestamp: i64,
 
     /// Context for the triggering condition
     pub trigger_context: TriggerContext,

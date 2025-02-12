@@ -24,7 +24,7 @@ pub struct TakeSnapshotCreateSnapshot<'info> {
     pub registry: Account<'info, Registry>,
 
     #[account(
-        init,
+        init_if_needed,
         seeds = [
             SEED_SNAPSHOT,
             registry.current_epoch.checked_add(1).unwrap().to_be_bytes().as_ref(),
@@ -79,7 +79,6 @@ pub fn handler(ctx: Context<TakeSnapshotCreateSnapshot>) -> Result<ThreadRespons
         } else {
             None
         },
-        close_to: None,
-        trigger: None,
+        ..ThreadResponse::default()
     })
 }

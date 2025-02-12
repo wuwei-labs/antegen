@@ -50,7 +50,6 @@ pub fn handler(ctx: Context<DistributeFeesProcessSnapshot>) -> Result<ThreadResp
         } else {
             None
         },
-        close_to: None,
-        trigger: None,
+        ..ThreadResponse::default()
     })
 }

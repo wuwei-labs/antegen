@@ -52,15 +52,12 @@ pub fn handler(ctx: Context<DeleteSnapshotProcessFrame>) -> Result<ThreadRespons
     let snapshot_frame = &mut ctx.accounts.snapshot_frame;
     let thread = &mut ctx.accounts.thread;
 
-    // If this is the last frame in the snapshot, then close the snapshot account.
+    // Close the frame account.
+    snapshot_frame.close(thread.to_account_info())?;
+
+    // If this is also the last frame in the snapshot, then close the snapshot account.
     if snapshot_frame.id.checked_add(1).unwrap().eq(&snapshot.total_frames) {
-        let snapshot_lamports = snapshot.to_account_info().lamports();
-        **snapshot.to_account_info().lamports.borrow_mut() = 0;
-        **thread.to_account_info().lamports.borrow_mut() = thread
-            .to_account_info()
-            .lamports()
-            .checked_add(snapshot_lamports)
-            .unwrap();
+        snapshot.close(thread.to_account_info())?;
     }
 
     // Build the next instruction.
@@ -71,7 +68,7 @@ pub fn handler(ctx: Context<DeleteSnapshotProcessFrame>) -> Result<ThreadRespons
         .unwrap()
         .lt(&snapshot.total_frames)
     {
-        // There are no more entries in this frame. Move on to the next frame.
+        // Move on to the next frame.
         Some(
             Instruction {
                 program_id: crate::ID,
@@ -89,5 +86,8 @@ pub fn handler(ctx: Context<DeleteSnapshotProcessFrame>) -> Result<ThreadRespons
         None
     };
 
-    Ok( ThreadResponse { dynamic_instruction, ..ThreadResponse::default() } )
+    Ok(ThreadResponse { 
+        dynamic_instruction,
+        ..ThreadResponse::default() 
+    })
 }

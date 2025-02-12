@@ -34,6 +34,7 @@ impl Registry {
 pub trait RegistryAccount {
     fn init(&mut self) -> Result<()>;
     fn hash_nonce(&mut self) -> Result<()>;
+    fn reset(&mut self) -> Result<()>;
 }
 
 impl RegistryAccount for Account<'_, Registry> {
@@ -49,6 +50,12 @@ impl RegistryAccount for Account<'_, Registry> {
         Clock::get().unwrap().slot.hash(&mut hasher);
         self.nonce.hash(&mut hasher);
         self.nonce = hasher.finish();
+        Ok(())
+    }
+
+    fn reset(&mut self) -> Result<()> {
+        self.current_epoch = 0;
+        self.locked = false;
         Ok(())
     }
 }

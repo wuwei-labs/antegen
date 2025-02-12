@@ -45,7 +45,6 @@ pub fn handler(ctx: Context<TakeSnapshotJob>) -> Result<ThreadResponse> {
             }
             .into(),
         ),
-        close_to: None,
-        trigger: None,
+        ..ThreadResponse::default()
     })
 }

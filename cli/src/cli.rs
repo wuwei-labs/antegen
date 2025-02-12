@@ -76,6 +76,7 @@ pub enum CliCommand {
 
     // Registry
     RegistryGet,
+    RegistryReset,
     RegistryUnlock,
 
     // Worker commands
@@ -522,6 +523,7 @@ pub fn app() -> Command {
                 .about("Manage the Antegen network registry")
                 .arg_required_else_help(true)
                 .subcommand(Command::new("get").about("Lookup the registry"))
+                .subcommand(Command::new("reset").about("Manually reset the registry"))
                 .subcommand(Command::new("unlock").about("Manually unlock the registry")),
         )
         .subcommand(

@@ -49,6 +49,10 @@ pub mod network_program {
         registry_nonce_hash::handler(ctx)
     }
 
+    pub fn registry_reset(ctx: Context<RegistryReset>) -> Result<()> {
+        registry_reset::handler(ctx)
+    }
+
     pub fn registry_unlock(ctx: Context<RegistryUnlock>) -> Result<()> {
         registry_unlock::handler(ctx)
     }
