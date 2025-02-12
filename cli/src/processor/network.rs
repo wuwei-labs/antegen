@@ -112,7 +112,7 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
     };
     let ix_a3 = Instruction {
         program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::EpochCutover {
+        accounts: antegen_network_program::accounts::EpochCutoverAccounts {
             config: Config::pubkey(),
             registry: Registry::pubkey(),
             thread: epoch_thread_pubkey,
