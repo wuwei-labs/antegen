@@ -5,6 +5,10 @@ pub struct WorkerClaim<'info> {
     #[account()]
     pub payer: Signer<'info>,
 
+    /// CHECK: This account is unchecked because its validity is enforced by the
+    /// #[account(address = worker.authority)] attribute, ensuring it matches
+    /// the `authority` field in the `worker`. The external logic guarantees
+    /// it is a valid account address.
     #[account(
         address = worker.authority
     )]
@@ -46,9 +50,8 @@ pub fn handler(ctx: Context<WorkerClaim>) -> Result<()> {
         .unwrap_or(0);
 
     // Transfer commission to the pay_to account
-    **commission.to_account_info().try_borrow_mut_lamports()? = commission_lamports
-        .checked_sub(available_lamports)
-        .unwrap();
+    **commission.to_account_info().try_borrow_mut_lamports()? =
+        commission_lamports.checked_sub(available_lamports).unwrap();
     **pay_to.to_account_info().try_borrow_mut_lamports()? = pay_to
         .to_account_info()
         .lamports()

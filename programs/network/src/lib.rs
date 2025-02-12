@@ -104,7 +104,7 @@ pub mod network_program {
     }
 
     // IncrementEpoch job
-    pub fn increment_epoch(ctx: Context<EpochCutover>) -> Result<ThreadResponse> {
+    pub fn increment_epoch(ctx: Context<EpochCutoverAccounts>) -> Result<ThreadResponse> {
         jobs::increment_epoch::job::handler(ctx)
     }
 

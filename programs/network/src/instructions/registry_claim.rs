@@ -5,6 +5,7 @@ pub struct RegistryClaim<'info> {
   #[account()]
   pub payer: Signer<'info>,
 
+  /// CHECK: This field is verified by some external logic, which ensures its safety.
   #[account(address = config.admin)]
   pub admin: UncheckedAccount<'info>,
 
