@@ -19,7 +19,7 @@ pub struct PoolCreate<'info> {
     pub config: Account<'info, Config>,
 
     #[account(
-        init,
+        init_if_needed,
         seeds = [
             SEED_POOL,
             registry.total_pools.to_be_bytes().as_ref(),

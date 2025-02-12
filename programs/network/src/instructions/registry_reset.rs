@@ -27,7 +27,7 @@ pub struct RegistryReset<'info> {
   pub registry: Account<'info, Registry>,
 
   #[account(
-      init,
+      init_if_needed,
       seeds = [
           SEED_SNAPSHOT,
           (0 as u64).to_be_bytes().as_ref(),
