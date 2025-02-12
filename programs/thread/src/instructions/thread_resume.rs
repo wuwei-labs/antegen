@@ -4,7 +4,9 @@ use {crate::state::*, anchor_lang::prelude::*};
 #[derive(Accounts)]
 pub struct ThreadResume<'info> {
     /// The authority (owner) of the thread.
-    #[account()]
+    #[account(
+        address = thread.authority
+    )]
     pub authority: Signer<'info>,
 
     /// The thread to be resumed.

@@ -1,39 +1,39 @@
 use {
-  crate::{state::*, ANTEGEN_SQUADS},
+  crate::state::*,
   anchor_lang::{prelude::*, solana_program::system_program},
 };
 use std::mem::size_of;
 
 #[derive(Accounts)]
 pub struct RegistryReset<'info> {
-  #[account(mut)]
-  pub payer: Signer<'info>,
-
-  /// CHECK: This is the predefined SQUAD multisig that will be the admin
   #[account(
-      address = if cfg!(feature = "mainnet") {
-          ANTEGEN_SQUADS
-      } else {
-          payer.key()
-      }
+    mut,
+    address = config.admin
   )]
-  pub admin: UncheckedAccount<'info>,
+  pub admin: Signer<'info>,
+
+  #[account(
+      address = Config::pubkey(),
+      has_one = admin
+  )]
+  pub config: Account<'info, Config>,
 
   #[account(
       mut,
       seeds = [SEED_REGISTRY],
+      constraint = registry.current_epoch.gt(&0),
       bump
   )]
   pub registry: Account<'info, Registry>,
 
   #[account(
-      init,
+      init_if_needed,
       seeds = [
           SEED_SNAPSHOT,
           (0 as u64).to_be_bytes().as_ref(),
       ],
       bump,
-      payer = payer,
+      payer = admin,
       space = 8 + size_of::<Snapshot>(),
   )]
   pub snapshot: Account<'info, Snapshot>,

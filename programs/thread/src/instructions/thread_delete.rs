@@ -9,10 +9,6 @@ pub struct ThreadDelete<'info> {
     )]
     pub authority: Signer<'info>,
 
-    /// The address to return the data rent lamports to.
-    #[account(mut)]
-    pub close_to: SystemAccount<'info>,
-
     /// The thread to be deleted.
     #[account(
         mut,
@@ -22,7 +18,7 @@ pub struct ThreadDelete<'info> {
             thread.id.as_slice(),
         ],
         bump = thread.bump,
-        close = close_to
+        close = authority
     )]
     pub thread: Account<'info, Thread>,
 }

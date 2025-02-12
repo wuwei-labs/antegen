@@ -2,10 +2,16 @@ use {crate::state::*, anchor_lang::prelude::*};
 
 #[derive(Accounts)]
 pub struct RegistryClaim<'info> {
-  #[account(mut)]
-  pub admin: Signer<'info>,
+  #[account()]
+  pub payer: Signer<'info>,
 
-  #[account(seeds = [SEED_CONFIG], bump, has_one = admin)]
+  #[account(address = config.admin)]
+  pub admin: UncheckedAccount<'info>,
+
+  #[account(
+      address = Config::pubkey(), 
+      has_one = admin
+  )]
   pub config: Account<'info, Config>,
 
   #[account(address = Registry::pubkey())]

@@ -71,5 +71,8 @@ pub fn handler(ctx: Context<DeleteSnapshotProcessSnapshot>) -> Result<ThreadResp
         None
     };
 
-    Ok(ThreadResponse { dynamic_instruction, close_to:None, trigger: None })
+    Ok(ThreadResponse {
+        dynamic_instruction,
+        ..ThreadResponse::default()
+    })
 }

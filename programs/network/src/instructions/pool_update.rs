@@ -11,7 +11,7 @@ use {
 #[derive(Accounts)]
 #[instruction(settings: PoolSettings)]
 pub struct PoolUpdate<'info> {
-    #[account()]
+    #[account(address = config.admin)]
     pub admin: Signer<'info>,
 
     #[account(
@@ -19,9 +19,6 @@ pub struct PoolUpdate<'info> {
         has_one = admin
     )]
     pub config: Account<'info, Config>,
-
-    #[account(mut)]
-    pub payer: Signer<'info>,
 
     #[account(mut, address = pool.pubkey())]
     pub pool: Account<'info, Pool>,
@@ -32,7 +29,7 @@ pub struct PoolUpdate<'info> {
 
 pub fn handler(ctx: Context<PoolUpdate>, settings: PoolSettings) -> Result<()> {
     // Get accounts
-    let payer = &ctx.accounts.payer;
+    let admin = &ctx.accounts.admin;
     let pool = &mut ctx.accounts.pool;
     let system_program = &ctx.accounts.system_program;
 
@@ -50,7 +47,7 @@ pub fn handler(ctx: Context<PoolUpdate>, settings: PoolSettings) -> Result<()> {
             CpiContext::new(
                 system_program.to_account_info(),
                 Transfer {
-                    from: payer.to_account_info(),
+                    from: admin.to_account_info(),
                     to: pool.to_account_info(),
                 },
             ),

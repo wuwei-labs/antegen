@@ -139,10 +139,10 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
     };
 
     // Grab the next instruction from the thread response.
-    let mut close_to = None;
+    let mut close = false;
     let mut next_instruction = None;
     if let Some(thread_response) = thread_response {
-        close_to = thread_response.close_to;
+        close = thread_response.close;
         next_instruction = thread_response.dynamic_instruction;
 
         // Update the trigger.
@@ -179,13 +179,12 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
     }
 
     // Update the next instruction.
-    if let Some(close_to) = close_to {
+    if close {
         thread.next_instruction = Some(
             Instruction {
                 program_id: crate::ID,
                 accounts: crate::accounts::ThreadDelete {
                     authority: thread.key(),
-                    close_to,
                     thread: thread.key(),
                 }
                 .to_account_metas(Some(true)),

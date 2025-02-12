@@ -6,24 +6,21 @@ use {
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
-    #[account(mut)]
-    pub payer: Signer<'info>,
-
-    /// CHECK: This is the predefined SQUAD multisig that will be the admin
     #[account(
+        mut,
         address = if cfg!(feature = "mainnet") {
             ANTEGEN_SQUADS
         } else {
-            payer.key()
+            admin.key()
         }
     )]
-    pub admin: UncheckedAccount<'info>,
+    pub admin: Signer<'info>,
 
     #[account(
         init,
         seeds = [SEED_CONFIG],
         bump,
-        payer = payer,
+        payer = admin,
         space = 8 + size_of::<Config>(),
     )]
     pub config: Account<'info, Config>,
@@ -32,14 +29,14 @@ pub struct Initialize<'info> {
         init,
         seeds = [SEED_REGISTRY],
         bump,
-        payer = payer,
+        payer = admin,
         space = 8 + size_of::<Registry>(),
     )]
     pub registry: Account<'info, Registry>,
 
     #[account(
         init,
-        payer = payer,
+        payer = admin,
         space = 8 + std::mem::size_of::<RegistryFee>(),
         seeds = [SEED_REGISTRY_FEE, registry.key().as_ref()],
         bump
@@ -53,7 +50,7 @@ pub struct Initialize<'info> {
             (0 as u64).to_be_bytes().as_ref(),
         ],
         bump,
-        payer = payer,
+        payer = admin,
         space = 8 + size_of::<Snapshot>(),
     )]
     pub snapshot: Account<'info, Snapshot>,

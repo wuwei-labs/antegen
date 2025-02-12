@@ -30,18 +30,16 @@ use {
 };
 
 pub fn initialize(client: &Client) -> Result<(), CliError> {
-    let payer = client.payer_pubkey();
     let admin = if cfg!(feature = "mainnet") {
         ANTEGEN_SQUADS
     } else {
-        payer
+        client.payer_pubkey()
     };
 
     let registry = Registry::pubkey();
     let ix_a = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::Initialize {
-            payer: admin,
             admin,
             config: Config::pubkey(),
             registry,
@@ -54,7 +52,6 @@ pub fn initialize(client: &Client) -> Result<(), CliError> {
     let ix_b = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::PoolCreate {
-            payer: admin,
             admin,
             config: Config::pubkey(),
             pool: Pool::pubkey(0),
@@ -85,16 +82,16 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
     let cron_hasher = "*/15 * * * * * *";
 
     let explorer = Explorer::from(client.client.url());
-    let payer = client.payer_pubkey();
+
     let admin = if cfg!(feature = "mainnet") {
         ANTEGEN_SQUADS
     } else {
-        payer
+        client.payer_pubkey()
     };
 
     // Create epoch thread.
     let epoch_thread_id = "antegen.network.epoch";
-    let epoch_thread_pubkey = Thread::pubkey(client.payer_pubkey(), epoch_thread_id);
+    let epoch_thread_pubkey = Thread::pubkey(admin, epoch_thread_id);
     let ix_a1 = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::DistributeFeesJob {
@@ -135,7 +132,6 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadCreate {
             authority: admin,
-            payer,
             system_program: system_program::ID,
             thread: epoch_thread_pubkey,
         }.to_account_metas(Some(false)),
@@ -157,7 +153,7 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
 
     // Create hasher thread.
     let hasher_thread_id = "antegen.network.hasher";
-    let hasher_thread_pubkey = Thread::pubkey(client.payer_pubkey(), hasher_thread_id);
+    let hasher_thread_pubkey = Thread::pubkey(admin, hasher_thread_id);
     let registry_hash_ix = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::RegistryNonceHash {
@@ -171,7 +167,6 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadCreate {
             authority: admin,
-            payer,
             system_program: system_program::ID,
             thread: hasher_thread_pubkey,
         }.to_account_metas(Some(false)),

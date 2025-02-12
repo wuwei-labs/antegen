@@ -100,11 +100,11 @@ pub enum Equality {
 /// A response value target programs can return to update the thread.
 #[derive(AnchorDeserialize, AnchorSerialize, Clone, Debug)]
 pub struct ThreadResponse {
-    /// If set, the thread will automatically close and return lamports to the provided address.
-    /// If dynamic_instruction is also set, close_to will take precedence and the dynamic instruction will not be executed.
-    pub close_to: Option<Pubkey>,
+    /// If set, the thread will automatically close and return lamports to the thread authority.
+    /// If dynamic_instruction is also set, close will take precedence and the dynamic instruction will not be executed.
+    pub close: bool,
     /// A dynamic instruction to execute next.
-    /// If close_to is also set, it will take precedence and the dynamic instruction will not be executed.
+    /// If close is also set, it will take precedence and the dynamic instruction will not be executed.
     pub dynamic_instruction: Option<SerializableInstruction>,
     /// Value to update the thread trigger to.
     pub trigger: Option<Trigger>,
@@ -113,7 +113,7 @@ pub struct ThreadResponse {
 impl Default for ThreadResponse {
     fn default() -> Self {
         return Self {
-            close_to: None,
+            close: false,
             dynamic_instruction: None,
             trigger: None,
         };

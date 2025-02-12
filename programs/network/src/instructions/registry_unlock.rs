@@ -2,10 +2,13 @@ use {crate::state::*, anchor_lang::prelude::*};
 
 #[derive(Accounts)]
 pub struct RegistryUnlock<'info> {
-    #[account(mut)]
+    #[account(address = config.admin)]
     pub admin: Signer<'info>,
-
-    #[account(seeds = [SEED_CONFIG], bump, has_one = admin)]
+  
+    #[account(
+        address = Config::pubkey(),
+        has_one = admin
+    )]
     pub config: Account<'info, Config>,
 
     #[account(

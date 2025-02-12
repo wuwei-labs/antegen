@@ -11,12 +11,11 @@ use anchor_lang::{
 #[instruction(settings: ThreadSettings)]
 pub struct ThreadUpdate<'info> {
     /// The authority (owner) of the thread.
-    #[account(mut)]
+    #[account(
+        mut,
+        address = thread.authority
+    )]
     pub authority: Signer<'info>,
-
-    /// The Solana system program
-    #[account(address = system_program::ID)]
-    pub system_program: Program<'info, System>,
 
     /// The thread to be updated.
     #[account(
@@ -30,6 +29,10 @@ pub struct ThreadUpdate<'info> {
             has_one = authority,
         )]
     pub thread: Account<'info, Thread>,
+
+    /// The Solana system program
+    #[account(address = system_program::ID)]
+    pub system_program: Program<'info, System>,
 }
 
 pub fn handler(ctx: Context<ThreadUpdate>, settings: ThreadSettings) -> Result<()> {

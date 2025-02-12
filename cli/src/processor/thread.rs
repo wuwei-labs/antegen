@@ -30,7 +30,6 @@ pub fn create(
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadCreate {
             authority: client.payer_pubkey(),
-            payer: client.payer_pubkey(),
             system_program: system_program::ID,
             thread: thread_pubkey
         }.to_account_metas(Some(false)),
@@ -95,7 +94,6 @@ pub fn delete(client: &Client, id: String) -> Result<(), CliError> {
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadDelete {
             authority: client.payer_pubkey(),
-            close_to: client.payer_pubkey(),
             thread: thread_pubkey,
         }.to_account_metas(Some(false)),
         data: antegen_thread_program::instruction::ThreadDelete {}.data(),
@@ -182,8 +180,8 @@ pub fn update(
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadUpdate {
             authority: client.payer_pubkey(),
-            system_program: system_program::ID,
-            thread: thread_pubkey
+            thread: thread_pubkey,
+            system_program: system_program::ID
         }.to_account_metas(Some(false)),
         data: antegen_thread_program::instruction::ThreadUpdate { settings }.data(),
     };

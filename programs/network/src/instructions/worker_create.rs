@@ -24,7 +24,7 @@ pub struct WorkerCreate<'info> {
     pub config: Box<Account<'info, Config>>,
 
     #[account(
-        init,
+        init_if_needed,
         seeds = [
             SEED_WORKER_COMMISSION,
             worker.key().as_ref(),
@@ -56,7 +56,7 @@ pub struct WorkerCreate<'info> {
     pub token_program: Program<'info, Token>,
 
     #[account(
-        init,
+        init_if_needed,
         seeds = [
             SEED_WORKER,
             registry.total_workers.to_be_bytes().as_ref(),
