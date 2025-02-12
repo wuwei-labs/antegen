@@ -57,7 +57,7 @@ anchor-spl = { features = ["mint", "token"], git = "https://github.com/coral-xyz
 
 actix-cors = { version = "0.6.4" }
 actix-web = { version = "4.3.1" }
-agave-geyser-plugin-interface = { version = "2.1.11" }
+agave-geyser-plugin-interface = { version = "=2.1.11" }
 anyhow = { version = "1.0.94" }
 async_once = { version = "0.2.6" }
 async-trait = { version = "0.1.83" }
@@ -85,16 +85,16 @@ serde = { version = "1.0.216" }
 serde_json = { version = "1.0.133" }
 serde_yaml = { version = "0.9.34" }
 simple-error = { version = "0.3.1" }
-solana-account-decoder = { version = "2.1.11" }
-solana-clap-utils = { version = "2.1.11" }
-solana-cli-config = { version = "2.1.11" }
-solana-client = { version = "2.1.11" }
-solana-logger = { version = "2.1.11" }
-solana-program = { version = "2.1.11" }
-solana-quic-client = { version = "2.1.11" }
-solana-sdk = { version = "2.1.11" }
-solana-transaction-status = { version = "2.1.11" }
-solana-zk-token-sdk = { version = "2.1.11" }
+solana-account-decoder = { version = "=2.1.11" }
+solana-clap-utils = { version = "=2.1.11" }
+solana-cli-config = { version = "=2.1.11" }
+solana-client = { version = "=2.1.11" }
+solana-logger = { version = "=2.1.11" }
+solana-program = { version = "=2.1.11" }
+solana-quic-client = { version = "=2.1.11" }
+solana-sdk = { version = "=2.1.11" }
+solana-transaction-status = { version = "=2.1.11" }
+solana-zk-token-sdk = { version = "=2.1.11" }
 spl-associated-token-account = { version = "6.0.0" }
 spl-memo = { version = "6.0.0" }
 spl-token = { version = "7.0.0" }
