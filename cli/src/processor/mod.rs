@@ -4,6 +4,7 @@ mod network;
 mod localnet;
 mod pool;
 mod registry;
+// mod snapshot;
 mod thread;
 mod worker;
 

@@ -163,7 +163,7 @@ impl CliConfig {
         format!(
             "{}/{}/{}",
             SOLANA_RELEASE_BASE_URL,
-            tag,
+            tag.replace("=", ""),
             &Self::solana_release_archive()
         )
     }

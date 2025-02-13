@@ -40,6 +40,7 @@ pub fn reset(client: &Client) -> Result<(), CliError> {
             payer: admin,
             admin,
             registry,
+            registry_fee: RegistryFee::pubkey(registry),
             snapshot: Snapshot::pubkey(0),
             system_program: system_program::ID,
         }.to_account_metas(Some(false)),
