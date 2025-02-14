@@ -1,4 +1,4 @@
-use {crate::state::*, anchor_lang::prelude::*};
+use {crate::{state::*, TRANSACTION_BASE_FEE_REIMBURSEMENT}, anchor_lang::prelude::*};
 
 /// Accounts required by the `thread_delete` instruction.
 #[derive(Accounts)]
@@ -21,12 +21,42 @@ pub struct ThreadDelete<'info> {
             thread.authority.as_ref(),
             thread.id.as_slice(),
         ],
-        bump = thread.bump,
-        close = close_to
+        bump = thread.bump
     )]
     pub thread: Account<'info, Thread>,
 }
 
-pub fn handler(_ctx: Context<ThreadDelete>) -> Result<()> {
+pub fn handler(ctx: Context<ThreadDelete>) -> Result<()> {
+    let fee_payer = &ctx.accounts.to_account_infos()[0];
+    let authority = &ctx.accounts.authority;
+    let thread = &mut ctx.accounts.thread;
+    let close_to = &ctx.accounts.close_to;
+
+    // Get current lamports
+    let initial_balance = thread.to_account_info().lamports();
+    let fee_amount = TRANSACTION_BASE_FEE_REIMBURSEMENT + thread.fee;
+
+    let final_balance = if authority.key().ne(&fee_payer.key()) {
+        // Transfer fees to fee payer
+        msg!("reimburse fee_payer...");
+        **thread.to_account_info().try_borrow_mut_lamports()? = initial_balance
+            .checked_sub(fee_amount)
+            .unwrap();
+        **fee_payer.try_borrow_mut_lamports()? = fee_payer
+            .lamports()
+            .checked_add(fee_amount)
+            .unwrap();
+
+        initial_balance.checked_sub(fee_amount).unwrap()
+    } else {
+        initial_balance
+    };
+
+    // Close thread
+    **thread.to_account_info().try_borrow_mut_lamports()? = 0;
+    **close_to.try_borrow_mut_lamports()? = close_to
+        .lamports()
+        .checked_add(final_balance)
+        .unwrap();
     Ok(())
 }

@@ -18,6 +18,8 @@ use state::*;
 
 declare_id!("AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1");
 
+pub const TRANSACTION_BASE_FEE_REIMBURSEMENT: u64 = 5_000;
+
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub enum ThreadId {
     Bytes(Vec<u8>),
