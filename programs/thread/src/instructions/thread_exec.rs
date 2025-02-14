@@ -126,7 +126,7 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
         }
     }
 
-    let is_delete = instruction.data == crate::instruction::ThreadDelete {}.data();
+    let is_delete = instruction.data[..8] == *crate::instruction::ThreadDelete::DISCRIMINATOR;
     // Invoke the provided instruction.
     invoke_signed(
         &Instruction::from(&*instruction),
@@ -139,13 +139,14 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
         ]],
     )?;
 
-    // Verify the inner instruction did not write data to the signatory address.
-    require!(signatory.data_is_empty(), AntegenThreadError::UnauthorizedWrite);
-
     if is_delete {
-        // Thread deleted skip the rest
+        thread.next_instruction = None;
+        thread.paused = true;
         return Ok(());
     }
+
+    // Verify the inner instruction did not write data to the signatory address.
+    require!(signatory.data_is_empty(), AntegenThreadError::UnauthorizedWrite);
 
     // Parse the thread response
     let thread_response: Option<ThreadResponse> = match get_return_data() {

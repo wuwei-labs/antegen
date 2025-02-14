@@ -34,7 +34,7 @@ pub mod cpi {
     }
 
     pub fn thread_delete<'info>(
-        ctx: CpiContext<'_, '_, '_, 'info, ThreadDelete<'info>>,
+        ctx: CpiContext<'_, '_, '_, 'info, ThreadDelete<'info>>
     ) -> Result<()> {
         antegen_thread_program::cpi::thread_delete(ctx)
     }
