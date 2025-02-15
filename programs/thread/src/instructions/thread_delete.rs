@@ -21,14 +21,17 @@ pub struct ThreadDelete<'info> {
             thread.authority.as_ref(),
             thread.id.as_slice(),
         ],
-        bump = thread.bump,
-        close = close_to
+        bump = thread.bump
     )]
     pub thread: Account<'info, Thread>,
 }
 
 pub fn handler(
-    _ctx: Context<ThreadDelete>
+    ctx: Context<ThreadDelete>
 ) -> Result<()> {
+    let close_to: &SystemAccount = &mut ctx.accounts.close_to;
+    let thread: &mut Account<Thread> = &mut ctx.accounts.thread;
+
+    thread.close(close_to.to_account_info())?;
     Ok(())
 }
