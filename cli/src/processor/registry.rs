@@ -22,6 +22,7 @@ pub fn get(client: &Client) -> Result<(), CliError> {
 
     println!("{}\n{:#?}", registry_pubkey, registry);
     println!("{}\n{:#?}", snapshot_pubkey, snapshot);
+    println!("Fee Account: {}\n", RegistryFee::pubkey(registry_pubkey));
     Ok(())
 }
 

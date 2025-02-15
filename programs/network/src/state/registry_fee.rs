@@ -2,7 +2,7 @@ use anchor_lang::{prelude::*, AnchorDeserialize};
 
 pub const SEED_REGISTRY_FEE: &[u8] = b"fee";
 
-/// Escrows the lamport balance owed to a particular worker.
+/// Escrows the network fees
 #[account]
 #[derive(Debug)]
 pub struct RegistryFee {

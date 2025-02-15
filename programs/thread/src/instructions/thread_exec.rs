@@ -139,13 +139,13 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
         ]],
     )?;
 
+    // Verify the inner instruction did not write data to the signatory address.
+    require!(signatory.data_is_empty(), AntegenThreadError::UnauthorizedWrite);
+
     if is_delete {
         thread.next_instruction = None;
         return Ok(());
     }
-
-    // Verify the inner instruction did not write data to the signatory address.
-    require!(signatory.data_is_empty(), AntegenThreadError::UnauthorizedWrite);
 
     // Parse the thread response
     let thread_response: Option<ThreadResponse> = match get_return_data() {
