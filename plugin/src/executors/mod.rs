@@ -2,12 +2,11 @@ pub mod tx;
 
 use std::{
     fmt::Debug,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::Arc,
+    time::Duration,
 };
 
+use agave_geyser_plugin_interface::geyser_plugin_interface::Result as PluginResult;
 use anchor_lang::{prelude::Pubkey, AccountDeserialize};
 use async_trait::async_trait;
 use log::info;
@@ -15,9 +14,8 @@ use solana_client::{
     client_error::{ClientError, ClientErrorKind, Result as ClientResult},
     nonblocking::rpc_client::RpcClient,
 };
-use agave_geyser_plugin_interface::geyser_plugin_interface::Result as PluginResult;
 use solana_sdk::commitment_config::CommitmentConfig;
-use tokio::runtime::Runtime;
+use tokio::{runtime::Runtime, sync::Mutex, time::timeout};
 use tx::TxExecutor;
 
 use crate::{config::PluginConfig, observers::Observers};
@@ -27,7 +25,7 @@ static LOCAL_RPC_URL: &str = "http://127.0.0.1:8899";
 pub struct Executors {
     pub tx: Arc<TxExecutor>,
     pub client: Arc<RpcClient>,
-    pub lock: AtomicBool,
+    pub lock: Mutex<()>
 }
 
 impl Executors {
@@ -38,7 +36,7 @@ impl Executors {
                 LOCAL_RPC_URL.into(),
                 CommitmentConfig::processed(),
             )),
-            lock: AtomicBool::new(false),
+            lock: Mutex::new(())
         }
     }
 
@@ -48,7 +46,7 @@ impl Executors {
         slot: u64,
         runtime: Arc<Runtime>,
     ) -> PluginResult<()> {
-        info!("process_slot: {}", slot,);
+        info!("process_slot: {}", slot);
         let now = std::time::Instant::now();
 
         // Return early if node is not healthy.
@@ -61,46 +59,45 @@ impl Executors {
             return Ok(());
         }
 
-        // Acquire lock.
-        if self
-            .clone()
-            .lock
-            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-            .is_err()
-        {
-            info!(
-                "processed_slot: {} duration: {:?} status: locked",
-                slot,
-                now.elapsed()
-            );
-            return Ok(());
+        // Try to acquire lock with timeout
+        let lock_result = timeout(
+            Duration::from_millis(400),
+            self.lock.lock()
+        ).await;
+
+        match lock_result {
+            Ok(_guard) => {
+                // Process the slot on the observers.
+                let executable_threads = observers.thread.clone().process_slot(slot).await?;
+                info!("executable_threads: {:#?}", executable_threads);
+
+                // Process the slot in the transaction executor.
+                self.tx
+                    .clone()
+                    .execute_txs(
+                        self.client.clone(),
+                        executable_threads,
+                        slot,
+                        runtime.clone(),
+                    )
+                    .await?;
+
+                info!(
+                    "processed_slot: {} duration: {:?} status: processed",
+                    slot,
+                    now.elapsed()
+                );
+                Ok(())
+            },
+            Err(_) => {
+                info!(
+                    "processed_slot: {} duration: {:?} status: locked",
+                    slot,
+                    now.elapsed()
+                );
+                Ok(())
+            }
         }
-
-        // Process the slot on the observers.
-        let executable_threads = observers.thread.clone().process_slot(slot).await?;
-        info!("executable_threads: {:#?}", executable_threads);
-
-        // Process the slot in the transaction executor.
-        self.tx
-            .clone()
-            .execute_txs(
-                self.client.clone(),
-                executable_threads,
-                slot,
-                runtime.clone(),
-            )
-            .await?;
-
-        // Release the lock.
-        self.clone()
-            .lock
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        info!(
-            "processed_slot: {} duration: {:?} status: processed",
-            slot,
-            now.elapsed()
-        );
-        Ok(())
     }
 }
 
