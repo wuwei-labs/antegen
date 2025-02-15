@@ -14,7 +14,7 @@ use {
     },
     log::info,
     solana_program::pubkey::Pubkey,
-    std::{fmt::Debug, sync::Arc},
+    std::{fmt::Debug, sync::{atomic::{AtomicBool, Ordering}, Arc}},
     tokio::runtime::{Builder, Runtime},
 };
 
@@ -159,13 +159,29 @@ impl GeyserPlugin for AntegenPlugin {
         status: &SlotStatus,
     ) -> PluginResult<()> {
         let status = status.clone();
+        let inner = self.inner.clone();
+
+        // Only spawn the queue processor once when plugin starts
+        static QUEUE_PROCESSOR_STARTED: AtomicBool = AtomicBool::new(false);
+        if !QUEUE_PROCESSOR_STARTED.swap(true, Ordering::SeqCst) {
+            let executors_clone = inner.executors.clone();
+            let runtime_clone = inner.runtime.clone();
+            inner.runtime.spawn(async move {
+                executors_clone
+                    .process_thread_queue(runtime_clone)
+                    .await
+                    .unwrap();
+            });
+        }
+    
+        // Normal slot processing
         self.inner.clone().spawn(|inner| async move {
             match status {
                 SlotStatus::Processed => {
                     inner
                         .executors
                         .clone()
-                        .process_slot(inner.observers.clone(), slot, inner.runtime.clone())
+                        .process_slot(inner.observers.clone(), slot)
                         .await?;
                 }
                 _ => (),

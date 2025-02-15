@@ -1,9 +1,7 @@
 pub mod tx;
 
 use std::{
-    fmt::Debug,
-    sync::Arc,
-    time::Duration,
+    collections::{HashSet, VecDeque}, fmt::Debug, sync::Arc, time::Duration
 };
 
 use agave_geyser_plugin_interface::geyser_plugin_interface::Result as PluginResult;
@@ -25,7 +23,8 @@ static LOCAL_RPC_URL: &str = "http://127.0.0.1:8899";
 pub struct Executors {
     pub tx: Arc<TxExecutor>,
     pub client: Arc<RpcClient>,
-    pub lock: Mutex<()>
+    pub lock: Mutex<()>,
+    pub thread_queue: Arc<Mutex<VecDeque<(HashSet<Pubkey>, u64)>>>
 }
 
 impl Executors {
@@ -36,7 +35,42 @@ impl Executors {
                 LOCAL_RPC_URL.into(),
                 CommitmentConfig::processed(),
             )),
-            lock: Mutex::new(())
+            lock: Mutex::new(()),
+            thread_queue: Arc::new(Mutex::new(VecDeque::new()))
+        }
+    }
+
+    pub async fn process_thread_queue(
+        self: Arc<Self>,
+        runtime: Arc<Runtime>,
+    ) -> PluginResult<()> {
+        loop {
+            let next_batch = {
+                let mut queue = self.thread_queue.lock().await;
+                queue.pop_front()
+            };
+    
+            match next_batch {
+                Some((executable_threads, slot)) => {
+                    if let Err(err) = self.tx
+                        .clone()
+                        .execute_txs(
+                            self.client.clone(),
+                            executable_threads,
+                            slot,
+                            runtime.clone(),
+                        )
+                        .await
+                    {
+                        info!("Error executing queued transactions: {:?}", err);
+                    }
+                    // Continue immediately to next item if there is one
+                }
+                None => {
+                    // Only sleep when queue is empty
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
         }
     }
 
@@ -44,12 +78,10 @@ impl Executors {
         self: Arc<Self>,
         observers: Arc<Observers>,
         slot: u64,
-        runtime: Arc<Runtime>,
     ) -> PluginResult<()> {
         info!("process_slot: {}", slot);
         let now = std::time::Instant::now();
 
-        // Return early if node is not healthy.
         if self.client.get_health().await.is_err() {
             info!(
                 "processed_slot: {} duration: {:?} status: unhealthy",
@@ -59,45 +91,37 @@ impl Executors {
             return Ok(());
         }
 
-        // Try to acquire lock with timeout
         let lock_result = timeout(
             Duration::from_millis(400),
             self.lock.lock()
         ).await;
 
+        let executable_threads = observers.thread.clone().process_slot(slot).await?;
         match lock_result {
             Ok(_guard) => {
-                // Process the slot on the observers.
-                let executable_threads = observers.thread.clone().process_slot(slot).await?;
-                info!("executable_threads: {:#?}", executable_threads);
-
-                // Process the slot in the transaction executor.
-                self.tx
-                    .clone()
-                    .execute_txs(
-                        self.client.clone(),
-                        executable_threads,
-                        slot,
-                        runtime.clone(),
-                    )
-                    .await?;
-
+                if !executable_threads.is_empty() {
+                    let mut queue = self.thread_queue.lock().await;
+                    queue.push_back((executable_threads, slot));
+                }
                 info!(
                     "processed_slot: {} duration: {:?} status: processed",
                     slot,
                     now.elapsed()
                 );
-                Ok(())
             },
             Err(_) => {
+                if !executable_threads.is_empty() {
+                    let mut queue = self.thread_queue.lock().await;
+                    queue.push_back((executable_threads, slot));
+                }
                 info!(
                     "processed_slot: {} duration: {:?} status: locked",
                     slot,
                     now.elapsed()
                 );
-                Ok(())
             }
         }
+        Ok(())
     }
 }
 
