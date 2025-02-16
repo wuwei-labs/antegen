@@ -141,7 +141,6 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
 
     if is_delete {
         thread.next_instruction = None;
-        thread.paused = true;
         return Ok(());
     }
 
