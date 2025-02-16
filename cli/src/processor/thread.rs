@@ -1,5 +1,8 @@
 use anchor_lang::{
-    solana_program::{instruction::Instruction, system_program}, AccountDeserialize, InstructionData, ToAccountMetas
+    solana_program::{instruction::Instruction, system_program},
+    AccountDeserialize,
+    InstructionData,
+    ToAccountMetas
 };
 use antegen_thread_program::state::{SerializableInstruction, Thread, VersionedThread, ThreadSettings, Trigger};
 use antegen_utils::CrateInfo;
@@ -23,7 +26,7 @@ pub fn create(
     client: &Client,
     id: String,
     instructions: Vec<SerializableInstruction>,
-    trigger: Trigger,
+    trigger: Trigger
 ) -> Result<(), CliError> {
     let thread_pubkey = Thread::pubkey(client.payer_pubkey(), id.clone().into_bytes());
     let ix = Instruction {
@@ -35,7 +38,7 @@ pub fn create(
             thread: thread_pubkey
         }.to_account_metas(Some(false)),
         data: antegen_thread_program::instruction::ThreadCreate {
-            amount: 0,
+            amount: LAMPORTS_PER_SOL,
             id: id.into(),
             instructions,
             trigger,
@@ -43,6 +46,56 @@ pub fn create(
         .data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
+    get(client, thread_pubkey)?;
+    Ok(())
+}
+
+pub fn close_test(
+    client: &Client
+) -> Result<(), CliError> {
+    let base_thread_id = "close-test";
+
+    // Derive the PDA for state
+    let (thread_id, _bump) = Pubkey::find_program_address(
+        &[
+            b"thread",
+            base_thread_id.as_bytes()
+        ],
+        &antegen_test_program::ID
+    );
+
+    let close_ix = Instruction {
+        program_id: antegen_test_program::ID,
+        accounts: antegen_test_program::accounts::CloseTo {
+            to: client.payer_pubkey()
+        }.to_account_metas(Some(true)),
+        data: antegen_test_program::instruction::CloseTo {}.data(),
+    };
+
+    let instructions = vec![close_ix.into()];
+    let trigger = Trigger::Cron {
+        schedule: "0 * * * * * *".to_string(),
+        skippable: true,
+    };
+
+    let thread_pubkey = Thread::pubkey(client.payer_pubkey(), thread_id);
+    let thread_ix = Instruction {
+        program_id: antegen_thread_program::ID,
+        accounts: antegen_thread_program::accounts::ThreadCreate {
+            authority: client.payer_pubkey(),
+            payer: client.payer_pubkey(),
+            system_program: system_program::ID,
+            thread: thread_pubkey
+        }.to_account_metas(Some(false)),
+        data: antegen_thread_program::instruction::ThreadCreate {
+            amount: LAMPORTS_PER_SOL,
+            id: thread_id.into(),
+            instructions,
+            trigger,
+        }.data(),
+    };
+
+    client.send_and_confirm(&[thread_ix], &[client.payer()]).unwrap();
     get(client, thread_pubkey)?;
     Ok(())
 }
@@ -85,7 +138,7 @@ pub fn memo_test(
         client,
         thread_id,
         instructions,
-        trigger,
+        trigger
     )
 }
 
