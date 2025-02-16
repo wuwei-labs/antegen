@@ -89,14 +89,13 @@ pub fn memo_test(
     )
 }
 
-pub fn delete(client: &Client, id: String) -> Result<(), CliError> {
-    let thread_pubkey = Thread::pubkey(client.payer_pubkey(), id.into_bytes());
+pub fn delete(client: &Client, address: Pubkey) -> Result<(), CliError> {
     let ix = Instruction {
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadDelete {
             authority: client.payer_pubkey(),
             close_to: client.payer_pubkey(),
-            thread: thread_pubkey,
+            thread: address,
         }.to_account_metas(Some(false)),
         data: antegen_thread_program::instruction::ThreadDelete { }.data(),
     };

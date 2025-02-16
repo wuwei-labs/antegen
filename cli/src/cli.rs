@@ -53,7 +53,8 @@ pub enum CliCommand {
         skippable: Option<bool>,
     },
     ThreadDelete {
-        id: String,
+        id: Option<String>,
+        address: Option<Pubkey>,
     },
     ThreadGet {
         id: Option<String>,
@@ -423,11 +424,19 @@ pub fn app() -> Command {
                         .arg(
                             Arg::new("id")
                                 .index(1)
+                                .required(false)
                                 .value_name("ID")
                                 .num_args(1)
-                                .required(false)
-                                .help("The id of the thread to delete"),
-                        ),
+                                .help("The ID of the thread to delete (must have authority)")
+                        )
+                        .arg(
+                            Arg::new("address")
+                                .short('k')
+                                .long("address")
+                                .value_name("ADDRESS")
+                                .num_args(1)
+                                .help("The address of the thread to delete"),
+                        )
                 )
                 .subcommand(
                     Command::new("get")

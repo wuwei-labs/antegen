@@ -86,7 +86,10 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             schedule,
             skippable
         } => thread::memo_test(&client, id, schedule, skippable),
-        CliCommand::ThreadDelete { id } => thread::delete(&client, id),
+        CliCommand::ThreadDelete { id, address } => {
+            let pubkey = parse_pubkey_from_id_or_address(client.payer_pubkey(), id, address)?;
+            thread::delete(&client, pubkey)
+        },
         CliCommand::ThreadPause { id } => thread::pause(&client, id),
         CliCommand::ThreadResume { id } => thread::resume(&client, id),
         CliCommand::ThreadReset { id } => thread::reset(&client, id),
