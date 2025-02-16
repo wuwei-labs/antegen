@@ -16,6 +16,7 @@ pub struct ThreadDelete<'info> {
     /// The thread to be deleted.
     #[account(
         mut,
+        close = close_to,
         seeds = [
             SEED_THREAD,
             thread.authority.as_ref(),
@@ -27,11 +28,7 @@ pub struct ThreadDelete<'info> {
 }
 
 pub fn handler(
-    ctx: Context<ThreadDelete>
+    _ctx: Context<ThreadDelete>
 ) -> Result<()> {
-    let close_to: &SystemAccount = &mut ctx.accounts.close_to;
-    let thread: &mut Account<Thread> = &mut ctx.accounts.thread;
-
-    thread.close(close_to.to_account_info())?;
     Ok(())
 }
