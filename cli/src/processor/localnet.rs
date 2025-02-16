@@ -145,6 +145,7 @@ fn start_test_validator(
         .arg("--log")  // Enable logging
         .bpf_program(config, antegen_network_program::ID, "network")
         .bpf_program(config, antegen_thread_program::ID, "thread")
+        .bpf_program(config, antegen_test_program::ID, "test")
         .clone_addresses(clone_addresses)
         .add_programs_with_path(program_infos)
         .geyser_plugin_config(config)

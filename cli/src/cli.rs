@@ -52,6 +52,7 @@ pub enum CliCommand {
         schedule: Option<String>,
         skippable: Option<bool>,
     },
+    ThreadCloseTest {},
     ThreadDelete {
         id: Option<String>,
         address: Option<Pubkey>,
@@ -416,6 +417,10 @@ pub fn app() -> Command {
                                 .default_value("false")
                                 .help("Whether to skip missed triggers")
                         )
+                )
+                .subcommand(
+                    Command::new("close-test")
+                        .about("Create a test thread (localnet only)")
                 )
                 .subcommand(
                     Command::new("delete")

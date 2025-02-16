@@ -24,8 +24,11 @@ use solana_sdk::{
         VersionedMessage
     },
     transaction::VersionedTransaction,
-    account::Account, commitment_config::CommitmentConfig,
-    compute_budget::ComputeBudgetInstruction, signature::Keypair, signer::Signer
+    account::Account,
+    commitment_config::CommitmentConfig,
+    compute_budget::ComputeBudgetInstruction,
+    signature::Keypair,
+    signer::Signer
 };
 
 /// Max byte size of a serialized transaction.
@@ -82,18 +85,23 @@ pub async fn build_thread_exec_tx(
             &ixs,
             &[],  // address table lookups
             blockhash,
-        ).map_err(|e| GeyserPluginError::Custom(format!("Failed to compile message: {}", e).into()))?;
+        ).map_err(|e| {
+            GeyserPluginError::Custom(format!("Failed to compile message: {}", e).into())
+        })?;
 
         let versioned_message = VersionedMessage::V0(message);
-
         // Create versioned transaction
         let sim_tx = VersionedTransaction::try_new(
             versioned_message,
             &[payer],
-        ).map_err(|e| GeyserPluginError::Custom(format!("Failed to create transaction: {}", e).into()))?;
+        ).map_err(|e| {
+            GeyserPluginError::Custom(format!("Failed to create transaction: {}", e).into())
+        })?;
 
         // Check transaction size limit
-        if sim_tx.message.serialize().len() > TRANSACTION_MESSAGE_SIZE_LIMIT {
+        let tx_size = sim_tx.message.serialize().len();
+        if tx_size > TRANSACTION_MESSAGE_SIZE_LIMIT {
+            info!("Transaction size exceeds limit, breaking");
             break;
         }
 
@@ -116,76 +124,110 @@ pub async fn build_thread_exec_tx(
             .await
         {
             Err(err) => {
+                info!("Simulation error encountered: {:?}", err);
                 match err.kind {
-                    solana_client::client_error::ClientErrorKind::RpcError(rpc_err) => {
-                        match rpc_err {
-                            solana_client::rpc_request::RpcError::RpcResponseError {
-                                code,
-                                message: _,
-                                data: _,
-                            } => {
-                                if code.eq(&JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED) {
-                                    return Err(GeyserPluginError::Custom(
-                                        "RPC client has not reached min context slot".into(),
-                                    ));
-                                }
-                            }
-                            _ => {}
+                    solana_client::client_error::ClientErrorKind::RpcError(
+                        solana_client::rpc_request::RpcError::RpcResponseError {
+                            code,
+                            ..
                         }
+                    ) if code == JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED => {
+                        return Err(GeyserPluginError::Custom(
+                            "RPC client has not reached min context slot".into(),
+                        ));
                     }
-                    _ => {}
+                    _ => break,
                 }
-                break;
             }
 
             Ok(response) => {
                 if response.value.err.is_some() {
                     if successful_ixs.is_empty() {
                         info!(
-                            "slot: {} thread: {} simulation_error: \"{}\" logs: {:?}",
+                            "First simulation failed - slot: {} thread: {} error: {:?} logs: {:?}",
                             slot,
                             thread_pubkey,
-                            response.value.err.unwrap(),
-                            response.value.logs.unwrap_or(vec![]),
+                            response.value.err,
+                            response.value.logs.unwrap_or_default()
                         );
                     }
                     break;
                 }
 
+                info!("Simulation successful");
                 successful_ixs = ixs.clone();
                 units_consumed = response.value.units_consumed;
 
                 // Parse resulting thread account
-                if let Some(ui_accounts) = response.value.accounts {
-                    if let Some(Some(ui_account)) = ui_accounts.get(0) {
-                        if let Some(account) = ui_account.decode::<Account>() {
-                            if let Ok(sim_thread) = VersionedThread::try_from(account.data) {
-                                if sim_thread.next_instruction().is_some() {
-                                    if let Some(exec_context) = sim_thread.exec_context() {
-                                        if exec_context.execs_since_slot.lt(&sim_thread.rate_limit()) {
-                                            ixs.push(build_exec_ix(
-                                                sim_thread,
-                                                thread_pubkey,
-                                                signatory_pubkey,
-                                                worker_pubkey,
-                                            ));
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                } else {
-                                    break;
-                                }
-                            }
-                        }
+                let ui_account = match response
+                    .value
+                    .accounts
+                    .and_then(|a| a.get(0).cloned().flatten()) 
+                {
+                    Some(acc) => acc,
+                    None => {
+                        info!("No thread account found in response");
+                        break;
                     }
+                };
+
+                let account = match ui_account.decode::<Account>() {
+                    Some(acc) => acc,
+                    None => {
+                        info!("Failed to decode thread account");
+                        break;
+                    }
+                };
+
+                if account.data.len() < 8 {
+                    info!("Thread account has insufficient data (likely closed), breaking");
+                    break;
                 }
+
+                let sim_thread = match VersionedThread::try_from(account.data) {
+                    Ok(thread) => thread,
+                    Err(e) => {
+                        info!("Failed to parse thread state: {:?}", e);
+                        break;
+                    }
+                };
+
+                // Check if next instruction exists
+                match sim_thread.next_instruction() {
+                    Some(_) => (),
+                    None => {
+                        info!("No next instruction found, breaking");
+                        break;
+                    }
+                };
+
+                // Check execution context and rate limit
+                let exec_context = match sim_thread.exec_context() {
+                    Some(context) => context,
+                    None => {
+                        info!("No exec context found, breaking");
+                        break;
+                    }
+                };
+
+                if !exec_context.execs_since_slot.lt(&sim_thread.rate_limit()) {
+                    info!("Rate limit reached, breaking");
+                    break;
+                }
+
+                ixs.push(build_exec_ix(
+                    sim_thread,
+                    thread_pubkey,
+                    signatory_pubkey,
+                    worker_pubkey,
+                ));
             }
         }
     }
 
     // Exit if no successful instructions
     if successful_ixs.is_empty() {
+        info!("No successful instructions, returning None");
         return Ok(None);
     }
 
@@ -204,16 +246,20 @@ pub async fn build_thread_exec_tx(
         &successful_ixs,
         &[],
         blockhash,
-    ).map_err(|e| GeyserPluginError::Custom(format!("Failed to compile final message: {}", e).into()))?;
+    ).map_err(|e| {
+        GeyserPluginError::Custom(format!("Failed to compile final message: {}", e).into())
+    })?;
 
     let versioned_message = VersionedMessage::V0(message);
     let tx = VersionedTransaction::try_new(
         versioned_message,
         &[payer],
-    ).map_err(|e| GeyserPluginError::Custom(format!("Failed to create final transaction: {}", e).into()))?;
+    ).map_err(|e| {
+        GeyserPluginError::Custom(format!("Failed to create final transaction: {}", e).into())
+    })?;
 
     info!(
-        "slot: {:?} thread: {:?} sim_duration: {:?} instruction_count: {:?} compute_units: {:?} tx_sig: {:?}",
+        "Successfully built transaction - slot: {:?} thread: {:?} sim_duration: {:?} instruction_count: {:?} compute_units: {:?} tx_sig: {:?}",
         slot,
         thread_pubkey,
         now.elapsed(),
@@ -233,15 +279,17 @@ fn build_kickoff_ix(
 ) -> Instruction {
     // Build the instruction.
     let mut kickoff_ix = match thread {
-        VersionedThread::V1(_) => Instruction {
-            program_id: antegen_thread_program::ID,
-            accounts: antegen_thread_program::accounts::ThreadKickoff {
-                signatory: signatory_pubkey,
-                thread: thread_pubkey,
-                worker: worker_pubkey,
+        VersionedThread::V1(_) => {
+            Instruction {
+                program_id: antegen_thread_program::ID,
+                accounts: antegen_thread_program::accounts::ThreadKickoff {
+                    signatory: signatory_pubkey,
+                    thread: thread_pubkey,
+                    worker: worker_pubkey,
+                }
+                .to_account_metas(Some(false)),
+                data: antegen_thread_program::instruction::ThreadKickoff {}.data(),
             }
-            .to_account_metas(Some(false)),
-            data: antegen_thread_program::instruction::ThreadKickoff {}.data(),
         },
     };
 
@@ -251,20 +299,24 @@ fn build_kickoff_ix(
             address,
             offset: _,
             size: _,
-        } => kickoff_ix.accounts.push(AccountMeta {
-            pubkey: address,
-            is_signer: false,
-            is_writable: false,
-        }),
+        } => {
+            kickoff_ix.accounts.push(AccountMeta {
+                pubkey: address,
+                is_signer: false,
+                is_writable: false,
+            })
+        },
         Trigger::Pyth {
             price_feed,
             equality: _,
             limit: _,
-        } => kickoff_ix.accounts.push(AccountMeta {
-            pubkey: price_feed,
-            is_signer: false,
-            is_writable: false,
-        }),
+        } => {
+            kickoff_ix.accounts.push(AccountMeta {
+                pubkey: price_feed,
+                is_signer: false,
+                is_writable: false,
+            })
+        },
         _ => {}
     }
 
@@ -279,17 +331,19 @@ fn build_exec_ix(
 ) -> Instruction {
     // Build the instruction.
     let mut exec_ix = match thread {
-        VersionedThread::V1(_) => Instruction {
-            program_id: antegen_thread_program::ID,
-            accounts: antegen_thread_program::accounts::ThreadExec {
-                commission: antegen_network_program::state::WorkerCommission::pubkey(worker_pubkey),
-                pool: antegen_network_program::state::Pool::pubkey(0),
-                signatory: signatory_pubkey,
-                thread: thread_pubkey,
-                worker: worker_pubkey,
+        VersionedThread::V1(_) => {
+            Instruction {
+                program_id: antegen_thread_program::ID,
+                accounts: antegen_thread_program::accounts::ThreadExec {
+                    commission: antegen_network_program::state::WorkerCommission::pubkey(worker_pubkey),
+                    pool: antegen_network_program::state::Pool::pubkey(0),
+                    signatory: signatory_pubkey,
+                    thread: thread_pubkey,
+                    worker: worker_pubkey,
+                }
+                .to_account_metas(Some(true)),
+                data: antegen_thread_program::instruction::ThreadExec {}.data(),
             }
-            .to_account_metas(Some(true)),
-            data: antegen_thread_program::instruction::ThreadExec {}.data(),
         },
     };
 
