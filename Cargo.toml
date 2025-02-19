@@ -48,9 +48,10 @@ keywords = ["solana"]
 [workspace.dependencies]
 solana-cron = { path = "cron" }
 antegen-utils = { path = "utils" }
-antegen-plugin-utils= { path = "plugin/utils" }
+antegen-plugin-utils = { path = "plugin/utils" }
 antegen-thread-program = { path = "programs/thread", features = ["no-entrypoint"] }
 antegen-network-program = { path = "programs/network", features = ["no-entrypoint"] }
+antegen-test-program = { path = "programs/test", features = ["no-entrypoint"] }
 
 anchor-lang = { git = "https://github.com/coral-xyz/anchor", rev = "6df05aa5b5d9971041e3d25a246d935252b6e576" }
 anchor-spl = { features = ["mint", "token"], git = "https://github.com/coral-xyz/anchor", rev = "6df05aa5b5d9971041e3d25a246d935252b6e576" }
