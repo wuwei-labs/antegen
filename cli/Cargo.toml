@@ -23,6 +23,7 @@ antegen-utils = { workspace = true }
 antegen-plugin-utils= { workspace = true }
 antegen-thread-program = { workspace = true }
 antegen-network-program = { workspace = true }
+antegen-test-program = { workspace = true }
 
 anchor-lang = { workspace = true }
 anchor-spl = { workspace = true }

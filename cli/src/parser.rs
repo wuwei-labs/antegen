@@ -158,6 +158,7 @@ fn parse_thread_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
             schedule: matches.get_one::<String>("schedule").map(|s| s.to_string()),
             skippable: matches.get_one::<bool>("skippable").copied(),
         }),
+        Some(("close-test", _)) => Ok(CliCommand::ThreadCloseTest {}),
         Some(("delete", matches)) => Ok(CliCommand::ThreadDelete {
             id: parse_string("id", matches).ok(),
             address: parse_pubkey("address", matches).ok(),
