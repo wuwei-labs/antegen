@@ -10,14 +10,17 @@ members = [
 [programs.localnet]
 antegen_network_program = "AgNet6qmh75bjFULcS9RQijUoWwkCtSiSwXM1K3Ujn6Z"
 antegen_thread_program = "AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1"
+antegen_test_program = "AgTstktpwF7FfmUpLQW6NLdCioiF4nmQqV9oYjZQzHjj"
 
 [programs.testnet]
 antegen_network_program = "AgNet6qmh75bjFULcS9RQijUoWwkCtSiSwXM1K3Ujn6Z"
 antegen_thread_program = "AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1"
+antegen_test_program = "AgTstktpwF7FfmUpLQW6NLdCioiF4nmQqV9oYjZQzHjj"
 
 [programs.mainnet]
 antegen_network_program = "AgNet6qmh75bjFULcS9RQijUoWwkCtSiSwXM1K3Ujn6Z"
 antegen_thread_program = "AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1"
+antegen_test_program = "AgTstktpwF7FfmUpLQW6NLdCioiF4nmQqV9oYjZQzHjj"
 
 [registry]
 url = "https://api.apr.dev"

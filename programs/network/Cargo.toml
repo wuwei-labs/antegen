@@ -1,6 +1,7 @@
 [package]
 name = "antegen-network-program"
 description = "Antegen networking protocol"
+publish = false
 
 version = { workspace = true }
 authors = { workspace = true }

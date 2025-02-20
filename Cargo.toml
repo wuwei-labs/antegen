@@ -8,6 +8,7 @@ license = { workspace = true }
 edition = { workspace = true }
 readme = { workspace = true }
 keywords = { workspace = true }
+publish = false
 
 [lib]
 name = "antegen"
@@ -53,6 +54,7 @@ antegen-thread-program = { path = "programs/thread", features = ["no-entrypoint"
 antegen-network-program = { path = "programs/network", features = ["no-entrypoint"] }
 antegen-test-program = { path = "programs/test", features = ["no-entrypoint"] }
 
+## todo -- needs to have new published version before crates.io publish
 anchor-lang = { git = "https://github.com/coral-xyz/anchor", rev = "6df05aa5b5d9971041e3d25a246d935252b6e576" }
 anchor-spl = { features = ["mint", "token"], git = "https://github.com/coral-xyz/anchor", rev = "6df05aa5b5d9971041e3d25a246d935252b6e576" }
 

@@ -1,6 +1,7 @@
 [package]
 name = "antegen-utils"
 description = "Tools for building blocks on Solana"
+publish = false
 
 version = { workspace = true }
 authors = { workspace = true }

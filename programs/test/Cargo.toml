@@ -1,6 +1,7 @@
 [package]
 name = "antegen-test-program"
 description = "Used to test Antegen"
+publish = false
 
 version = { workspace = true }
 authors = { workspace = true }

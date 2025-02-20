@@ -1,6 +1,7 @@
 [package]
 name = "antegen-plugin-utils"
 description = "Antegen Plugin Utils"
+publish = false
 
 version = { workspace = true }
 authors = { workspace = true }
