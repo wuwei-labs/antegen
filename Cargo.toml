@@ -30,7 +30,8 @@ members = [
     "cli",
     "cron",
     "plugin",
-    "programs/*",
+    "programs/network",
+    "programs/thread",
     "sdk",
     "utils"
 ]

@@ -73,7 +73,9 @@ jobs:
           for program_dir in programs/*/; do
             if [ -f "${program_dir}Cargo.toml" ]; then
               library_name=$(yq -oy '.lib.name' "${program_dir}Cargo.toml")
-              solana-verify build --library-name ${library_name} -- --features mainnet
+              if [[ ! $library_name =~ "test" ]]; then
+                solana-verify build --library-name ${library_name} -- --features mainnet
+              fi
             fi
           done
 
