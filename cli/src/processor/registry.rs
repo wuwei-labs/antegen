@@ -20,7 +20,19 @@ pub fn get(client: &Client) -> Result<(), CliError> {
         .get::<Snapshot>(&snapshot_pubkey)
         .map_err(|_err| CliError::AccountDataNotParsable(snapshot_pubkey.to_string()))?;
 
+    let registry_fee_pubkey: anchor_lang::prelude::Pubkey = RegistryFee::pubkey(registry_pubkey);
+        // Get commission account data and calculate available balance
+    let fee_data = client
+        .get_account_data(&registry_fee_pubkey)
+        .map_err(|_err| CliError::AccountNotFound(registry_fee_pubkey.to_string()))?;
+    let fee_min_rent = client
+        .get_minimum_balance_for_rent_exemption(fee_data.len())
+        .unwrap();
+    let fee_balance = client.get_balance(&registry_fee_pubkey).unwrap();
+    let registry_balance = fee_balance.saturating_sub(fee_min_rent);
+
     println!("{}\n{:#?}", registry_pubkey, registry);
+    println!("Balance: {}\n", registry_balance);
     println!("{}\n{:#?}", snapshot_pubkey, snapshot);
     Ok(())
 }

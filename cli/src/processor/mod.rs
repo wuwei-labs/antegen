@@ -107,7 +107,7 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
         CliCommand::RegistryReset => registry::reset(&client),
         CliCommand::RegistryUnlock => registry::unlock(&client),
         CliCommand::WorkerCreate { signatory } => worker::create(&client, signatory, false),
-        CliCommand::WorkerFind { id} => worker::find(&client, id),
+        CliCommand::WorkerGet { id} => worker::get(&client, id),
         CliCommand::WorkerUpdate { id, commission_rate, signatory } => worker::update(&client, id, commission_rate, signatory),
     }
 }

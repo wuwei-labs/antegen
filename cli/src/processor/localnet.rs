@@ -92,7 +92,7 @@ fn register_worker(client: &Client, config: &CliConfig) -> Result<()> {
         .context("airdrop to signatory failed")?;
     super::worker::create(client, signatory, true).context("worker::create failed")?;
 
-    let worker_info = super::worker::get(client, 0);
+    let worker_info = super::worker::_get(client, 0);
     print_status!("Worker   👷", "{}", explorer.account(worker_info?.worker_pubkey));
     Ok(())
 }

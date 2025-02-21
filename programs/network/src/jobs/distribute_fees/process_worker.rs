@@ -57,14 +57,14 @@ pub struct DistributeFeesProcessWorker<'info> {
 
 pub fn handler(ctx: Context<DistributeFeesProcessWorker>) -> Result<ThreadResponse> {
     // Get accounts.
-    let config = &ctx.accounts.config;
-    let commission = &mut ctx.accounts.commission;
-    let registry = &ctx.accounts.registry;
-    let registry_fee = &mut ctx.accounts.registry_fee;
-    let snapshot = &ctx.accounts.snapshot;
-    let snapshot_frame = &ctx.accounts.snapshot_frame;
-    let thread = &ctx.accounts.thread;
-    let worker = &mut ctx.accounts.worker;
+    let config: &Account<Config> = &ctx.accounts.config;
+    let commission: &mut Account<WorkerCommission> = &mut ctx.accounts.commission;
+    let registry: &Account<Registry> = &ctx.accounts.registry;
+    let registry_fee: &mut Account<RegistryFee> = &mut ctx.accounts.registry_fee;
+    let snapshot: &Account<Snapshot> = &ctx.accounts.snapshot;
+    let snapshot_frame: &Account<SnapshotFrame> = &ctx.accounts.snapshot_frame;
+    let thread: &Signer = &ctx.accounts.thread;
+    let worker: &mut Account<Worker> = &mut ctx.accounts.worker;
 
     // Calculate the fee account's usuable balance.
     let commission_lamport_balance = commission.to_account_info().lamports();
