@@ -8,7 +8,7 @@ use antegen_network_program::state::{Config, ConfigSettings};
 
 use crate::{client::Client, errors::CliError};
 
-pub fn fetch(client: &Client) -> Result<Config, CliError> {
+pub fn _get(client: &Client) -> Result<Config, CliError> {
     let config = client
         .get::<Config>(&Config::pubkey())
         .map_err(|_err| CliError::AccountNotFound(Config::pubkey().to_string()))?;
@@ -16,7 +16,7 @@ pub fn fetch(client: &Client) -> Result<Config, CliError> {
 }
 
 pub fn get(client: &Client) -> Result<(), CliError> {
-    let config = fetch(client);
+    let config: Result<Config, CliError> = _get(client);
     println!("{:#?}", config?);
     Ok(())
 }

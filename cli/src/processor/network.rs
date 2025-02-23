@@ -20,7 +20,6 @@ use {
             ConfigSettings,
             Pool,
             Registry,
-            RegistryFee,
             Snapshot
         },
         ANTEGEN_SQUADS
@@ -45,7 +44,6 @@ pub fn initialize(client: &Client) -> Result<(), CliError> {
             admin,
             config: Config::pubkey(),
             registry,
-            registry_fee: RegistryFee::pubkey(registry),
             snapshot: Snapshot::pubkey(0),
             system_program: system_program::ID,
         }.to_account_metas(Some(false)),
@@ -213,7 +211,7 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
         .send_and_confirm(&vec![ix_b, ix_c], &[client.payer()])
         .context(format!("Failed to create thread: {}", hasher_thread_id))?;
 
-    let config = super::config::fetch(client)?;
+    let config: Config = super::config::_get(client)?;
     print_status!("Epoch    🧵", "{}", explorer.account(config.clone().epoch_thread));
     print_status!("Hasher   🧵", "{}", explorer.account(config.clone().hasher_thread));
     print_status!("Admin    👔", "{}", explorer.account(config.clone().admin));
