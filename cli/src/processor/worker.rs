@@ -36,7 +36,7 @@ impl WorkerInfo {
     }
 }
 
-pub fn get(client: &Client, id: u64) -> Result<WorkerInfo, CliError> {
+pub fn _get(client: &Client, id: u64) -> Result<WorkerInfo, CliError> {
     let worker_pubkey = Worker::pubkey(id);
     let worker = client
         .get::<Worker>(&worker_pubkey)
@@ -85,8 +85,8 @@ pub fn get(client: &Client, id: u64) -> Result<WorkerInfo, CliError> {
     Ok(worker_info)
 }
 
-pub fn find(client: &Client, id: u64) -> Result<(), CliError> {
-    let worker_info = get(client, id);
+pub fn get(client: &Client, id: u64) -> Result<(), CliError> {
+    let worker_info = _get(client, id);
     worker_info?.print_status();
     Ok(())
 }
@@ -123,7 +123,7 @@ pub fn create(client: &Client, signatory: Keypair, silent: bool) -> Result<(), C
         .unwrap();
 
     if !silent {
-        find(client, worker_id)?;
+        get(client, worker_id)?;
     }
     Ok(())
 }
@@ -150,6 +150,6 @@ pub fn update(client: &Client, id: u64, commission_rate: Option<u64>, signatory:
         data: antegen_network_program::instruction::WorkerUpdate { settings }.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
-    find(client, worker.id)?;
+    get(client, worker.id)?;
     Ok(())
 }

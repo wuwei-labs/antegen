@@ -203,7 +203,7 @@ fn parse_worker_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
         Some(("create", matches)) => Ok(CliCommand::WorkerCreate {
             signatory: parse_keypair_file("signatory_keypair", matches)?,
         }),
-        Some(("find", matches)) => Ok(CliCommand::WorkerFind {
+        Some(("get", matches)) => Ok(CliCommand::WorkerGet {
             id: parse_u64("id", matches)?,
         }),
         Some(("update", matches)) => Ok(CliCommand::WorkerUpdate {

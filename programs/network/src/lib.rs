@@ -57,10 +57,6 @@ pub mod network_program {
         registry_unlock::handler(ctx)
     }
 
-    pub fn worker_claim(ctx: Context<WorkerClaim>) -> Result<()> {
-        worker_claim::handler(ctx)
-    }
-
     pub fn worker_create(ctx: Context<WorkerCreate>) -> Result<()> {
         worker_create::handler(ctx)
     }

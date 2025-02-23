@@ -7,7 +7,6 @@ pub mod registry_claim;
 pub mod registry_nonce_hash;
 pub mod registry_unlock;
 pub mod registry_reset;
-pub mod worker_claim;
 pub mod worker_create;
 pub mod worker_update;
 
@@ -20,6 +19,5 @@ pub use registry_claim::*;
 pub use registry_nonce_hash::*;
 pub use registry_unlock::*;
 pub use registry_reset::*;
-pub use worker_claim::*;
 pub use worker_create::*;
 pub use worker_update::*;

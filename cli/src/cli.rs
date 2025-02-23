@@ -85,7 +85,7 @@ pub enum CliCommand {
     WorkerCreate {
         signatory: Keypair,
     },
-    WorkerFind {
+    WorkerGet {
         id: u64,
     },
     WorkerUpdate {
@@ -561,7 +561,7 @@ pub fn app() -> Command {
                         ),
                 )
                 .subcommand(
-                    Command::new("find")
+                    Command::new("get")
                         .about("Lookup a worker on the Antegen network")
                         .arg(
                             Arg::new("id")
