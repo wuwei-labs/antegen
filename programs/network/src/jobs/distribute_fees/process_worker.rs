@@ -1,7 +1,7 @@
 use anchor_lang::{prelude::*, solana_program::instruction::Instruction, InstructionData};
 use antegen_utils::thread::ThreadResponse;
 
-use crate::state::*;
+use crate::{state::*, ANTEGEN_SQUADS};
 
 pub const TOTAL_BASIS_POINTS: u64 = 10_000;
 
@@ -26,14 +26,9 @@ pub struct DistributeFeesProcessWorker<'info> {
 
     #[account(
         mut,
-        seeds = [
-            SEED_REGISTRY_FEE,
-            registry.key().as_ref(),
-        ],
-        bump,
-        has_one = registry,
+        address = ANTEGEN_SQUADS
     )]
-    pub registry_fee: Account<'info, RegistryFee>,
+    pub network_fee: SystemAccount<'info>,
 
     #[account(
         address = snapshot.pubkey(),
@@ -60,26 +55,26 @@ pub fn handler(ctx: Context<DistributeFeesProcessWorker>) -> Result<ThreadRespon
     let config: &Account<Config> = &ctx.accounts.config;
     let commission: &mut Account<WorkerCommission> = &mut ctx.accounts.commission;
     let registry: &Account<Registry> = &ctx.accounts.registry;
-    let registry_fee: &mut Account<RegistryFee> = &mut ctx.accounts.registry_fee;
+    let network_fee: &mut SystemAccount = &mut ctx.accounts.network_fee;
     let snapshot: &Account<Snapshot> = &ctx.accounts.snapshot;
     let snapshot_frame: &Account<SnapshotFrame> = &ctx.accounts.snapshot_frame;
     let thread: &Signer = &ctx.accounts.thread;
     let worker: &mut Account<Worker> = &mut ctx.accounts.worker;
 
     // Calculate the fee account's usuable balance.
-    let commission_lamport_balance = commission.to_account_info().lamports();
-    let commission_data_len = 8 + commission.try_to_vec()?.len();
-    let commission_rent_balance = Rent::get().unwrap().minimum_balance(commission_data_len);
-    let commission_usable_balance = commission_lamport_balance.checked_sub(commission_rent_balance).unwrap();
+    let commission_lamport_balance: u64 = commission.to_account_info().lamports();
+    let commission_data_len: usize = 8 + commission.try_to_vec()?.len();
+    let commission_rent_balance: u64 = Rent::get().unwrap().minimum_balance(commission_data_len);
+    let commission_usable_balance: u64 = commission_lamport_balance.checked_sub(commission_rent_balance).unwrap();
 
     // Calculate the commission to be retained by the worker.
-    let commission_bps = worker.commission_rate.checked_mul(100).unwrap(); // Convert percentage to basis points
-    let commission_balance = commission_usable_balance
+    let commission_bps: u64 = worker.commission_rate.checked_mul(100).unwrap(); // Convert percentage to basis points
+    let commission_balance: u64 = commission_usable_balance
         .checked_mul(commission_bps)
         .unwrap()
         .checked_div(TOTAL_BASIS_POINTS)
         .unwrap();
-    let registry_fees = commission_usable_balance.checked_sub(commission_balance).unwrap();
+    let registry_fees: u64 = commission_usable_balance.checked_sub(commission_balance).unwrap();
 
     // Transfer commission to the worker.
     if commission_balance.gt(&0) {
@@ -104,7 +99,7 @@ pub fn handler(ctx: Context<DistributeFeesProcessWorker>) -> Result<ThreadRespon
             .checked_sub(registry_fees)  // Subtract registry_fees from commission
             .unwrap();
 
-        **registry_fee.to_account_info().try_borrow_mut_lamports()? = registry_fee
+        **network_fee.to_account_info().try_borrow_mut_lamports()? = network_fee
             .to_account_info()
             .lamports()
             .checked_add(registry_fees)
@@ -118,8 +113,8 @@ pub fn handler(ctx: Context<DistributeFeesProcessWorker>) -> Result<ThreadRespon
         .unwrap()
         .lt(&snapshot.total_frames)
     {
-        let next_worker_pubkey = Worker::pubkey(worker.id.checked_add(1).unwrap());
-        let next_snapshot_frame_pubkey =
+        let next_worker_pubkey: Pubkey = Worker::pubkey(worker.id.checked_add(1).unwrap());
+        let next_snapshot_frame_pubkey: Pubkey =
             SnapshotFrame::pubkey(snapshot.key(), snapshot_frame.id.checked_add(1).unwrap());
         Some(
             Instruction {
@@ -128,7 +123,7 @@ pub fn handler(ctx: Context<DistributeFeesProcessWorker>) -> Result<ThreadRespon
                     config: config.key(),
                     commission: WorkerCommission::pubkey(next_worker_pubkey),
                     registry: registry.key(),
-                    registry_fee: registry_fee.key(),
+                    network_fee: network_fee.key(),
                     snapshot: snapshot.key(),
                     snapshot_frame: next_snapshot_frame_pubkey,
                     thread: thread.key(),

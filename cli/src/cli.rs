@@ -102,39 +102,6 @@ pub fn app() -> Command {
         .version(env!("CARGO_PKG_VERSION")) // Use the crate version
         .arg_required_else_help(true)
         .subcommand(
-            Command::new("config")
-                .about("Manage the Antegen network config")
-                .arg_required_else_help(true)
-                .subcommand(Command::new("view").about("Get a config value"))
-                .subcommand(
-                    Command::new("set")
-                        .about("Set a config value")
-                        .arg(
-                            Arg::new("admin")
-                                .long("admin")
-                                .value_name("ADMIN")
-                                .num_args(1)
-                        )
-                        .arg(
-                            Arg::new("epoch_thread")
-                                .long("epoch_thread")
-                                .value_name("EPOCH_THREAD")
-                                .num_args(1)
-                        )
-                        .arg(
-                            Arg::new("hasher_thread")
-                                .long("hasher_thread")
-                                .value_name("HASHER_THREAD")
-                                .num_args(1)
-                        )
-                        .group(
-                            ArgGroup::new("config_settings")
-                                .args(&["admin", "epoch_thread", "hasher_thread"])
-                                .multiple(true),
-                        ),
-                ),
-        )
-        .subcommand(
             Command::new("crontab")
                 .about("Generate a cron firing table from schedule")
                 .arg_required_else_help(true)

@@ -41,10 +41,6 @@ pub mod network_program {
         pool_update::handler(ctx, settings)
     }
 
-    pub fn registry_claim(ctx: Context<RegistryClaim>) -> Result<()> {
-        registry_claim::handler(ctx)
-    }
-
     pub fn registry_nonce_hash(ctx: Context<RegistryNonceHash>) -> Result<ThreadResponse> {
         registry_nonce_hash::handler(ctx)
     }

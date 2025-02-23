@@ -1,7 +1,7 @@
 use anchor_lang::{prelude::*, solana_program::instruction::Instruction, InstructionData};
 use antegen_utils::thread::ThreadResponse;
 
-use crate::state::*;
+use crate::{state::*, ANTEGEN_SQUADS};
 
 #[derive(Accounts)]
 pub struct DistributeFeesProcessSnapshot<'info> {
@@ -22,10 +22,10 @@ pub struct DistributeFeesProcessSnapshot<'info> {
 }
 
 pub fn handler(ctx: Context<DistributeFeesProcessSnapshot>) -> Result<ThreadResponse> {
-    let config = &ctx.accounts.config;
-    let registry = &mut ctx.accounts.registry;
-    let snapshot = &ctx.accounts.snapshot;
-    let thread = &ctx.accounts.thread;
+    let config: &Account<Config> = &ctx.accounts.config;
+    let registry: &mut Account<Registry> = &mut ctx.accounts.registry;
+    let snapshot: &Account<Snapshot> = &ctx.accounts.snapshot;
+    let thread: &Signer = &ctx.accounts.thread;
 
     Ok(ThreadResponse {
         dynamic_instruction: if snapshot.total_frames.gt(&0) {
@@ -36,7 +36,7 @@ pub fn handler(ctx: Context<DistributeFeesProcessSnapshot>) -> Result<ThreadResp
                         config: config.key(),
                         commission: WorkerCommission::pubkey(Worker::pubkey(0)),
                         registry: registry.key(),
-                        registry_fee: RegistryFee::pubkey(registry.key()),
+                        network_fee: ANTEGEN_SQUADS,
                         snapshot: snapshot.key(),
                         snapshot_frame: SnapshotFrame::pubkey(snapshot.key(), 0),
                         thread: thread.key(),
