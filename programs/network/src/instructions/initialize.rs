@@ -9,31 +9,21 @@ pub struct Initialize<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    /// CHECK: This is the predefined SQUAD multisig that will be the admin
-    #[account(
-        address = if cfg!(feature = "mainnet") {
-            ANTEGEN_SQUADS
-        } else {
-            payer.key()
-        }
-    )]
-    pub admin: UncheckedAccount<'info>,
-
     #[account(
         init,
         seeds = [SEED_CONFIG],
-        bump,
         payer = payer,
         space = 8 + size_of::<Config>(),
+        bump,
     )]
     pub config: Account<'info, Config>,
 
     #[account(
         init,
         seeds = [SEED_REGISTRY],
-        bump,
         payer = payer,
         space = 8 + size_of::<Registry>(),
+        bump,
     )]
     pub registry: Account<'info, Registry>,
 
@@ -55,12 +45,19 @@ pub struct Initialize<'info> {
 
 pub fn handler(ctx: Context<Initialize>) -> Result<()> {
     // Get accounts
-    let config = &mut ctx.accounts.config;
-    let registry = &mut ctx.accounts.registry;
-    let snapshot = &mut ctx.accounts.snapshot;
+    let payer: &Signer = &ctx.accounts.payer;
+    let admin: Pubkey = if cfg!(feature = "mainnet") {
+        ANTEGEN_SQUADS
+    } else {
+        payer.key()
+    };
+
+    let config: &mut Account<Config> = &mut ctx.accounts.config;
+    let registry: &mut Account<Registry> = &mut ctx.accounts.registry;
+    let snapshot: &mut Account<Snapshot> = &mut ctx.accounts.snapshot;
 
     // Initialize accounts.
-    config.init(ctx.accounts.admin.key())?;
+    config.init(admin)?;
     registry.init()?;
     snapshot.init(0)?;
 

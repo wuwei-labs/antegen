@@ -6,6 +6,7 @@ use {
         print_status
     },
     anchor_lang::{
+        prelude::Pubkey,
         solana_program::{
             instruction::Instruction,
             system_program,
@@ -29,19 +30,12 @@ use {
 };
 
 pub fn initialize(client: &Client) -> Result<(), CliError> {
-    let payer = client.payer_pubkey();
-    let admin = if cfg!(feature = "mainnet") {
-        ANTEGEN_SQUADS
-    } else {
-        payer
-    };
-
-    let registry = Registry::pubkey();
-    let ix_a = Instruction {
+    let payer: Pubkey = client.payer_pubkey();
+    let registry: Pubkey = Registry::pubkey();
+    let ix_a: Instruction = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::Initialize {
-            payer: admin,
-            admin,
+            payer,
             config: Config::pubkey(),
             registry,
             snapshot: Snapshot::pubkey(0),
@@ -49,19 +43,16 @@ pub fn initialize(client: &Client) -> Result<(), CliError> {
         }.to_account_metas(Some(false)),
         data: antegen_network_program::instruction::Initialize {}.data(),
     };
-    let ix_b = Instruction {
+    let ix_b: Instruction = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::PoolCreate {
-            payer: admin,
-            admin,
-            config: Config::pubkey(),
+            payer,
             pool: Pool::pubkey(0),
             registry: Registry::pubkey(),
             system_program: system_program::ID,
         }.to_account_metas(Some(false)),
         data: antegen_network_program::instruction::PoolCreate {}.data(),
     };
-
     // Submit tx
     client
         .send_and_confirm(&[ix_a, ix_b], &[client.payer()])

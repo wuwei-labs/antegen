@@ -1,5 +1,5 @@
 use {
-  crate::{state::*, ANTEGEN_SQUADS},
+  crate::state::*,
   anchor_lang::{prelude::*, solana_program::system_program},
 };
 use std::mem::size_of;
@@ -7,22 +7,17 @@ use std::mem::size_of;
 #[derive(Accounts)]
 pub struct RegistryReset<'info> {
   #[account(mut)]
-  pub payer: Signer<'info>,
+  pub admin: Signer<'info>,
 
-  /// CHECK: This is the predefined SQUAD multisig that will be the admin
   #[account(
-      address = if cfg!(feature = "mainnet") {
-          ANTEGEN_SQUADS
-      } else {
-          payer.key()
-      }
+      address = Config::pubkey(), 
+      has_one = admin
   )]
-  pub admin: UncheckedAccount<'info>,
+  pub config: Account<'info, Config>,
 
   #[account(
       mut,
-      seeds = [SEED_REGISTRY],
-      bump
+      address = Registry::pubkey()
   )]
   pub registry: Account<'info, Registry>,
 
@@ -33,7 +28,7 @@ pub struct RegistryReset<'info> {
           (0 as u64).to_be_bytes().as_ref(),
       ],
       bump,
-      payer = payer,
+      payer = admin,
       space = 8 + size_of::<Snapshot>(),
   )]
   pub snapshot: Account<'info, Snapshot>,
@@ -44,8 +39,8 @@ pub struct RegistryReset<'info> {
 
 pub fn handler(ctx: Context<RegistryReset>) -> Result<()> {
   // Get accounts
-  let registry = &mut ctx.accounts.registry;
-  let snapshot = &mut ctx.accounts.snapshot;
+  let registry: &mut Account<Registry> = &mut ctx.accounts.registry;
+  let snapshot: &mut Account<Snapshot> = &mut ctx.accounts.snapshot;
 
   // Reset accounts to their initial state
   registry.reset()?;

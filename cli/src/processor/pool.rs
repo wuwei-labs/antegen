@@ -42,7 +42,6 @@ pub fn update(client: &Client, id: u64, size: u64) -> Result<(), CliError> {
         accounts: antegen_network_program::accounts::PoolUpdate {
             admin: client.payer_pubkey(),
             config: Config::pubkey(),
-            payer: client.payer_pubkey(),
             pool: pool_pubkey,
             system_program: system_program::ID,
         }.to_account_metas(Some(false)),

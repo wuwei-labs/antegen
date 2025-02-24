@@ -11,7 +11,7 @@ use {
 #[derive(Accounts)]
 #[instruction(settings: PoolSettings)]
 pub struct PoolUpdate<'info> {
-    #[account()]
+    #[account(mut)]
     pub admin: Signer<'info>,
 
     #[account(
@@ -20,10 +20,10 @@ pub struct PoolUpdate<'info> {
     )]
     pub config: Account<'info, Config>,
 
-    #[account(mut)]
-    pub payer: Signer<'info>,
-
-    #[account(mut, address = pool.pubkey())]
+    #[account(
+        mut,
+        address = pool.pubkey()
+    )]
     pub pool: Account<'info, Pool>,
 
     #[account(address = system_program::ID)]
@@ -32,25 +32,25 @@ pub struct PoolUpdate<'info> {
 
 pub fn handler(ctx: Context<PoolUpdate>, settings: PoolSettings) -> Result<()> {
     // Get accounts
-    let payer = &ctx.accounts.payer;
-    let pool = &mut ctx.accounts.pool;
-    let system_program = &ctx.accounts.system_program;
+    let admin: &Signer = &ctx.accounts.admin;
+    let pool: &mut Account<Pool> = &mut ctx.accounts.pool;
+    let system_program: &Program<System> = &ctx.accounts.system_program;
 
     // Update the pool settings
     pool.update(&settings)?;
 
     // Reallocate memory for the pool account
-    let data_len = 8 + size_of::<Pool>() + (settings.size as usize).checked_mul(size_of::<Pubkey>()).unwrap();
+    let data_len: usize = 8 + size_of::<Pool>() + (settings.size as usize).checked_mul(size_of::<Pubkey>()).unwrap();
     pool.to_account_info().realloc(data_len, false)?;
 
     // If lamports are required to maintain rent-exemption, pay them
-    let minimum_rent = Rent::get().unwrap().minimum_balance(data_len);
+    let minimum_rent: u64 = Rent::get().unwrap().minimum_balance(data_len);
     if minimum_rent > pool.to_account_info().lamports() {
         transfer(
             CpiContext::new(
                 system_program.to_account_info(),
                 Transfer {
-                    from: payer.to_account_info(),
+                    from: admin.to_account_info(),
                     to: pool.to_account_info(),
                 },
             ),

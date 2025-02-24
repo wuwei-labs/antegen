@@ -39,18 +39,13 @@ pub fn get(client: &Client) -> Result<(), CliError> {
 
 pub fn reset(client: &Client) -> Result<(), CliError> {
     let payer: Pubkey = client.payer_pubkey();
-    let admin: Pubkey = if cfg!(feature = "mainnet") {
-        ANTEGEN_SQUADS
-    } else {
-        payer
-    };
 
     let registry: Pubkey = Registry::pubkey();
     let ix: Instruction = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::RegistryReset {
-            payer: admin,
-            admin,
+            admin: payer,
+            config: Config::pubkey(),
             registry,
             snapshot: Snapshot::pubkey(0),
             system_program: system_program::ID,
