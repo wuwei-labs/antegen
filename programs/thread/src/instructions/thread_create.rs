@@ -5,6 +5,7 @@ use anchor_lang::{
     solana_program::system_program,
     system_program::{transfer, Transfer}
 };
+use antegen_network_program::ANTEGEN_SQUADS;
 use antegen_utils::thread::{Trigger, SerializableInstruction};
 
 use crate::{state::*, ThreadId};
@@ -16,9 +17,11 @@ const MINIMUM_FEE: u64 = 1000;
 #[derive(Accounts)]
 #[instruction(amount: u64, id: ThreadId, instructions: Vec<SerializableInstruction>,  trigger: Trigger)]
 pub struct ThreadCreate<'info> {
-    /// The authority (owner) of the thread.
-    #[account()]
-    pub authority: Signer<'info>,
+    /// CHECK: the authority (owner) of the thread.
+    #[account(
+        constraint = authority.key().eq(&payer.key()) || authority.key().eq(&ANTEGEN_SQUADS)
+    )]
+    pub authority: UncheckedAccount<'info>,
 
     /// The payer for account initializations. 
     #[account(mut)]
@@ -55,16 +58,16 @@ pub fn handler(
     instructions: Vec<SerializableInstruction>,
     trigger: Trigger
 ) -> Result<()> {
-    let id_bytes = match &id {
+    let id_bytes: Vec<u8> = match &id {
         ThreadId::Bytes(bytes) => bytes.clone(),
         ThreadId::Pubkey(pubkey) => pubkey.to_bytes().to_vec(),
     };
 
     // Get accounts
-    let authority = &ctx.accounts.authority;
-    let payer = &ctx.accounts.payer;
-    let system_program = &ctx.accounts.system_program;
-    let thread = &mut ctx.accounts.thread;
+    let authority: &UncheckedAccount = &ctx.accounts.authority;
+    let payer: &Signer = &ctx.accounts.payer;
+    let system_program: &Program<System> = &ctx.accounts.system_program;
+    let thread: &mut Account<Thread> = &mut ctx.accounts.thread;
 
     // Initialize the thread
     thread.authority = authority.key();
