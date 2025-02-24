@@ -4,8 +4,7 @@ use {
         errors::CliError,
         print::print_style,
         print_status
-    },
-    anchor_lang::{
+    }, anchor_lang::{
         prelude::Pubkey,
         solana_program::{
             instruction::Instruction,
@@ -13,20 +12,18 @@ use {
         },
         InstructionData,
         ToAccountMetas,
-    },
-    antegen_thread_program::state::{Thread, Trigger},
-    antegen_network_program::{
+    }, antegen_network_program::{
         state::{
             Config,
-            ConfigSettings,
             Pool,
             Registry,
             Snapshot
         },
-        ANTEGEN_SQUADS
+        ANTEGEN_SQUADS, EPOCH_THREAD_ID, HASHER_THREAD_ID
     },
+    antegen_thread_program::state::{Thread, Trigger},
     antegen_utils::explorer::Explorer,
-    anyhow::Context,
+    anyhow::Context
 };
 
 pub fn initialize(client: &Client) -> Result<(), CliError> {
@@ -53,6 +50,7 @@ pub fn initialize(client: &Client) -> Result<(), CliError> {
         }.to_account_metas(Some(false)),
         data: antegen_network_program::instruction::PoolCreate {}.data(),
     };
+
     // Submit tx
     client
         .send_and_confirm(&[ix_a, ix_b], &[client.payer()])
@@ -62,29 +60,28 @@ pub fn initialize(client: &Client) -> Result<(), CliError> {
 
 pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
     #[cfg(feature = "mainnet")]
-    let cron_epoch = "@hourly";
+    let cron_epoch: &str = "@hourly";
 
     #[cfg(not(feature = "mainnet"))]
-    let cron_epoch = "0 * * * * * *";
+    let cron_epoch: &str = "0 * * * * * *";
 
     #[cfg(feature = "mainnet")]
-    let cron_hasher = "0 */15 * * * * *";
+    let cron_hasher: &str = "0 */15 * * * * *";
 
     #[cfg(not(feature = "mainnet"))]
-    let cron_hasher = "*/15 * * * * * *";
+    let cron_hasher: &str = "*/15 * * * * * *";
 
-    let explorer = Explorer::from(client.client.url());
-    let payer = client.payer_pubkey();
-    let admin = if cfg!(feature = "mainnet") {
+    let explorer: Explorer = Explorer::from(client.client.url());
+    let payer: Pubkey = client.payer_pubkey();
+    let admin: Pubkey = if cfg!(feature = "mainnet") {
         ANTEGEN_SQUADS
     } else {
         payer
     };
 
     // Create epoch thread.
-    let epoch_thread_id = "antegen.network.epoch";
-    let epoch_thread_pubkey = Thread::pubkey(client.payer_pubkey(), epoch_thread_id);
-    let ix_a1 = Instruction {
+    let epoch_thread_pubkey: Pubkey = Thread::pubkey(admin, EPOCH_THREAD_ID);
+    let ix_a1: Instruction = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::DistributeFeesJob {
             config: Config::pubkey(),
@@ -93,7 +90,8 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
         }.to_account_metas(Some(false)),
         data: antegen_network_program::instruction::DistributeFeesJob {}.data(),
     };
-    let ix_a2 = Instruction {
+
+    let ix_a2: Instruction = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::TakeSnapshotJob {
             config: Config::pubkey(),
@@ -102,7 +100,8 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
         }.to_account_metas(Some(false)),
         data: antegen_network_program::instruction::TakeSnapshotJob {}.data(),
     };
-    let ix_a3 = Instruction {
+
+    let ix_a3: Instruction = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::EpochCutover {
             config: Config::pubkey(),
@@ -111,7 +110,8 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
         }.to_account_metas(Some(false)),
         data: antegen_network_program::instruction::IncrementEpoch {}.data(),
     };
-    let ix_a4 = Instruction {
+
+    let ix_a4: Instruction = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::DeleteSnapshotJob {
             config: Config::pubkey(),
@@ -120,7 +120,8 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
         }.to_account_metas(Some(false)),
         data: antegen_network_program::instruction::DeleteSnapshotJob {}.data(),
     };
-    let ix_a = Instruction {
+
+    let ix_a: Instruction = Instruction {
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadCreate {
             authority: admin,
@@ -130,7 +131,7 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
         }.to_account_metas(Some(false)),
         data: antegen_thread_program::instruction::ThreadCreate {
             amount,
-            id: epoch_thread_id.into(),
+            id: EPOCH_THREAD_ID.into(),
             instructions: vec![
                 ix_a1.into(),
                 ix_a2.into(),
@@ -145,9 +146,8 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
     };
 
     // Create hasher thread.
-    let hasher_thread_id = "antegen.network.hasher";
-    let hasher_thread_pubkey = Thread::pubkey(client.payer_pubkey(), hasher_thread_id);
-    let registry_hash_ix = Instruction {
+    let hasher_thread_pubkey: Pubkey = Thread::pubkey(admin, HASHER_THREAD_ID);
+    let ix_b1: Instruction = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::RegistryNonceHash {
             config: Config::pubkey(),
@@ -156,7 +156,8 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
         }.to_account_metas(Some(false)),
         data: antegen_network_program::instruction::RegistryNonceHash {}.data(),
     };
-    let ix_b = Instruction {
+
+    let ix_b: Instruction = Instruction {
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadCreate {
             authority: admin,
@@ -166,9 +167,9 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
         }.to_account_metas(Some(false)),
         data: antegen_thread_program::instruction::ThreadCreate {
             amount,
-            id: hasher_thread_id.into(),
+            id: HASHER_THREAD_ID.into(),
             instructions: vec![
-                registry_hash_ix.into(),
+                ix_b1.into(),
             ],
             trigger: Trigger::Cron {
                 schedule: cron_hasher.into(),
@@ -177,34 +178,18 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
         }.data(),
     };
 
-    // Update config with thread pubkeys
-    let settings = ConfigSettings {
-        admin,
-        epoch_thread: epoch_thread_pubkey,
-        hasher_thread: hasher_thread_pubkey
-    };
-    let ix_c = Instruction {
-        program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::ConfigUpdate {
-            admin,
-            config: Config::pubkey()
-        }.to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::ConfigUpdate { settings }.data(),
-    };
-
     client
         .send_and_confirm(&vec![ix_a], &[client.payer()])
         .context(format!(
             "Failed to create thread: {} or update config",
-            epoch_thread_id,
+            EPOCH_THREAD_ID,
         ))?;
     client
-        .send_and_confirm(&vec![ix_b, ix_c], &[client.payer()])
-        .context(format!("Failed to create thread: {}", hasher_thread_id))?;
+        .send_and_confirm(&vec![ix_b], &[client.payer()])
+        .context(format!("Failed to create thread: {}", HASHER_THREAD_ID))?;
 
-    let config: Config = super::config::_get(client)?;
-    print_status!("Epoch    🧵", "{}", explorer.account(config.clone().epoch_thread));
-    print_status!("Hasher   🧵", "{}", explorer.account(config.clone().hasher_thread));
-    print_status!("Admin    👔", "{}", explorer.account(config.clone().admin));
+    print_status!("Epoch    🧵", "{}", explorer.account(epoch_thread_pubkey.to_string()));
+    print_status!("Hasher   🧵", "{}", explorer.account(hasher_thread_pubkey.to_string()));
+    print_status!("Admin    👔", "{}", explorer.account(admin.to_string()));
     Ok(())
 }

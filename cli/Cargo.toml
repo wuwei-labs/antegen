@@ -29,6 +29,7 @@ anchor-lang = { workspace = true }
 anchor-spl = { workspace = true }
 anyhow = { workspace = true }
 bincode = { workspace = true }
+bs58 = { workspace = true }
 bzip2 = { workspace = true }
 clap = { workspace = true }
 chrono = { workspace = true }

@@ -51,7 +51,8 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             admin,
             epoch_thread,
             hasher_thread,
-        } => config::set(&client, admin, epoch_thread, hasher_thread),
+            output_format
+        } => config::set(&client, admin, epoch_thread, hasher_thread, output_format),
         CliCommand::Localnet {
             clone_addresses,
             program_infos,

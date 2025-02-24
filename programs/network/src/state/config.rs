@@ -1,5 +1,4 @@
 use anchor_lang::{prelude::*, AnchorDeserialize};
-
 pub const SEED_CONFIG: &[u8] = b"config";
 
 /**
@@ -24,7 +23,7 @@ impl Config {
  * ConfigSettings
  */
 
-#[derive(AnchorSerialize, AnchorDeserialize)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct ConfigSettings {
     pub admin: Pubkey,
     pub epoch_thread: Pubkey,

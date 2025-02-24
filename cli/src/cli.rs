@@ -17,6 +17,7 @@ pub enum CliCommand {
         admin: Option<Pubkey>,
         epoch_thread: Option<Pubkey>,
         hasher_thread: Option<Pubkey>,
+        output_format: Option<String>,
     },
     NetworkConfigGet,
     Localnet {
@@ -135,15 +136,25 @@ pub fn app() -> Command {
                             )
                             .arg(
                                 Arg::new("epoch_thread")
-                                    .long("epoch_thread")
+                                    .long("epoch-thread")
+                                    .short('e')
                                     .value_name("EPOCH_THREAD")
                                     .num_args(1)
                             )
                             .arg(
                                 Arg::new("hasher_thread")
-                                    .long("hasher_thread")
+                                    .long("hasher-thread")
+                                    .short('h')
                                     .value_name("HASHER_THREAD")
                                     .num_args(1)
+                            )
+                            .arg(
+                                Arg::new("output")
+                                    .long("output")
+                                    .short('o')
+                                    .value_name("FORMAT")
+                                    .value_parser(["base58"])
+                                    .help("Output format instead of submitting transaction"),
                             )
                             .group(
                                 ArgGroup::new("config_settings")

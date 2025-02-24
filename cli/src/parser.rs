@@ -100,6 +100,7 @@ fn parse_network_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
                 admin: parse_pubkey("admin", matches).ok(),
                 epoch_thread: parse_pubkey("epoch_thread", matches).ok(),
                 hasher_thread: parse_pubkey("hasher_thread", matches).ok(),
+                output_format: parse_string("output", matches).ok(),
             }),
             Some(("get", _)) => Ok(CliCommand::NetworkConfigGet {}),
             _ => Err(CliError::CommandNotRecognized(

@@ -40,7 +40,7 @@ pub struct ThreadCreate<'info> {
             id.as_ref(),
         ],
         bump,
-        payer= payer,
+        payer = payer,
         space = 8 +                              // discriminator
                 size_of::<Thread>() +            // base struct
                 id.len() +                       // id length

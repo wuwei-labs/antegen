@@ -16,6 +16,8 @@ use state::*;
 
 declare_id!("AgNet6qmh75bjFULcS9RQijUoWwkCtSiSwXM1K3Ujn6Z");
 pub const ANTEGEN_SQUADS: Pubkey = pubkey!("14b1BKm2md7GgP6ccZd2u4cAvBsqsmFjxokzQUXoqGzC");
+pub const EPOCH_THREAD_ID: &str = "antegen.network.epoch";
+pub const HASHER_THREAD_ID: &str = "antegen.network.hasher";
 
 #[program]
 pub mod network_program {

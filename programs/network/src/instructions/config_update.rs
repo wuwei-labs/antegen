@@ -15,6 +15,6 @@ pub struct ConfigUpdate<'info> {
 }
 
 pub fn handler(ctx: Context<ConfigUpdate>, settings: ConfigSettings) -> Result<()> {
-    let config = &mut ctx.accounts.config;
+    let config: &mut Account<Config> = &mut ctx.accounts.config;
     config.update(settings)
 }

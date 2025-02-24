@@ -383,6 +383,7 @@ dependencies = [
  "antegen-utils",
  "anyhow",
  "bincode",
+ "bs58 0.5.1",
  "bzip2",
  "cargo_metadata",
  "cargo_toml 0.15.3",
