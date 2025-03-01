@@ -168,10 +168,6 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
 
         // Update the trigger.
         if let Some(trigger) = thread_response.trigger {
-            require!(
-                std::mem::discriminant(&thread.trigger) == std::mem::discriminant(&trigger),
-                AntegenThreadError::InvalidTriggerVariant
-            );
             thread.trigger = trigger.clone();
 
             // If the user updates an account trigger, the trigger context is no longer valid.
