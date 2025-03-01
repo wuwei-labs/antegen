@@ -8,6 +8,7 @@ use log::info;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{
     nonblocking::rpc_client::RpcClient,
+    rpc_response::RpcPrioritizationFee,
     rpc_config::{RpcSimulateTransactionAccountsConfig, RpcSimulateTransactionConfig},
     rpc_custom_error::JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED,
 };
@@ -53,6 +54,28 @@ pub async fn build_thread_exec_tx(
     let signatory_pubkey = payer.pubkey();
     let worker_pubkey = Worker::pubkey(worker_id);
 
+    let priority_fee: u64 = match client
+        .get_recent_prioritization_fees(&[antegen_thread_program::ID])
+        .await {
+            Ok(fees) if !fees.is_empty() => {
+                let mut fee_values: Vec<u64> = fees.iter()
+                    .map(|fee| fee.prioritization_fee)
+                    .collect();
+
+                fee_values.sort();
+                // P50 calculation
+                let len: usize = fee_values.len();
+                if len % 2 == 0 {
+                    (fee_values[len / 2 - 1] + fee_values[len / 2]) / 2
+                } else {
+                    fee_values[len / 2]
+                }
+            },
+            Ok(_) | Err(_) => {
+                0
+            }
+        };
+
     // Build the first instruction
     let first_instruction = if thread.next_instruction().is_some() {
         build_exec_ix(
@@ -73,6 +96,7 @@ pub async fn build_thread_exec_tx(
     // Initialize instructions vector
     let mut ixs: Vec<Instruction> = vec![
         ComputeBudgetInstruction::set_compute_unit_limit(TRANSACTION_COMPUTE_UNIT_LIMIT),
+        ComputeBudgetInstruction::set_compute_unit_price(priority_fee),
         first_instruction,
     ];
     let mut successful_ixs: Vec<Instruction> = vec![];
