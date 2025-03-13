@@ -14,10 +14,7 @@ use {
         ToAccountMetas,
     }, antegen_network_program::{
         state::{
-            Config,
-            Pool,
-            Registry,
-            Snapshot
+            Config, ConfigSettings, Pool, Registry, Snapshot
         },
         ANTEGEN_SQUADS, EPOCH_THREAD_ID, HASHER_THREAD_ID
     },
@@ -180,13 +177,32 @@ pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
 
     client
         .send_and_confirm(&vec![ix_a], &[client.payer()])
-        .context(format!(
-            "Failed to create thread: {} or update config",
-            EPOCH_THREAD_ID,
-        ))?;
+        .context(format!("Failed to create thread: {} or update config", EPOCH_THREAD_ID))?;
+
     client
         .send_and_confirm(&vec![ix_b], &[client.payer()])
         .context(format!("Failed to create thread: {}", HASHER_THREAD_ID))?;
+
+    #[cfg(not(feature = "mainnet"))]
+    {
+        let settings: ConfigSettings = ConfigSettings {
+            admin,
+            epoch_thread: epoch_thread_pubkey,
+            hasher_thread: hasher_thread_pubkey
+        };
+        let ix_c: Instruction = Instruction {
+            program_id: antegen_network_program::ID,
+            accounts: antegen_network_program::accounts::ConfigUpdate {
+                admin,
+                config: Config::pubkey()
+            }.to_account_metas(Some(false)),
+            data: antegen_network_program::instruction::ConfigUpdate { settings }.data(),
+        };
+
+        client
+            .send_and_confirm(&vec![ix_c], &[client.payer()])
+            .context("Failed to update config settings")?;
+    }
 
     print_status!("Epoch    🧵", "{}", explorer.account(epoch_thread_pubkey.to_string()));
     print_status!("Hasher   🧵", "{}", explorer.account(hasher_thread_pubkey.to_string()));

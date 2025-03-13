@@ -1,35 +1,21 @@
 use {
-    std::{
+    super::AccountGet, crate::{config::PluginConfig, pool_position::PoolPosition, utils::read_or_new_keypair}, agave_geyser_plugin_interface::geyser_plugin_interface::{
+        GeyserPluginError, 
+        Result as PluginResult,
+    }, antegen_network_program::state::{Pool, Registry, Worker}, antegen_thread_program::state::VersionedThread, bincode::serialize, log::info, solana_client::{
+        nonblocking::{rpc_client::RpcClient, tpu_client::TpuClient},
+        rpc_config::RpcSimulateTransactionConfig,
+        tpu_client::TpuClientConfig,
+    }, solana_program::pubkey::Pubkey, solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool}, solana_sdk::{
+        commitment_config::CommitmentConfig, instruction::InstructionError, signature::{Keypair, Signature}, transaction::{Transaction, TransactionError, VersionedTransaction}
+    }, std::{
         collections::{HashMap, HashSet},
         fmt::Debug,
         sync::{
             atomic::{AtomicU64, Ordering},
             Arc,
         },
-    },
-    bincode::serialize,
-    antegen_network_program::state::{Pool, Registry, Worker},
-    antegen_thread_program::state::VersionedThread,
-    log::info,
-    solana_client::{
-        nonblocking::{rpc_client::RpcClient, tpu_client::TpuClient},
-        rpc_config::RpcSimulateTransactionConfig,
-        tpu_client::TpuClientConfig,
-    },
-    agave_geyser_plugin_interface::geyser_plugin_interface::{
-        GeyserPluginError, 
-        Result as PluginResult,
-    },
-    solana_program::pubkey::Pubkey,
-    solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
-    solana_sdk::{
-        commitment_config::CommitmentConfig,
-        signature::{Keypair, Signature},
-        transaction::{Transaction, VersionedTransaction},
-    },
-    tokio::{runtime::Runtime, sync::RwLock},
-    crate::{config::PluginConfig, pool_position::PoolPosition, utils::read_or_new_keypair},
-    super::AccountGet,
+    }, tokio::{runtime::Runtime, sync::RwLock}
 };
 
 /// Number of slots to wait before checking for a confirmed transaction.
@@ -47,6 +33,9 @@ static EXPONENTIAL_BACKOFF_CONSTANT: u32 = 2;
 /// The number of slots to wait since the last rotation attempt.
 static ROTATION_CONFIRMATION_PERIOD: u64 = 16;
 
+static DEFAULT_CU_MULTIPLIER: f64 = 1.0;
+static MAX_CU_MULTIPLIER: f64 = 2.0;
+
 /// TxExecutor
 pub struct TxExecutor {
     pub config: PluginConfig,
@@ -61,6 +50,7 @@ pub struct TxExecutor {
 pub struct ExecutableThreadMetadata {
     pub due_slot: u64,
     pub simulation_failures: u32,
+    pub cu_multiplier: Option<f64>,
 }
 
 #[derive(Debug)]
@@ -97,6 +87,7 @@ impl TxExecutor {
                 ExecutableThreadMetadata {
                     due_slot: slot,
                     simulation_failures: 0,
+                    cu_multiplier: None,
                 },
             );
         });
@@ -167,6 +158,7 @@ impl TxExecutor {
             thread_pubkey: Pubkey,
             signature: Signature,
         }
+
         let r_transaction_history = self.transaction_history.read().await;
         let checkable_transactions = r_transaction_history
             .iter()
@@ -182,7 +174,9 @@ impl TxExecutor {
         // Lookup transaction statuses and track which threads are successful / retriable.
         let mut failed_threads: HashSet<Pubkey> = HashSet::new();
         let mut retriable_threads: HashSet<(Pubkey, u64)> = HashSet::new();
+        let mut cu_error_threads: HashSet<(Pubkey, u64)> = HashSet::new();
         let mut successful_threads: HashSet<Pubkey> = HashSet::new();
+
         for data in checkable_transactions {
             match client
                 .get_signature_status_with_commitment(
@@ -194,19 +188,38 @@ impl TxExecutor {
                 Err(_err) => {}
                 Ok(status) => match status {
                     None => {
-                        info!(
-                            "Retrying thread: {:?} missing_signature: {:?}",
-                            data.thread_pubkey, data.signature
-                        );
+                        info!("Retrying thread: {:?} missing_signature: {:?}", data.thread_pubkey, data.signature);
                         retriable_threads.insert((data.thread_pubkey, data.due_slot));
                     }
                     Some(status) => match status {
                         Err(err) => {
-                            info!(
-                                "Thread failed: {:?} failed_signature: {:?} err: {:?}",
-                                data.thread_pubkey, data.signature, err
-                            );
-                            failed_threads.insert(data.thread_pubkey);
+                            let is_cu_error: bool = match err {
+                                TransactionError::InstructionError(_, InstructionError::ComputationalBudgetExceeded) => true,
+                                TransactionError::InstructionError(_, InstructionError::ProgramFailedToComplete) => true,
+                                _ => false
+                            };
+                
+                            if is_cu_error {
+                                // Check if we've hit the max multiplier
+                                let current_multiplier = {
+                                    let r_threads = self.executable_threads.read().await;
+                                    r_threads.get(&data.thread_pubkey)
+                                        .and_then(|metadata| metadata.cu_multiplier)
+                                        .unwrap_or(DEFAULT_CU_MULTIPLIER)
+                                };
+                
+                                if current_multiplier < MAX_CU_MULTIPLIER {
+                                    info!("Thread failed due to CU error, will retry with increased CU: {:?}", data.thread_pubkey);
+                                    cu_error_threads.insert((data.thread_pubkey, data.due_slot));
+                                } else {
+                                    info!("Thread failed due to CU error but reached max multiplier, marking as failed");
+                                    failed_threads.insert(data.thread_pubkey);
+                                }
+                            } else {
+                                info!("Thread failed: {:?} failed_signature: {:?} err: {:?}", 
+                                    data.thread_pubkey, data.signature, err);
+                                failed_threads.insert(data.thread_pubkey);
+                            }
                         }
                         Ok(()) => {
                             successful_threads.insert(data.thread_pubkey);
@@ -216,25 +229,62 @@ impl TxExecutor {
             }
         }
 
-        // Requeue retriable threads and drop transactions from history.
+        // Process thread results
         let mut w_transaction_history = self.transaction_history.write().await;
         let mut w_executable_threads = self.executable_threads.write().await;
+
         for pubkey in successful_threads {
             w_transaction_history.remove(&pubkey);
         }
+
         for pubkey in failed_threads {
             w_transaction_history.remove(&pubkey);
         }
+
+        // Process regular retries (keep existing multiplier)
         for (pubkey, due_slot) in retriable_threads {
             w_transaction_history.remove(&pubkey);
+            
+            let cu_multiplier = w_executable_threads
+                .get(&pubkey)
+                .and_then(|metadata| metadata.cu_multiplier)
+                .or(Some(DEFAULT_CU_MULTIPLIER));
+            
             w_executable_threads.insert(
                 pubkey,
                 ExecutableThreadMetadata {
                     due_slot,
                     simulation_failures: 0,
+                    cu_multiplier,
                 },
             );
         }
+
+        // Process CU error retries (increase multiplier)
+        for (pubkey, due_slot) in cu_error_threads {
+            w_transaction_history.remove(&pubkey);
+            
+            let previous_multiplier = w_executable_threads
+                .get(&pubkey)
+                .and_then(|metadata| metadata.cu_multiplier)
+                .unwrap_or(DEFAULT_CU_MULTIPLIER);
+                
+            let new_multiplier = previous_multiplier + 0.1;
+            let clamped_multiplier = f64::min(new_multiplier, MAX_CU_MULTIPLIER);
+            
+            w_executable_threads.insert(
+                pubkey,
+                ExecutableThreadMetadata {
+                    due_slot,
+                    simulation_failures: 0,
+                    cu_multiplier: Some(clamped_multiplier),
+                },
+            );
+            
+            info!("Retrying thread {:?} with increased CU multiplier {} -> {}", 
+                pubkey, previous_multiplier, clamped_multiplier);
+        }
+
         info!("transaction_history: {:?}", *w_transaction_history);
         drop(w_executable_threads);
         drop(w_transaction_history);
@@ -436,6 +486,13 @@ impl TxExecutor {
             }
         }
 
+        // Get the CU multiplier if it exists
+        let cu_multiplier = {
+            let r_executable_threads = self.executable_threads.read().await;
+            r_executable_threads.get(&thread_pubkey)
+                .and_then(|metadata| metadata.cu_multiplier)
+        };
+    
         if let Ok(tx) = crate::builders::build_thread_exec_tx(
             client.clone(),
             &self.keypair,
@@ -443,6 +500,7 @@ impl TxExecutor {
             thread,
             thread_pubkey,
             self.config.worker_id,
+            cu_multiplier, // Pass the multiplier
         )
         .await
         {

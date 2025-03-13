@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{cmp::min, sync::Arc};
 
 use anchor_lang::{InstructionData, ToAccountMetas};
 use antegen_thread_program::state::{VersionedThread, Trigger};
@@ -47,6 +47,7 @@ pub async fn build_thread_exec_tx(
     thread: VersionedThread,
     thread_pubkey: Pubkey,
     worker_id: u64,
+    cu_multiplier: Option<f64>,
 ) -> PluginResult<Option<VersionedTransaction>> {
     let now = std::time::Instant::now();
     let blockhash = client.get_latest_blockhash().await.unwrap();
@@ -231,11 +232,24 @@ pub async fn build_thread_exec_tx(
 
     // Update compute unit limit based on simulation
     if let Some(units_consumed) = units_consumed {
-        let units_committed = std::cmp::min(
-            (units_consumed as u32) + TRANSACTION_COMPUTE_UNIT_BUFFER,
-            TRANSACTION_COMPUTE_UNIT_LIMIT,
-        );
+        let units_committed = if let Some(multiplier) = cu_multiplier {
+            min(
+                ((units_consumed as f64) * multiplier) as u32,
+                TRANSACTION_COMPUTE_UNIT_LIMIT,
+            )
+        } else {
+            min(
+                (units_consumed as u32) + TRANSACTION_COMPUTE_UNIT_BUFFER,
+                TRANSACTION_COMPUTE_UNIT_LIMIT,
+            )
+        };
+
         successful_ixs[0] = ComputeBudgetInstruction::set_compute_unit_limit(units_committed);
+
+        info!(
+            "Applied CU for thread {:?}: base units {} → committed units {}",
+            thread_pubkey, units_consumed, units_committed
+        );
     }
 
     // Build final versioned transaction
