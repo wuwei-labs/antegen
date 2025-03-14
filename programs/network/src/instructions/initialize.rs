@@ -1,5 +1,5 @@
 use {
-    crate::{state::*, ANTEGEN_SQUADS},
+    crate::state::*,
     anchor_lang::{prelude::*, solana_program::system_program},
     std::mem::size_of,
 };
@@ -46,18 +46,13 @@ pub struct Initialize<'info> {
 pub fn handler(ctx: Context<Initialize>) -> Result<()> {
     // Get accounts
     let payer: &Signer = &ctx.accounts.payer;
-    let admin: Pubkey = if cfg!(feature = "mainnet") {
-        ANTEGEN_SQUADS
-    } else {
-        payer.key()
-    };
 
     let config: &mut Account<Config> = &mut ctx.accounts.config;
     let registry: &mut Account<Registry> = &mut ctx.accounts.registry;
     let snapshot: &mut Account<Snapshot> = &mut ctx.accounts.snapshot;
 
     // Initialize accounts.
-    config.init(admin)?;
+    config.init(payer.key())?;
     registry.init()?;
     snapshot.init(0)?;
 

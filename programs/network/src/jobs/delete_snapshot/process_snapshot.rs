@@ -41,13 +41,7 @@ pub fn handler(ctx: Context<DeleteSnapshotProcessSnapshot>) -> Result<ThreadResp
 
     // If this snapshot has no entries, then close immediately
     if snapshot.total_frames.eq(&0) {
-        let snapshot_lamports = snapshot.to_account_info().lamports();
-        **snapshot.to_account_info().lamports.borrow_mut() = 0;
-        **thread.to_account_info().lamports.borrow_mut() = thread
-            .to_account_info()
-            .lamports()
-            .checked_add(snapshot_lamports)
-            .unwrap();
+        snapshot.close(thread.to_account_info())?;
     }
 
     // Build next instruction the thread.
@@ -67,9 +61,11 @@ pub fn handler(ctx: Context<DeleteSnapshotProcessSnapshot>) -> Result<ThreadResp
             }.into()
         )
     } else {
-        // This snaphot has no frames. We are done!
         None
     };
 
-    Ok(ThreadResponse { dynamic_instruction, close_to:None, trigger: None })
+    Ok(ThreadResponse {
+        dynamic_instruction,
+        ..ThreadResponse::default()
+    })
 }

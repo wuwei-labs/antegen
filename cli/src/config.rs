@@ -19,6 +19,14 @@ pub const ANTEGEN_DEPS: &[&str] = &[
 pub const SOLANA_RELEASE_BASE_URL: &str = "https://github.com/anza-xyz/agave/releases/download";
 pub const SOLANA_DEPS: &[&str] = &["solana-test-validator"];
 
+#[derive(Debug, PartialEq, Clone)]
+pub enum DevMode {
+    None,          // Not in dev mode
+    All,          // Both programs and plugin from local
+    Programs,      // Only programs from local
+    Plugin,        // Only plugin from local
+}
+
 /// The combination of solana config file and our own config file
 #[derive(Debug, PartialEq)]
 pub struct CliConfig {
@@ -30,7 +38,7 @@ pub struct CliConfig {
     pub confirm_transaction_initial_timeout: Duration,
 
     pub active_version: String,
-    pub dev: bool,
+    pub dev_mode: DevMode,
 }
 
 impl CliConfig {
@@ -45,7 +53,7 @@ impl CliConfig {
             commitment: CommitmentConfig::confirmed(),
             confirm_transaction_initial_timeout: DEFAULT_CONFIRM_TX_TIMEOUT_SECONDS,
             active_version: env!("CARGO_PKG_VERSION").to_owned(),
-            dev: false,
+            dev_mode: DevMode::None,
         }
     }
 
@@ -75,16 +83,34 @@ impl CliConfig {
     }
 
     pub fn active_runtime(&self, filename: &str) -> String {
-        if self.dev == true {
-            if filename.contains("solana") {
+        match self.dev_mode {
+            DevMode::None => {
                 self.active_runtime_dir().join(filename).to_string()
-            } else if filename.contains("program") {
-                self.target_dir().join("deploy").join(filename).to_string()
-            } else {
-                self.target_dir().join("debug").join(filename).to_string()
-            }
-        } else {
-            self.active_runtime_dir().join(filename).to_string()
+            },
+            DevMode::All => {
+                if filename.contains("solana") {
+                    self.active_runtime_dir().join(filename).to_string()
+                } else if filename.contains("program") {
+                    self.target_dir().join("deploy").join(filename).to_string()
+                } else {
+                    self.target_dir().join("debug").join(filename).to_string()
+                }
+            },
+            DevMode::Programs => {
+                // Only programs from local, plugin from archive
+                if filename.contains("program") {
+                    self.target_dir().join("deploy").join(filename).to_string()
+                } else {
+                    self.active_runtime_dir().join(filename).to_string()
+                }
+            },
+            DevMode::Plugin => {
+                if filename.contains("plugin") {
+                    self.target_dir().join("debug").join(filename).to_string()
+                } else {
+                    self.active_runtime_dir().join(filename).to_string()
+                }
+            },
         }
     }
 
@@ -107,12 +133,21 @@ impl CliConfig {
     }
 
     pub fn geyser_lib(&self) -> String {
-        if self.dev == true && env::consts::OS.to_lowercase().contains("mac") {
+        if matches!(self.dev_mode, DevMode::All | DevMode::Plugin) && env::consts::OS.to_lowercase().contains("mac") {
             self.active_runtime("libantegen_plugin.dylib")
         } else {
-            // in the release process, we always rename dylib to so anyway
             self.active_runtime("libantegen_plugin.so")
         }
+    }
+
+    // Helper to check if we should use local programs
+    pub fn use_local_programs(&self) -> bool {
+        matches!(self.dev_mode, DevMode::All | DevMode::Programs)
+    }
+    
+    // Helper to check if we should use local plugin
+    pub fn use_local_plugin(&self) -> bool {
+        matches!(self.dev_mode, DevMode::All | DevMode::Plugin)
     }
 }
 

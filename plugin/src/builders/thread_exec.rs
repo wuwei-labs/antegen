@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::{cmp::min, sync::Arc};
 
 use anchor_lang::{InstructionData, ToAccountMetas};
-use antegen_thread_program::state::{VersionedThread, Trigger};
+use antegen_thread_program::state::{Thread, Trigger};
 use antegen_network_program::state::Worker;
 use antegen_utils::thread::PAYER_PUBKEY;
 use log::info;
@@ -44,9 +44,10 @@ pub async fn build_thread_exec_tx(
     client: Arc<RpcClient>,
     payer: &Keypair,
     slot: u64,
-    thread: VersionedThread,
+    thread: Thread,
     thread_pubkey: Pubkey,
     worker_id: u64,
+    cu_multiplier: Option<f64>,
 ) -> PluginResult<Option<VersionedTransaction>> {
     let now = std::time::Instant::now();
     let blockhash = client.get_latest_blockhash().await.unwrap();
@@ -54,7 +55,7 @@ pub async fn build_thread_exec_tx(
     let worker_pubkey = Worker::pubkey(worker_id);
 
     // Build the first instruction
-    let first_instruction = if thread.next_instruction().is_some() {
+    let first_instruction = if thread.next_instruction.is_some() {
         build_exec_ix(
             thread.clone(),
             thread_pubkey,
@@ -183,7 +184,7 @@ pub async fn build_thread_exec_tx(
                     break;
                 }
 
-                let sim_thread = match VersionedThread::try_from(account.data) {
+                let sim_thread = match Thread::try_from(account.data) {
                     Ok(thread) => thread,
                     Err(e) => {
                         info!("Failed to parse thread state: {:?}", e);
@@ -192,7 +193,7 @@ pub async fn build_thread_exec_tx(
                 };
 
                 // Check if next instruction exists
-                match sim_thread.next_instruction() {
+                match sim_thread.next_instruction {
                     Some(_) => (),
                     None => {
                         break;
@@ -200,7 +201,7 @@ pub async fn build_thread_exec_tx(
                 };
 
                 // Check execution context and rate limit
-                let exec_context = match sim_thread.exec_context() {
+                let exec_context = match sim_thread.exec_context {
                     Some(context) => context,
                     None => {
                         info!("No exec context found, breaking");
@@ -208,7 +209,7 @@ pub async fn build_thread_exec_tx(
                     }
                 };
 
-                if !exec_context.execs_since_slot.lt(&sim_thread.rate_limit()) {
+                if !exec_context.execs_since_slot.lt(&sim_thread.rate_limit) {
                     info!("Rate limit reached, breaking");
                     break;
                 }
@@ -230,12 +231,27 @@ pub async fn build_thread_exec_tx(
     }
 
     // Update compute unit limit based on simulation
-    if let Some(units_consumed) = units_consumed {
-        let units_committed = std::cmp::min(
-            (units_consumed as u32) + TRANSACTION_COMPUTE_UNIT_BUFFER,
-            TRANSACTION_COMPUTE_UNIT_LIMIT,
-        );
+    if let Some(compute_units) = units_consumed {
+        let units_committed = if let Some(multiplier) = cu_multiplier {
+            min(
+                ((compute_units as f64) * multiplier) as u32,
+                TRANSACTION_COMPUTE_UNIT_LIMIT,
+            )
+        } else {
+            min(
+                (compute_units as u32) + TRANSACTION_COMPUTE_UNIT_BUFFER,
+                TRANSACTION_COMPUTE_UNIT_LIMIT,
+            )
+        };
+
         successful_ixs[0] = ComputeBudgetInstruction::set_compute_unit_limit(units_committed);
+
+        info!(
+            "Applied CU for thread {:?}: base units {} → committed units {}",
+            thread_pubkey, compute_units, units_committed
+        );
+
+        units_consumed = Some(units_committed as u64);
     }
 
     // Build final versioned transaction
@@ -270,29 +286,25 @@ pub async fn build_thread_exec_tx(
 }
 
 fn build_kickoff_ix(
-    thread: VersionedThread,
+    thread: Thread,
     thread_pubkey: Pubkey,
     signatory_pubkey: Pubkey,
     worker_pubkey: Pubkey,
 ) -> Instruction {
     // Build the instruction.
-    let mut kickoff_ix = match thread {
-        VersionedThread::V1(_) => {
-            Instruction {
-                program_id: antegen_thread_program::ID,
-                accounts: antegen_thread_program::accounts::ThreadKickoff {
-                    signatory: signatory_pubkey,
-                    thread: thread_pubkey,
-                    worker: worker_pubkey,
-                }
-                .to_account_metas(Some(false)),
-                data: antegen_thread_program::instruction::ThreadKickoff {}.data(),
-            }
-        },
+    let mut kickoff_ix = Instruction {
+        program_id: antegen_thread_program::ID,
+        accounts: antegen_thread_program::accounts::ThreadKickoff {
+            signatory: signatory_pubkey,
+            thread: thread_pubkey,
+            worker: worker_pubkey,
+        }
+        .to_account_metas(Some(false)),
+        data: antegen_thread_program::instruction::ThreadKickoff {}.data(),
     };
 
     // If the thread's trigger is account-based, inject the triggering account.
-    match thread.trigger() {
+    match thread.trigger {
         Trigger::Account {
             address,
             offset: _,
@@ -322,30 +334,26 @@ fn build_kickoff_ix(
 }
 
 fn build_exec_ix(
-    thread: VersionedThread,
+    thread: Thread,
     thread_pubkey: Pubkey,
     signatory_pubkey: Pubkey,
     worker_pubkey: Pubkey,
 ) -> Instruction {
     // Build the instruction.
-    let mut exec_ix = match thread {
-        VersionedThread::V1(_) => {
-            Instruction {
-                program_id: antegen_thread_program::ID,
-                accounts: antegen_thread_program::accounts::ThreadExec {
-                    commission: antegen_network_program::state::WorkerCommission::pubkey(worker_pubkey),
-                    pool: antegen_network_program::state::Pool::pubkey(0),
-                    signatory: signatory_pubkey,
-                    thread: thread_pubkey,
-                    worker: worker_pubkey,
-                }
-                .to_account_metas(Some(true)),
-                data: antegen_thread_program::instruction::ThreadExec {}.data(),
-            }
-        },
+    let mut exec_ix = Instruction {
+        program_id: antegen_thread_program::ID,
+        accounts: antegen_thread_program::accounts::ThreadExec {
+            commission: antegen_network_program::state::WorkerCommission::pubkey(worker_pubkey),
+            pool: antegen_network_program::state::Pool::pubkey(0),
+            signatory: signatory_pubkey,
+            thread: thread_pubkey,
+            worker: worker_pubkey,
+        }
+        .to_account_metas(Some(true)),
+        data: antegen_thread_program::instruction::ThreadExec {}.data(),
     };
 
-    if let Some(next_instruction) = thread.next_instruction() {
+    if let Some(next_instruction) = thread.next_instruction {
         // Inject the target program account.
         exec_ix.accounts.push(AccountMeta::new_readonly(
             next_instruction.program_id,

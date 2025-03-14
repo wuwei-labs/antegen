@@ -4,7 +4,8 @@ use anchor_lang::{
     InstructionData,
     ToAccountMetas
 };
-use antegen_thread_program::state::{SerializableInstruction, Thread, VersionedThread, ThreadSettings, Trigger};
+use antegen_network_program::state::Config;
+use antegen_thread_program::state::{SerializableInstruction, Thread, ThreadSettings, Trigger};
 use antegen_utils::CrateInfo;
 use solana_sdk::{native_token::LAMPORTS_PER_SOL, pubkey::Pubkey};
 use crate::{client::Client, errors::CliError};
@@ -158,7 +159,7 @@ pub fn delete(client: &Client, address: Pubkey) -> Result<(), CliError> {
 
 pub fn get(client: &Client, address: Pubkey) -> Result<(), CliError> {
     let data = client.get_account_data(&address).unwrap();
-    let thread = VersionedThread::try_deserialize(&mut data.as_slice()).unwrap();
+    let thread = Thread::try_deserialize(&mut data.as_slice()).unwrap();
     println!("Address: {}\n{:#?}", address, thread);
     Ok(())
 }
@@ -234,6 +235,7 @@ pub fn update(
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadUpdate {
             authority: client.payer_pubkey(),
+            config: Config::pubkey(),
             system_program: system_program::ID,
             thread: thread_pubkey
         }.to_account_metas(Some(false)),

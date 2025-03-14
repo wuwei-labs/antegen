@@ -50,16 +50,15 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
         CliCommand::NetworkConfigSet {
             admin,
             epoch_thread,
-            hasher_thread,
-            output_format
-        } => config::set(&client, admin, epoch_thread, hasher_thread, output_format),
+            hasher_thread
+        } => config::set(&client, admin, epoch_thread, hasher_thread),
         CliCommand::Localnet {
             clone_addresses,
             program_infos,
             force_init,
             solana_archive,
             antegen_archive,
-            dev,
+            dev_mode,
             trailing_args,
         } => localnet::start(
             &mut config,
@@ -69,7 +68,7 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             force_init,
             solana_archive,
             antegen_archive,
-            dev,
+            dev_mode,
             trailing_args
         ),
         CliCommand::PoolGet { id } => pool::get(&client, id),

@@ -79,7 +79,11 @@ fn parse_bpf_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
         force_init: matches.get_flag("force_init"),
         solana_archive: parse_string("solana_archive", matches).ok(),
         antegen_archive: parse_string("antegen_archive", matches).ok(),
-        dev: matches.get_flag("dev"),
+        dev_mode: if matches.contains_id("dev") {
+            matches.get_one::<String>("dev").cloned()
+        } else {
+            None
+        },
         trailing_args: matches.get_many::<String>("test_validator_args")
             .unwrap_or_default()
             .map(|s| s.to_string())
@@ -99,8 +103,7 @@ fn parse_network_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
             Some(("set", matches)) => Ok(CliCommand::NetworkConfigSet {
                 admin: parse_pubkey("admin", matches).ok(),
                 epoch_thread: parse_pubkey("epoch_thread", matches).ok(),
-                hasher_thread: parse_pubkey("hasher_thread", matches).ok(),
-                output_format: parse_string("output", matches).ok(),
+                hasher_thread: parse_pubkey("hasher_thread", matches).ok()
             }),
             Some(("get", _)) => Ok(CliCommand::NetworkConfigGet {}),
             _ => Err(CliError::CommandNotRecognized(

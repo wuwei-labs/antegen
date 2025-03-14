@@ -10,7 +10,7 @@ pub struct RegistryReset<'info> {
   pub admin: Signer<'info>,
 
   #[account(
-      address = Config::pubkey(), 
+      address = Config::pubkey(),
       has_one = admin
   )]
   pub config: Account<'info, Config>,

@@ -7,7 +7,7 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use solana_cron::Schedule;
-use antegen_thread_program::state::{Equality, Trigger, TriggerContext, VersionedThread};
+use antegen_thread_program::state::{Equality, Trigger, TriggerContext, Thread};
 use log::info;
 use pyth_sdk_solana::PriceFeed;
 use agave_geyser_plugin_interface::geyser_plugin_interface::{
@@ -212,24 +212,24 @@ impl ThreadObserver {
 
     pub async fn observe_thread(
         self: Arc<Self>,
-        thread: VersionedThread,
+        thread: Thread,
         thread_pubkey: Pubkey,
         slot: u64,
     ) -> PluginResult<()> {
         // If the thread is paused, just return without indexing
-        if thread.paused() {
+        if thread.paused {
             return Ok(());
         }
 
         info!("Indexing thread: {:?} slot: {}", thread_pubkey, slot);
-        if thread.next_instruction().is_some() {
+        if thread.next_instruction.is_some() {
             // If the thread has a next instruction, index it as executable.
             let mut w_now_threads = self.now_threads.write().await;
             w_now_threads.insert(thread_pubkey);
             drop(w_now_threads);
         } else {
             // Otherwise, index the thread according to its trigger type.
-            match thread.trigger() {
+            match thread.trigger {
                 Trigger::Account {
                     address,
                     offset: _,
@@ -260,9 +260,9 @@ impl ThreadObserver {
                     skippable: _,
                 } => {
                     // Find a reference timestamp for calculating the thread's upcoming target time.
-                    let reference_timestamp = match thread.exec_context() {
+                    let reference_timestamp = match thread.exec_context {
                         None => {
-                            thread.created_at().unix_timestamp
+                            thread.created_at.unix_timestamp
                         },
                         Some(exec_context) => match exec_context.trigger_context {
                             TriggerContext::Cron { started_at } => started_at,

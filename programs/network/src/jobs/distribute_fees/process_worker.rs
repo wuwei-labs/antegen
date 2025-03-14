@@ -1,5 +1,5 @@
 use anchor_lang::{prelude::*, solana_program::instruction::Instruction, InstructionData};
-use antegen_utils::thread::ThreadResponse;
+use antegen_utils::thread::{transfer_lamports, ThreadResponse};
 
 use crate::{state::*, ANTEGEN_SQUADS};
 
@@ -65,45 +65,32 @@ pub fn handler(ctx: Context<DistributeFeesProcessWorker>) -> Result<ThreadRespon
     let commission_lamport_balance: u64 = commission.to_account_info().lamports();
     let commission_data_len: usize = 8 + commission.try_to_vec()?.len();
     let commission_rent_balance: u64 = Rent::get().unwrap().minimum_balance(commission_data_len);
-    let commission_usable_balance: u64 = commission_lamport_balance.checked_sub(commission_rent_balance).unwrap();
+    let rent_with_buffer: u64 = commission_rent_balance.saturating_add(10_000);
+    let commission_usable_balance: u64 = commission_lamport_balance.checked_sub(rent_with_buffer).unwrap_or(0);
 
-    // Calculate the commission to be retained by the worker.
+    // Calculate the commission due to worker
     let commission_bps: u64 = worker.commission_rate.checked_mul(100).unwrap(); // Convert percentage to basis points
-    let commission_balance: u64 = commission_usable_balance
+    let commission_due: u64 = commission_usable_balance
         .checked_mul(commission_bps)
         .unwrap()
         .checked_div(TOTAL_BASIS_POINTS)
         .unwrap();
-    let registry_fees: u64 = commission_usable_balance.checked_sub(commission_balance).unwrap();
+    let network_fees: u64 = commission_usable_balance.checked_sub(commission_due).unwrap();
 
-    // Transfer commission to the worker.
-    if commission_balance.gt(&0) {
-        **commission.to_account_info().try_borrow_mut_lamports()? = commission
-        .to_account_info()
-        .lamports()
-        .checked_sub(commission_balance)
-        .unwrap();
-
-        **worker.to_account_info().try_borrow_mut_lamports()? = worker
-            .to_account_info()
-            .lamports()
-            .checked_add(commission_balance)
-            .unwrap();
+    if commission_due.gt(&0) {
+        transfer_lamports(
+            &commission.to_account_info(),
+            &worker.to_account_info(),
+            commission_due,
+        )?;
     }
 
-    // Transfer network fees to registry.
-    if registry_fees.gt(&0) {
-        **commission.to_account_info().try_borrow_mut_lamports()? = commission
-            .to_account_info()
-            .lamports()
-            .checked_sub(registry_fees)  // Subtract registry_fees from commission
-            .unwrap();
-
-        **network_fee.to_account_info().try_borrow_mut_lamports()? = network_fee
-            .to_account_info()
-            .lamports()
-            .checked_add(registry_fees)
-            .unwrap();
+    if network_fees.gt(&0) {
+        transfer_lamports(
+            &commission.to_account_info(),
+            &network_fee.to_account_info(),
+            network_fees,
+        )?;
     }
 
     // Build next instruction for the thread.

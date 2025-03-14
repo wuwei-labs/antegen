@@ -51,6 +51,8 @@ spl-token = { workspace = true }
 tar = { workspace = true }
 thiserror = { workspace = true }
 termcolor = { workspace = true }
+unicode-width = { workspace = true }
+xz2 = { workspace = true }
 
 [[bin]]
 name = "antegen"

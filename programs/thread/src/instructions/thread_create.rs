@@ -66,7 +66,8 @@ pub fn handler(
     let system_program: &Program<System> = &ctx.accounts.system_program;
     let thread: &mut Account<Thread> = &mut ctx.accounts.thread;
 
-    // Initialize the thread
+    // Initialize the thread with the current version
+    thread.version = CURRENT_THREAD_VERSION;
     thread.authority = authority.key();
     thread.bump = ctx.bumps.thread;
     thread.created_at = Clock::get().unwrap().into();
@@ -95,5 +96,6 @@ pub fn handler(
         amount
     )?;
 
+    msg!("Thread created with version {}", CURRENT_THREAD_VERSION);
     Ok(())
 }
