@@ -2,12 +2,16 @@
 use {
     crate::{
         client::Client,
-        config::CliConfig,
+        config::{
+            CliConfig,
+            DevMode
+        },
         deps,
         errors::CliError,
         parser::ProgramInfo,
         print::print_style,
-        print_status
+        print_status,
+        print_warn
     },
     anyhow::{
         Context,
@@ -19,8 +23,8 @@ use {
         native_token::LAMPORTS_PER_SOL,
         pubkey::Pubkey,
         signature::{
-            read_keypair_file,
             Signer,
+            read_keypair_file
         },
     },
     std::fs,
@@ -38,32 +42,48 @@ pub fn start(
     force_init: bool,
     solana_archive: Option<String>,
     antegen_archive: Option<String>,
-    dev: bool,
+    dev_mode: Option<String>,
     trailing_args: Vec<String>,
 ) -> Result<(), CliError> {
-    config.dev = dev;
+    match dev_mode {
+        Some(mode) => {
+            match mode.as_str() {
+                "true" | "all" => config.dev_mode = DevMode::All,
+                "programs" => config.dev_mode = DevMode::Programs,
+                "plugin" => config.dev_mode = DevMode::Plugin,
+                _ => config.dev_mode = DevMode::None,
+            }
+        },
+        None => config.dev_mode = DevMode::None,
+    }
 
-    if dev {
+    if config.dev_mode.ne(&DevMode::None) {
         std::env::set_var("RUST_LOG", "antegen_plugin=debug");
     }
 
-    deps::download_deps(
+    // download dependencies
+    match deps::download_deps(
         &CliConfig::default_runtime_dir(),
         force_init,
         solana_archive,
-        antegen_archive,
-        dev,
-    )?;
+        antegen_archive.clone(),
+        config.dev_mode.ne(&DevMode::All),
+    ) {
+        Ok(_) => print_status!("Download", "✅", "Dependencies downloaded successfully"),
+        Err(e) => {
+            print_status!("Download", "❌", "Failed to download dependencies: {}", e);
+            return Err(e.into());
+        }
+    }
 
-    // Create Geyser Plugin Config file
-    create_geyser_plugin_config(config)?;
+    create_geyser_plugin_config(config, antegen_archive.is_some())?;
 
     // Start the validator
     start_test_validator(
         config,
-        program_infos, 
+        program_infos,
         clone_addresses,
-        trailing_args,  // Pass trailing args to validator
+        trailing_args,
     )?;
 
     wait_for_validator(client, 10)?;
@@ -86,21 +106,30 @@ fn register_worker(client: &Client, config: &CliConfig) -> Result<()> {
             err
         ))
     })?;
+    print_status!("Signer", "📝", "{}", explorer.account(signatory.pubkey()));
 
     client
-        .airdrop(&signatory.pubkey(), LAMPORTS_PER_SOL)
+        .airdrop(&signatory.pubkey(), 10 * LAMPORTS_PER_SOL)
         .context("airdrop to signatory failed")?;
     super::worker::create(client, signatory, true).context("worker::create failed")?;
 
     let worker_info = super::worker::_get(client, 0);
-    print_status!("Worker   👷", "{}", explorer.account(worker_info?.worker_pubkey));
+    print_status!("Worker", "👷", "{}", explorer.account(worker_info?.worker_pubkey));
     Ok(())
 }
 
-fn create_geyser_plugin_config(config: &CliConfig) -> Result<()> {
+fn create_geyser_plugin_config(config: &CliConfig, from_archive: bool) -> Result<()> {
+    let plugin_path = if from_archive && !config.use_local_plugin() {
+        print_status!("Plugin", "🔌", "archive:libantegen_plugin.so");
+        config.active_runtime("libantegen_plugin.so").to_owned()
+    } else {
+        print_status!("Plugin", "🔌", "local:libantegen_plugin.so");
+        config.geyser_lib().to_owned()
+    };
+
     let geyser_config = antegen_plugin_utils::PluginConfig {
         keypath: Some(config.signatory().to_owned()),
-        libpath: Some(config.geyser_lib().to_owned()),
+        libpath: Some(plugin_path.clone()),
         ..Default::default()
     };
 
@@ -161,9 +190,9 @@ fn start_test_validator(
     // Detach the process
     std::mem::forget(process);
 
-    print_status!("Running  🏃", "Solana Validator with Antegen {}", env!("CARGO_PKG_VERSION").to_owned());
-    print_status!("Explorer 🔍", "{}", explorer.base());
-    print_status!("Timeout  ⏰", "Validator will automatically stop at {}", end_time.format("%Y-%m-%d %H:%M:%S"));
+    print_status!("Running", "🏃", "Solana Validator with Antegen {}", env!("CARGO_PKG_VERSION").to_owned());
+    print_status!("Explorer", "🔍", "{}", explorer.base());
+    print_status!("Timeout", "⏰", "Validator will automatically stop at {}", end_time.format("%Y-%m-%d %H:%M:%S"));
 
     Ok(())
 }
@@ -207,16 +236,27 @@ impl TestValidatorHelpers for Command {
 
         self
     }
+
     fn bpf_program(
         &mut self,
         config: &CliConfig,
         program_id: Pubkey,
         program_name: &str,
     ) -> &mut Command {
-        let filename = format!("antegen_{}_program.so", program_name);
+        let filename: String = format!("antegen_{}_program.so", program_name);
+        let program_path: String = config.active_runtime(filename.as_str()).to_owned();
+        let path = std::path::Path::new(&program_path);
+
+        let source = if config.use_local_programs() { "local" } else { "archive" };
+        if !path.exists() {
+            print_warn!("Skipping {}:{} (file not found)", source, filename);
+            return self;
+        }
+
+        print_status!("Program", "👉", "{}:{}", source, filename);
         self.arg("--bpf-program")
             .arg(program_id.to_string())
-            .arg(config.active_runtime(filename.as_str()).to_owned())
+            .arg(program_path)
     }
 
     fn geyser_plugin_config(&mut self, config: &CliConfig) -> &mut Command {

@@ -5,6 +5,7 @@ use anchor_lang::{
     solana_program::system_program,
     system_program::{transfer, Transfer},
 };
+use antegen_network_program::state::{Config, SEED_CONFIG};
 
 /// Accounts required by the `thread_update` instruction.
 #[derive(Accounts)]
@@ -14,6 +15,12 @@ pub struct ThreadUpdate<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
 
+    #[account(
+        seeds = [SEED_CONFIG],
+        bump
+    )]
+    pub config: Account<'info, Config>,
+
     /// The Solana system program
     #[account(address = system_program::ID)]
     pub system_program: Program<'info, System>,
@@ -21,15 +28,37 @@ pub struct ThreadUpdate<'info> {
     /// The thread to be updated.
     #[account(
             mut,
+            constraint = authority.key().eq(&thread.authority) ||
+                // allow config.admin to update system threads
+                (authority.key().eq(&config.admin) &&
+                    (thread.key().eq(&config.epoch_thread) || thread.key().eq(&config.hasher_thread))
+                ),
             seeds = [
                 SEED_THREAD,
                 thread.authority.as_ref(),
                 thread.id.as_slice(),
             ],
-            bump = thread.bump,
-            has_one = authority,
+            bump = thread.bump
         )]
     pub thread: Account<'info, Thread>,
+}
+
+fn can_update_trigger(current: &Trigger, new: &Trigger) -> bool {
+    // Same variant is always allowed
+    if std::mem::discriminant(current) == std::mem::discriminant(new) {
+        return true;
+    }
+
+    // Check for special allowed combinations
+    matches!(
+        (current, new),
+        (Trigger::Cron { .. }, Trigger::Now) |
+        (Trigger::Cron { .. }, Trigger::Timestamp { .. }) |
+        (Trigger::Now, Trigger::Cron { .. }) |
+        (Trigger::Now, Trigger::Timestamp { .. }) |
+        (Trigger::Timestamp { .. }, Trigger::Cron { .. }) |
+        (Trigger::Timestamp { .. }, Trigger::Now)
+    )
 }
 
 pub fn handler(ctx: Context<ThreadUpdate>, settings: ThreadSettings) -> Result<()> {
@@ -37,6 +66,9 @@ pub fn handler(ctx: Context<ThreadUpdate>, settings: ThreadSettings) -> Result<(
     let authority = &ctx.accounts.authority;
     let thread = &mut ctx.accounts.thread;
     let system_program = &ctx.accounts.system_program;
+
+    // Migrate thread if needed before updating - using the method on ThreadAccount trait
+    thread.migrate_if_needed()?;
 
     // Update the thread.
     if let Some(fee) = settings.fee {
@@ -55,9 +87,8 @@ pub fn handler(ctx: Context<ThreadUpdate>, settings: ThreadSettings) -> Result<(
 
     // If provided, update the thread's trigger and reset the exec context.
     if let Some(trigger) = settings.trigger {
-        // Require the thread is not in the middle of processing.
         require!(
-            std::mem::discriminant(&thread.trigger) == std::mem::discriminant(&trigger),
+            can_update_trigger(&thread.trigger, &trigger),
             AntegenThreadError::InvalidTriggerVariant
         );
         thread.trigger = trigger.clone();

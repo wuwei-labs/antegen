@@ -13,7 +13,6 @@ pub fn handler(
 ) -> Result<ThreadResponse> {
   let to: &mut AccountInfo = &mut ctx.accounts.to;
 
-  msg!("close to test");
   Ok(ThreadResponse {
     close_to: Some(to.key()),
     ..ThreadResponse::default()

@@ -5,6 +5,9 @@ use antegen_utils::thread::{ClockData, SerializableInstruction, Trigger};
 
 pub const SEED_THREAD: &[u8] = b"thread";
 
+/// Current version of the Thread structure.
+pub const CURRENT_THREAD_VERSION: u8 = 1;
+
 /// Static space for next_instruction field.
 pub const NEXT_INSTRUCTION_SIZE: usize = 1232;
 
@@ -12,6 +15,8 @@ pub const NEXT_INSTRUCTION_SIZE: usize = 1232;
 #[account]
 #[derive(Debug)]
 pub struct Thread {
+    /// The version of this thread structure, for migration purposes.
+    pub version: u8,
     /// The owner of this thread.
     pub authority: Pubkey,
     /// The bump, used for PDA validation.
@@ -60,6 +65,14 @@ impl PartialEq for Thread {
 
 impl Eq for Thread {}
 
+impl TryFrom<Vec<u8>> for Thread {
+    type Error = Error;
+
+    fn try_from(data: Vec<u8>) -> std::result::Result<Self, Self::Error> {
+        Thread::try_deserialize(&mut data.as_slice())
+    }
+}
+
 /// Trait for reading and writing to a thread account.
 pub trait ThreadAccount {
     /// Get the pubkey of the thread account.
@@ -67,6 +80,15 @@ pub trait ThreadAccount {
 
     /// Allocate more memory for the account.
     fn realloc(&mut self) -> Result<()>;
+
+    /// Migrate the thread to the current version if needed.
+    fn migrate_if_needed(&mut self) -> Result<()>;
+
+    /// Checks if thread has version field
+    fn is_legacy_thread(&self) -> bool;
+
+    /// Migrates thread from legacy to v1
+    fn migrate_legacy_thread(&mut self) -> Result<()>;
 }
 
 impl ThreadAccount for Account<'_, Thread> {
@@ -86,6 +108,72 @@ impl ThreadAccount for Account<'_, Thread> {
         self.to_account_info().realloc(data_len, false)?;
         Ok(())
     }
+
+    fn migrate_if_needed(&mut self) -> Result<()> {
+        if self.is_legacy_thread() {
+            msg!("Detected legacy thread, migrating to current version");
+            self.migrate_legacy_thread()?;
+            return Ok(());
+        }
+
+        // Handle regular version upgrades
+        if self.version < CURRENT_THREAD_VERSION {
+            // Migrate through each version sequentially
+            while self.version < CURRENT_THREAD_VERSION {
+                let from_version: u8 = self.version;
+                let to_version: u8 = from_version + 1;
+                msg!("Upgrading thread from version {} to {}", from_version, to_version);
+
+                // Perform version-specific migrations
+                match from_version {
+                    // Add cases for future versions here
+                    // For example:
+                    // 1 => {
+                    //     // Version 1 to 2 upgrade
+                    //     // Calculate new size if adding fields
+                    //     let current_size = self.to_account_info().data_len();
+                    //     let new_size = current_size + size_of::<NewFieldType>();
+                    //     self.to_account_info().realloc(new_size, false)?;
+                    //     self.new_field = default_value;
+                    // },
+                    _ => {}
+                }
+
+                self.version = to_version;
+            }
+            
+            msg!("Thread successfully upgraded to version {}", CURRENT_THREAD_VERSION);
+        }
+        
+        Ok(())
+    }
+
+    /// Detects if a thread is a legacy thread (pre-versioning)
+    fn is_legacy_thread(&self) -> bool {
+        // Quick check: If version is already set to a non-zero value, it's definitely not a legacy thread
+        if self.version.gt(&0) {
+            return false;
+        }
+
+        // Look at the first byte of authority to see if it matches the version
+        // In a legacy thread, the version field would actually be the first byte of the authority
+        self.version.eq(&self.authority.as_ref()[0])
+    }
+
+    /// Migrates a legacy thread to the current version.
+    fn migrate_legacy_thread(&mut self) -> Result<()> {
+        let current_data_len: usize = self.to_account_info().data_len();
+        let new_space: usize = current_data_len + 1;
+        self.to_account_info().realloc(new_space, false)?;
+        let authority: Pubkey = self.authority;
+
+        self.authority = authority;
+        self.version = 1;
+
+        msg!("Legacy thread migrated to version {} (size: {} -> {})", 
+            CURRENT_THREAD_VERSION, current_data_len, new_space);
+        Ok(())
+    }
 }
 
 /// The execution context of a particular transaction thread.
@@ -101,7 +189,7 @@ pub struct ExecContext {
     /// Number of execs in this slot.
     pub execs_since_slot: u64,
 
-    /// Slot of the last exec
+    /// Slot of the current exec
     pub last_exec_at: u64,
 
     /// Unix timestamp of last exec
@@ -152,7 +240,7 @@ pub enum TriggerContext {
 }
 
 /// The properties of threads which are updatable.
-#[derive(AnchorSerialize, AnchorDeserialize)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct ThreadSettings {
     pub fee: Option<u64>,
     pub instructions: Option<Vec<SerializableInstruction>>,

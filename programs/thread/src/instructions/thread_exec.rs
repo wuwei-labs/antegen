@@ -6,8 +6,8 @@ use anchor_lang::{
     },
     AnchorDeserialize, InstructionData,
 };
-use antegen_network_program::state::{Pool, Worker, WorkerAccount, WorkerCommission, SEED_WORKER_COMMISSION};
-use antegen_utils::thread::{SerializableInstruction, ThreadResponse, PAYER_PUBKEY};
+use antegen_network_program::state::{Pool, Worker, WorkerAccount, WorkerCommission};
+use antegen_utils::thread::{SerializableInstruction, ThreadResponse, transfer_lamports, PAYER_PUBKEY};
 use crate::{errors::*, state::*, TRANSACTION_BASE_FEE_REIMBURSEMENT};
 
 /// The ID of the pool workers must be a member of to collect fees.
@@ -41,12 +41,6 @@ pub struct ThreadExec<'info> {
     /// The worker's fee account.
     #[account(
         mut,
-        seeds = [
-            SEED_WORKER_COMMISSION,
-            worker.key().as_ref(),
-        ],
-        bump,
-        seeds::program = antegen_network_program::ID,
         has_one = worker,
     )]
     pub commission: Account<'info, WorkerCommission>,
@@ -77,23 +71,6 @@ pub struct ThreadExec<'info> {
     /// The worker.
     #[account(address = worker.pubkey())]
     pub worker: Account<'info, Worker>,
-}
-
-fn transfer_lamports<'info>(
-    from: &AccountInfo<'info>,
-    to: &AccountInfo<'info>,
-    amount: u64,
-) -> Result<()> {
-    **from.try_borrow_mut_lamports()? = from
-        .lamports()
-        .checked_sub(amount)
-        .unwrap();
-    **to.try_borrow_mut_lamports()? = to
-        .to_account_info()
-        .lamports()
-        .checked_add(amount)
-        .unwrap();
-    Ok(())
 }
 
 pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
@@ -230,6 +207,7 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
         ..thread.exec_context.unwrap()
     });
 
+    commission.reload()?;
     // Calculate actual balance changes from inner instruction
     let post_inner_balances = BalanceSnapshot {
         signatory: signatory.lamports(),
@@ -261,9 +239,8 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
     }
 
     // Only process worker fees if they haven't already been processed by inner instruction
-    if pool.clone().into_inner().workers.contains(&worker.key())
-        && balance_changes.commission.eq(&0)
-    {
+    let worker_in_pool = pool.clone().into_inner().workers.contains(&worker.key());
+    if worker_in_pool && balance_changes.commission.eq(&0) {
         transfer_lamports(
             &thread.to_account_info(),
             &commission.to_account_info(),

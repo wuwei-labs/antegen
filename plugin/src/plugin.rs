@@ -44,11 +44,12 @@ impl GeyserPlugin for AntegenPlugin {
     fn on_load(&mut self, config_file: &str, is_reload: bool) -> PluginResult<()> {
         solana_logger::setup_with_default("info");
         info!(
-            "antegen-plugin crate-info - geyser_interface_version: {}, rustc: {}",
+            "antegen-plugin v{} - geyser_interface_version: {}, rustc: {}",
+            env!("CARGO_PKG_VERSION"),
             env!("GEYSER_INTERFACE_VERSION"),
             env!("RUSTC_VERSION")
         );
-
+    
         info!("Loading snapshot..., isReload: {}", is_reload);
         let config = PluginConfig::read_from(config_file)?;
         println!("config_file: {:?}", config_file);

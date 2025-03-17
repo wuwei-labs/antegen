@@ -227,3 +227,20 @@ impl SerializableAccount {
         }
     }
 }
+
+pub fn transfer_lamports<'info>(
+    from: &AccountInfo<'info>,
+    to: &AccountInfo<'info>,
+    amount: u64,
+) -> Result<()> {
+    **from.try_borrow_mut_lamports()? = from
+        .lamports()
+        .checked_sub(amount)
+        .unwrap();
+    **to.try_borrow_mut_lamports()? = to
+        .to_account_info()
+        .lamports()
+        .checked_add(amount)
+        .unwrap();
+    Ok(())
+}

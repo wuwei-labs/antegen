@@ -1,32 +1,26 @@
 use {
-    super::*,
-    anyhow::{
+    super::*, anyhow::{
         Context,
         Result,
-    },
-    bzip2::read::BzDecoder,
-    indicatif::{
+    }, bzip2::read::BzDecoder, indicatif::{
         ProgressBar,
         ProgressStyle,
-    },
-    reqwest::{
+    }, reqwest::{
         blocking::get,
         Url,
-    },
-    std::{
+    }, std::{
         ffi::OsStr,
         fs::{
             self,
             copy,
             File,
         },
-        io::{self,},
+        io::{self, Read,},
         path::{
             Path,
             PathBuf,
         },
-    },
-    tar::Archive,
+    }, tar::Archive
 };
 
 pub fn download_deps(
@@ -49,7 +43,7 @@ pub fn download_deps(
         config::SOLANA_DEPS,
         force_init,
     )?;
-    if !dev {
+    if antegen_archive.is_some() || dev {
         download_and_extract(
             &active_runtime,
             &antegen_archive.unwrap_or(CliConfig::antegen_release_url(&antegen_tag)),
@@ -87,12 +81,13 @@ pub fn download_and_extract(
     println!();
     Ok(())
 }
+
 fn download_file(url: &str, dest: &Path) -> Result<()> {
     // Check if the input is a URL or a local path
     match Url::parse(url) {
         Ok(url) => {
             // Download the file from the internet
-            print_status!("Downloading", "{}", &url.to_string());
+            print_status!("Downloading", "", "{}", &url.to_string());
             let response =
                 get(url.clone()).context(format!("Failed to download file from {}", url))?;
             if response.status() != reqwest::StatusCode::OK {
@@ -128,12 +123,33 @@ fn extract_archive(
     runtime_dir: &Path,
     files_to_extract: &[&str],
 ) -> Result<()> {
-    let file =
-        File::open(&archive_path).context(format!("Failed to open file {:#?}", archive_path))?;
+    let file = File::open(&archive_path)
+        .context(format!("Failed to open file {:#?}", archive_path))?;
     let target_file_names: Vec<&OsStr> = files_to_extract.iter().map(OsStr::new).collect();
-    let mut archive = Archive::new(BzDecoder::new(file));
 
-    print_status!("Extracting", "{:?}", archive_path);
+    print_status!("Extracting", "⛏️", "{:?}", archive_path);
+
+    // Determine the archive type by file extension
+    let path_str = archive_path.to_string_lossy();
+
+    if path_str.ends_with(".tar.xz") {
+        let mut archive = Archive::new(xz2::read::XzDecoder::new(file));
+        process_archive(&mut archive, runtime_dir, &target_file_names)?;
+    } else if path_str.ends_with(".tar.bz2") {
+        let mut archive = Archive::new(BzDecoder::new(file));
+        process_archive(&mut archive, runtime_dir, &target_file_names)?;
+    } else {
+        return Err(anyhow::anyhow!("Unsupported archive format: {}", path_str));
+    }
+    
+    Ok(())
+}
+
+fn process_archive<R: Read>(
+    archive: &mut Archive<R>,
+    runtime_dir: &Path,
+    target_file_names: &[&OsStr],
+) -> Result<()> {
     archive
         .entries()?
         .filter_map(|e| e.ok())
@@ -162,8 +178,9 @@ fn extract_archive(
         })
         .filter_map(|e| e.ok())
         .for_each(|x| {
-            print_status!(">", "{}", x.display());
+            print_status!("Extract", "📦", "{}", x.display());
         });
+
     Ok(())
 }
 

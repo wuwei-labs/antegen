@@ -44,6 +44,25 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
     let thread = &mut ctx.accounts.thread;
     let clock = Clock::get().unwrap();
 
+    // Handle thread migration if needed
+    // This will detect and migrate legacy threads with no version field
+    // or threads with old versions to the current version
+    thread.migrate_if_needed()?;
+
+    // Get the current started at for last started at value
+    let last_started_at = thread.exec_context
+        .as_ref()
+        .map(|ctx| match ctx.trigger_context {
+            TriggerContext::Cron { started_at } => started_at,
+            TriggerContext::Timestamp { started_at } => started_at,
+            TriggerContext::Slot { started_at } => started_at as i64,
+            TriggerContext::Epoch { started_at } => started_at as i64,
+            TriggerContext::Pyth { price } => price,
+            TriggerContext::Account { data_hash } => data_hash as i64,
+            _ => thread.created_at.unix_timestamp,
+        })
+        .unwrap_or(thread.created_at.unix_timestamp);
+
     match thread.trigger.clone() {
         Trigger::Account {
             address,
@@ -88,14 +107,13 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                             _ => return Err(AntegenThreadError::InvalidThreadState.into()),
                         }
                     }
-
                     // Set a new exec context with the new data hash and slot number.
                     thread.exec_context = Some(ExecContext {
                         exec_index: 0,
                         execs_since_reimbursement: 0,
                         execs_since_slot: 0,
                         last_exec_at: clock.slot,
-                        last_exec_timestamp: clock.unix_timestamp,
+                        last_exec_timestamp: last_started_at,
                         trigger_context: TriggerContext::Account { data_hash },
                     })
                 }
@@ -105,17 +123,8 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
             schedule,
             skippable,
         } => {
-            // Get the reference timestamp for calculating the thread's scheduled target timestamp.
-            let reference_timestamp = match thread.exec_context.clone() {
-                None => thread.created_at.unix_timestamp,
-                Some(exec_context) => match exec_context.trigger_context {
-                    TriggerContext::Cron { started_at } => started_at,
-                    _ => return Err(AntegenThreadError::InvalidThreadState.into()),
-                },
-            };
-            msg!("reference_timestamp: {}", reference_timestamp);
             // Verify the current timestamp is greater than or equal to the threshold timestamp.
-            let threshold_timestamp = next_timestamp(reference_timestamp, schedule.clone())
+            let threshold_timestamp = next_timestamp(last_started_at, schedule.clone())
                 .ok_or(AntegenThreadError::TriggerConditionFailed)?;
             require!(
                 clock.unix_timestamp.ge(&threshold_timestamp),
@@ -136,7 +145,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 execs_since_reimbursement: 0,
                 execs_since_slot: 0,
                 last_exec_at: clock.slot,
-                last_exec_timestamp: reference_timestamp,
+                last_exec_timestamp: last_started_at,
                 trigger_context: TriggerContext::Cron { started_at },
             });
         }
@@ -151,7 +160,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 execs_since_reimbursement: 0,
                 execs_since_slot: 0,
                 last_exec_at: clock.slot,
-                last_exec_timestamp: clock.unix_timestamp,
+                last_exec_timestamp: last_started_at,
                 trigger_context: TriggerContext::Now,
             });
         }
@@ -165,7 +174,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 execs_since_reimbursement: 0,
                 execs_since_slot: 0,
                 last_exec_at: clock.slot,
-                last_exec_timestamp: clock.unix_timestamp,
+                last_exec_timestamp: last_started_at,
                 trigger_context: TriggerContext::Slot { started_at: slot },
             });
         }
@@ -179,7 +188,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 execs_since_reimbursement: 0,
                 execs_since_slot: 0,
                 last_exec_at: clock.slot,
-                last_exec_timestamp: clock.unix_timestamp,
+                last_exec_timestamp: last_started_at,
                 trigger_context: TriggerContext::Epoch { started_at: epoch },
             })
         }
@@ -193,7 +202,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 execs_since_reimbursement: 0,
                 execs_since_slot: 0,
                 last_exec_at: clock.slot,
-                last_exec_timestamp: clock.unix_timestamp,
+                last_exec_timestamp: last_started_at,
                 trigger_context: TriggerContext::Timestamp {
                     started_at: unix_ts,
                 },
@@ -232,7 +241,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                                 execs_since_reimbursement: 0,
                                 execs_since_slot: 0,
                                 last_exec_at: clock.slot,
-                                last_exec_timestamp: clock.unix_timestamp,
+                                last_exec_timestamp: last_started_at,
                                 trigger_context: TriggerContext::Pyth {
                                     price: current_price.price,
                                 },
@@ -248,7 +257,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                                 execs_since_reimbursement: 0,
                                 execs_since_slot: 0,
                                 last_exec_at: clock.slot,
-                                last_exec_timestamp: clock.unix_timestamp,
+                                last_exec_timestamp: last_started_at,
                                 trigger_context: TriggerContext::Pyth {
                                     price: current_price.price,
                                 },

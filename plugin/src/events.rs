@@ -1,5 +1,5 @@
 use anchor_lang::{prelude::AccountInfo, AccountDeserialize};
-use antegen_thread_program::state::VersionedThread;
+use antegen_thread_program::state::Thread;
 use pyth_sdk_solana::{state::SolanaPriceAccount, PriceFeed};
 use agave_geyser_plugin_interface::geyser_plugin_interface::{
     GeyserPluginError, ReplicaAccountInfo,
@@ -17,7 +17,7 @@ use log::info;
 #[derive(Debug)]
 pub enum AccountUpdateEvent {
     Clock { clock: Clock },
-    Thread { thread: VersionedThread },
+    Thread { thread: Thread },
     PriceFeed { price_feed: PriceFeed }
 }
 
@@ -42,16 +42,16 @@ impl TryFrom<&mut ReplicaAccountInfo<'_>> for AccountUpdateEvent {
         // If the account belongs to the thread v1 program, parse it.
         if owner_pubkey == antegen_thread_program::ID && account_info.data.len() > 8 {
             let data = account_info.data.to_vec();
-            match VersionedThread::try_deserialize(&mut data.as_slice()) {
+            match Thread::try_deserialize(&mut data.as_slice()) {
                 Ok(thread) => {
                     info!("Successfully parsed thread program {}", account_pubkey);
                     return Ok(AccountUpdateEvent::Thread { thread })
                 },
                 Err(e) => {
-                    info!("Failed to parse VersionedThread: {:?}", e);
+                    info!("Failed to parse Thread: {:?}", e);
                     info!("Raw account data: {:?}", &data[..8]);
                     return Err(GeyserPluginError::AccountsUpdateError {
-                        msg: format!("Failed to deserialize VersionedThread for {}", account_pubkey),
+                        msg: format!("Failed to deserialize Thread for {}", account_pubkey),
                     });
                 }
             };

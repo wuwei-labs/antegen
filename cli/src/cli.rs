@@ -16,8 +16,7 @@ pub enum CliCommand {
     NetworkConfigSet {
         admin: Option<Pubkey>,
         epoch_thread: Option<Pubkey>,
-        hasher_thread: Option<Pubkey>,
-        output_format: Option<String>,
+        hasher_thread: Option<Pubkey>
     },
     NetworkConfigGet,
     Localnet {
@@ -26,7 +25,7 @@ pub enum CliCommand {
         program_infos: Vec<ProgramInfo>,
         solana_archive: Option<String>,
         antegen_archive: Option<String>,
-        dev: bool,
+        dev_mode: Option<String>,
         trailing_args: Vec<String>,
     },
     PoolGet {
@@ -101,6 +100,7 @@ pub fn app() -> Command {
         .bin_name("antegen")
         .about("An automation engine for the Solana blockchain")
         .version(env!("CARGO_PKG_VERSION")) // Use the crate version
+        .max_term_width(100)
         .arg_required_else_help(true)
         .subcommand(
             Command::new("crontab")
@@ -148,14 +148,6 @@ pub fn app() -> Command {
                                     .value_name("HASHER_THREAD")
                                     .num_args(1)
                             )
-                            .arg(
-                                Arg::new("output")
-                                    .long("output")
-                                    .short('o')
-                                    .value_name("FORMAT")
-                                    .value_parser(["base58"])
-                                    .help("Output format instead of submitting transaction"),
-                            )
                             .group(
                                 ArgGroup::new("config_settings")
                                     .args(&["admin", "epoch_thread", "hasher_thread"])
@@ -190,74 +182,92 @@ pub fn app() -> Command {
                     Arg::new("bpf_program")
                         .long("bpf-program")
                         .value_names(&["ADDRESS_OR_KEYPAIR", "BPF_PROGRAM.SO"])
-                        .value_name("BPF_PROGRAM")
                         .num_args(2)
                         .action(ArgAction::Append)
-                        .help(
-                            "Add a BPF program to the genesis configuration. \
-                       If the ledger already exists then this parameter is silently ignored. \
-                       First argument can be a pubkey string or path to a keypair",
+                        .help("Add a BPF program to the genesis configuration")
+                        .long_help(
+                            "Add a BPF program to the genesis configuration. If the ledger already exists then this parameter is silently ignored. First argument can be a pubkey string or path to a keypair."
                         ),
                 )
                 .arg(
                     Arg::new("clone")
                         .long("clone")
                         .short('c')
-                        .value_names(&["ADDRESS"])
-                        .value_name("CLONE")
+                        .value_name("ADDRESS")
                         .num_args(1)
                         .action(ArgAction::Append)
-                        .help("Copy an account from the cluster referenced by the --url argument the genesis configuration. If the ledger already exists then this parameter is silently ignored")
+                        .help("Copy an account from the cluster referenced by --url")
+                        .long_help(
+                            "Copy an account from the cluster referenced by the --url argument to the genesis configuration. If the ledger already exists then this parameter is silently ignored."
+                        ),
                 )
                 .arg(
                     Arg::new("url")
                         .long("url")
                         .short('u')
-                        .value_names(&["URL_OR_MONIKER"])
-                        .value_name("URL")
+                        .value_name("URL_OR_MONIKER")
                         .num_args(1)
-                        .help("URL for Solana's JSON RPC or moniker (or their first letter): [mainnet-beta, testnet, devnet, localhost]")
+                        .help("URL for Solana's JSON RPC or moniker [mainnet-beta, testnet, devnet, localhost]"),
                 )
-                .arg(Arg::new("force_init")
-                    .long("force-init")
-                    .action(ArgAction::SetTrue)
-                    .default_value("false")
-                    .help("Initializes and downloads localnet dependencies")
+                .arg(
+                    Arg::new("force_init")
+                        .long("force-init")
+                        .action(ArgAction::SetTrue)
+                        .help("Initializes and downloads localnet dependencies"),
                 )
                 .arg(
                     Arg::new("solana_archive")
                         .long("solana-archive")
-                        .help("url or local path to the solana archive containing the necessary \
-                     dependencies such as solana-test-validator. \
-                     Can be useful for debugging or testing different versions of solana-test-validator
-                     ")
-                    .value_name("SOLANA_ARCHIVE")
-                        .num_args(1),
+                        .value_name("VERSION_URL_OR_PATH")
+                        .num_args(1)
+                        .help("Specify a custom Solana archive version or path")
+                        .long_help(
+                            "Specify Solana version (e.g., '2.1.11'), full URL, or local path to an archive. \
+                             When only a version is provided, it will download from the official Solana release URL. \
+                             The archive should contain dependencies such as solana-test-validator. \
+                             Useful for testing with different Solana versions."
+                    ),
                 )
                 .arg(
                     Arg::new("antegen_archive")
                         .long("antegen-archive")
-                        .help("url or local path to the solana archive containing the necessary \
-                     dependencies such as clocwkork-thread-program, etc. \
-                     Can be useful for debugging or testing different versions of antegen releases
-                     ")
-                        .value_name("ANTEGEN_ARCHIVE")
+                        .value_name("VERSION_URL_OR_PATH")
                         .num_args(1)
-
+                        .help("Specify Antegen version, URL, or local path")
+                        .long_help(
+                            "Specify Antegen version (e.g., '2.2.8'), full URL, or local path to an archive. \
+                            When only a version is provided, it will download from the official Antegen release URL. \
+                            Required when using partial development modes (--dev=programs or --dev=plugin)."
+                    ),
                 )
                 .arg(
                     Arg::new("dev")
                         .long("dev")
-                        .action(ArgAction::SetTrue)
-                        .default_value("false")
-                        .help("Use development versions of antegen programs")
+                        .num_args(0..=1)
+                        .default_missing_value("all")
+                        .value_parser(["all", "programs", "plugin"])
+                        .requires_if("programs", "antegen_archive")
+                        .requires_if("plugin", "antegen_archive")
+                        .help("Select development mode [possible values: all, programs, plugin]")
+                        .long_help(
+                            "Development mode options: With no value or 'all', all local components are used. With 'programs', local programs are used with archive plugin. With 'plugin', local plugin is used with archive programs. Note that the 'programs' and 'plugin' modes require the --antegen-archive parameter to be specified."
+                    ),
                 )
                 .arg(
                     Arg::new("test_validator_args")
                         .num_args(0..)
                         .allow_hyphen_values(true)
                         .trailing_var_arg(true)
-                        .help("Arguments to pass to solana-test-validator")
+                        .help("Additional arguments to pass to solana-test-validator"),
+                )
+                // Enable better help formatting
+                .disable_help_flag(true)
+                .arg(
+                    Arg::new("help")
+                        .long("help")
+                        .short('h')
+                        .action(ArgAction::Help)
+                        .help("Print help")
                 )
         )
         .subcommand(
