@@ -1,8 +1,11 @@
-use std::sync::Arc;
+use std::{env, sync::Arc};
 
+use agave_geyser_plugin_interface::geyser_plugin_interface::{
+    GeyserPluginError, Result as PluginResult,
+};
 use anchor_lang::{InstructionData, ToAccountMetas};
-use antegen_thread_program::state::{VersionedThread, Trigger};
 use antegen_network_program::state::Worker;
+use antegen_thread_program::state::{Trigger, VersionedThread};
 use antegen_utils::thread::PAYER_PUBKEY;
 use log::info;
 use solana_account_decoder::UiAccountEncoding;
@@ -11,24 +14,18 @@ use solana_client::{
     rpc_config::{RpcSimulateTransactionAccountsConfig, RpcSimulateTransactionConfig},
     rpc_custom_error::JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED,
 };
-use agave_geyser_plugin_interface::geyser_plugin_interface::{
-    GeyserPluginError, Result as PluginResult,
-};
 use solana_program::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
 };
 use solana_sdk::{
-    message::{
-        v0,
-        VersionedMessage
-    },
-    transaction::VersionedTransaction,
     account::Account,
     commitment_config::CommitmentConfig,
     compute_budget::ComputeBudgetInstruction,
+    message::{v0, VersionedMessage},
     signature::Keypair,
-    signer::Signer
+    signer::Signer,
+    transaction::VersionedTransaction,
 };
 
 /// Max byte size of a serialized transaction.
@@ -83,18 +80,16 @@ pub async fn build_thread_exec_tx(
         let message = v0::Message::try_compile(
             &signatory_pubkey,
             &ixs,
-            &[],  // address table lookups
+            &[], // address table lookups
             blockhash,
-        ).map_err(|e| {
+        )
+        .map_err(|e| {
             GeyserPluginError::Custom(format!("Failed to compile message: {}", e).into())
         })?;
 
         let versioned_message = VersionedMessage::V0(message);
         // Create versioned transaction
-        let sim_tx = VersionedTransaction::try_new(
-            versioned_message,
-            &[payer],
-        ).map_err(|e| {
+        let sim_tx = VersionedTransaction::try_new(versioned_message, &[payer]).map_err(|e| {
             GeyserPluginError::Custom(format!("Failed to create transaction: {}", e).into())
         })?;
 
@@ -127,10 +122,7 @@ pub async fn build_thread_exec_tx(
                 info!("Simulation error encountered: {:?}", err);
                 match err.kind {
                     solana_client::client_error::ClientErrorKind::RpcError(
-                        solana_client::rpc_request::RpcError::RpcResponseError {
-                            code,
-                            ..
-                        }
+                        solana_client::rpc_request::RpcError::RpcResponseError { code, .. },
                     ) if code == JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED => {
                         return Err(GeyserPluginError::Custom(
                             "RPC client has not reached min context slot".into(),
@@ -161,7 +153,7 @@ pub async fn build_thread_exec_tx(
                 let ui_account = match response
                     .value
                     .accounts
-                    .and_then(|a| a.get(0).cloned().flatten()) 
+                    .and_then(|a| a.get(0).cloned().flatten())
                 {
                     Some(acc) => acc,
                     None => {
@@ -229,30 +221,29 @@ pub async fn build_thread_exec_tx(
         return Ok(None);
     }
 
+    // allow for custom buffer from environment
+    let transaction_buffer: u32 = env::var("ANTEGEN_TRANSACTION_COMPUTE_UNIT_BUFFER")
+        .ok()
+        .and_then(|val| val.parse().ok())
+        .unwrap_or(TRANSACTION_COMPUTE_UNIT_BUFFER);
+
     // Update compute unit limit based on simulation
     if let Some(units_consumed) = units_consumed {
         let units_committed = std::cmp::min(
-            (units_consumed as u32) + TRANSACTION_COMPUTE_UNIT_BUFFER,
+            (units_consumed as u32) + transaction_buffer,
             TRANSACTION_COMPUTE_UNIT_LIMIT,
         );
         successful_ixs[0] = ComputeBudgetInstruction::set_compute_unit_limit(units_committed);
     }
 
     // Build final versioned transaction
-    let message = v0::Message::try_compile(
-        &signatory_pubkey,
-        &successful_ixs,
-        &[],
-        blockhash,
-    ).map_err(|e| {
-        GeyserPluginError::Custom(format!("Failed to compile final message: {}", e).into())
-    })?;
+    let message = v0::Message::try_compile(&signatory_pubkey, &successful_ixs, &[], blockhash)
+        .map_err(|e| {
+            GeyserPluginError::Custom(format!("Failed to compile final message: {}", e).into())
+        })?;
 
     let versioned_message = VersionedMessage::V0(message);
-    let tx = VersionedTransaction::try_new(
-        versioned_message,
-        &[payer],
-    ).map_err(|e| {
+    let tx = VersionedTransaction::try_new(versioned_message, &[payer]).map_err(|e| {
         GeyserPluginError::Custom(format!("Failed to create final transaction: {}", e).into())
     })?;
 
@@ -277,17 +268,15 @@ fn build_kickoff_ix(
 ) -> Instruction {
     // Build the instruction.
     let mut kickoff_ix = match thread {
-        VersionedThread::V1(_) => {
-            Instruction {
-                program_id: antegen_thread_program::ID,
-                accounts: antegen_thread_program::accounts::ThreadKickoff {
-                    signatory: signatory_pubkey,
-                    thread: thread_pubkey,
-                    worker: worker_pubkey,
-                }
-                .to_account_metas(Some(false)),
-                data: antegen_thread_program::instruction::ThreadKickoff {}.data(),
+        VersionedThread::V1(_) => Instruction {
+            program_id: antegen_thread_program::ID,
+            accounts: antegen_thread_program::accounts::ThreadKickoff {
+                signatory: signatory_pubkey,
+                thread: thread_pubkey,
+                worker: worker_pubkey,
             }
+            .to_account_metas(Some(false)),
+            data: antegen_thread_program::instruction::ThreadKickoff {}.data(),
         },
     };
 
@@ -297,24 +286,20 @@ fn build_kickoff_ix(
             address,
             offset: _,
             size: _,
-        } => {
-            kickoff_ix.accounts.push(AccountMeta {
-                pubkey: address,
-                is_signer: false,
-                is_writable: false,
-            })
-        },
+        } => kickoff_ix.accounts.push(AccountMeta {
+            pubkey: address,
+            is_signer: false,
+            is_writable: false,
+        }),
         Trigger::Pyth {
             price_feed,
             equality: _,
             limit: _,
-        } => {
-            kickoff_ix.accounts.push(AccountMeta {
-                pubkey: price_feed,
-                is_signer: false,
-                is_writable: false,
-            })
-        },
+        } => kickoff_ix.accounts.push(AccountMeta {
+            pubkey: price_feed,
+            is_signer: false,
+            is_writable: false,
+        }),
         _ => {}
     }
 
@@ -329,19 +314,17 @@ fn build_exec_ix(
 ) -> Instruction {
     // Build the instruction.
     let mut exec_ix = match thread {
-        VersionedThread::V1(_) => {
-            Instruction {
-                program_id: antegen_thread_program::ID,
-                accounts: antegen_thread_program::accounts::ThreadExec {
-                    commission: antegen_network_program::state::WorkerCommission::pubkey(worker_pubkey),
-                    pool: antegen_network_program::state::Pool::pubkey(0),
-                    signatory: signatory_pubkey,
-                    thread: thread_pubkey,
-                    worker: worker_pubkey,
-                }
-                .to_account_metas(Some(true)),
-                data: antegen_thread_program::instruction::ThreadExec {}.data(),
+        VersionedThread::V1(_) => Instruction {
+            program_id: antegen_thread_program::ID,
+            accounts: antegen_thread_program::accounts::ThreadExec {
+                commission: antegen_network_program::state::WorkerCommission::pubkey(worker_pubkey),
+                pool: antegen_network_program::state::Pool::pubkey(0),
+                signatory: signatory_pubkey,
+                thread: thread_pubkey,
+                worker: worker_pubkey,
             }
+            .to_account_metas(Some(true)),
+            data: antegen_thread_program::instruction::ThreadExec {}.data(),
         },
     };
 
