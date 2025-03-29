@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{env, sync::Arc};
 
 use agave_geyser_plugin_interface::geyser_plugin_interface::{
     GeyserPluginError, Result as PluginResult,
@@ -221,10 +221,16 @@ pub async fn build_thread_exec_tx(
         return Ok(None);
     }
 
+    // allow for custom buffer from environment
+    let transaction_buffer: u32 = env::var("ANTEGEN_TRANSACTION_COMPUTE_UNIT_BUFFER")
+        .ok()
+        .and_then(|val| val.parse().ok())
+        .unwrap_or(TRANSACTION_COMPUTE_UNIT_BUFFER);
+
     // Update compute unit limit based on simulation
     if let Some(units_consumed) = units_consumed {
         let units_committed = std::cmp::min(
-            (units_consumed as u32) + TRANSACTION_COMPUTE_UNIT_BUFFER,
+            (units_consumed as u32) + transaction_buffer,
             TRANSACTION_COMPUTE_UNIT_LIMIT,
         );
         successful_ixs[0] = ComputeBudgetInstruction::set_compute_unit_limit(units_committed);
