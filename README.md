@@ -25,8 +25,8 @@ Antegen is a **hard** fork from [Clockwork](https://github.com/clockwork-xyz/clo
 
 Antegen maintains the core protocol design from Clockwork while modernizing the codebase for compatibility with the latest Solana ecosystem dependencies. This includes support for:
 
-- Anchor 30.1 and above
-- Solana 2.1.6 (Agave) and above
+- Anchor 0.31.0 and above
+- Solana 2.1.21 (Agave) and above
 - Latest ecosystem dependencies and standards
 - Modern development tooling
 
