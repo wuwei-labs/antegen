@@ -1,9 +1,11 @@
-use std::mem::size_of;
-
 use anchor_lang::{prelude::*, AnchorDeserialize, AnchorSerialize};
 use antegen_utils::thread::{ClockData, SerializableInstruction, Trigger};
 
 pub const SEED_THREAD: &[u8] = b"thread";
+pub const SEED_NONCE: &[u8] = b"thread_nonce";
+
+/// Current version of the Thread structure.
+pub const CURRENT_THREAD_VERSION: u8 = 1;
 
 /// Static space for next_instruction field.
 pub const NEXT_INSTRUCTION_SIZE: usize = 1232;
@@ -12,6 +14,8 @@ pub const NEXT_INSTRUCTION_SIZE: usize = 1232;
 #[account]
 #[derive(Debug)]
 pub struct Thread {
+    /// The version of this thread structure, for migration purposes.
+    pub version: u8,
     /// The owner of this thread.
     pub authority: Pubkey,
     /// The bump, used for PDA validation.
@@ -36,6 +40,8 @@ pub struct Thread {
     pub rate_limit: u64,
     /// The triggering event to kickoff a thread.
     pub trigger: Trigger,
+    pub nonce_account: Pubkey,
+    pub last_nonce: String,
 }
 
 impl Thread {
@@ -44,11 +50,7 @@ impl Thread {
         let id_bytes = id.as_ref();
         assert!(id_bytes.len() <= 32, "Thread ID must not exceed 32 bytes");
 
-        Pubkey::find_program_address(
-            &[SEED_THREAD, authority.as_ref(), id_bytes],
-            &crate::ID,
-        )
-        .0
+        Pubkey::find_program_address(&[SEED_THREAD, authority.as_ref(), id_bytes], &crate::ID).0
     }
 }
 
@@ -60,13 +62,27 @@ impl PartialEq for Thread {
 
 impl Eq for Thread {}
 
+impl TryFrom<Vec<u8>> for Thread {
+    type Error = Error;
+
+    fn try_from(data: Vec<u8>) -> std::result::Result<Self, Self::Error> {
+        Thread::try_deserialize(&mut data.as_slice())
+    }
+}
+
 /// Trait for reading and writing to a thread account.
 pub trait ThreadAccount {
     /// Get the pubkey of the thread account.
     fn pubkey(&self) -> Pubkey;
 
-    /// Allocate more memory for the account.
-    fn realloc(&mut self) -> Result<()>;
+    /// Migrate the thread to the current version if needed.
+    fn migrate_if_needed(&mut self) -> Result<()>;
+
+    /// Checks if thread has version field
+    fn is_legacy_thread(&self) -> bool;
+
+    /// Migrates thread from legacy to v1
+    fn migrate_legacy_thread(&mut self) -> Result<()>;
 }
 
 impl ThreadAccount for Account<'_, Thread> {
@@ -74,16 +90,80 @@ impl ThreadAccount for Account<'_, Thread> {
         Thread::pubkey(self.authority, self.id.clone())
     }
 
-    fn realloc(&mut self) -> Result<()> {
-        // Realloc memory for the thread account
-        let data_len = 8 +            // discriminator
-            size_of::<Thread>() +            // base struct
-            self.id.len() +                  // id length
-            4 + (self.instructions.len() * size_of::<SerializableInstruction>()) + // vec length prefix + items
-            size_of::<Trigger>() +            // trigger enum
-            NEXT_INSTRUCTION_SIZE;            // next instruction
+    fn migrate_if_needed(&mut self) -> Result<()> {
+        if self.is_legacy_thread() {
+            msg!("Detected legacy thread, migrating to current version");
+            self.migrate_legacy_thread()?;
+            return Ok(());
+        }
 
-        self.to_account_info().realloc(data_len, false)?;
+        // Handle regular version upgrades
+        if self.version < CURRENT_THREAD_VERSION {
+            // Migrate through each version sequentially
+            while self.version < CURRENT_THREAD_VERSION {
+                let from_version: u8 = self.version;
+                let to_version: u8 = from_version + 1;
+                msg!(
+                    "Upgrading thread from version {} to {}",
+                    from_version,
+                    to_version
+                );
+
+                // Perform version-specific migrations
+                match from_version {
+                    // Add cases for future versions here
+                    // For example:
+                    // 1 => {
+                    //     // Version 1 to 2 upgrade
+                    //     // Calculate new size if adding fields
+                    //     let current_size = self.to_account_info().data_len();
+                    //     let new_size = current_size + size_of::<NewFieldType>();
+                    //     self.to_account_info().realloc(new_size, false)?;
+                    //     self.new_field = default_value;
+                    // },
+                    _ => {}
+                }
+
+                self.version = to_version;
+            }
+
+            msg!(
+                "Thread successfully upgraded to version {}",
+                CURRENT_THREAD_VERSION
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Detects if a thread is a legacy thread (pre-versioning)
+    fn is_legacy_thread(&self) -> bool {
+        // Quick check: If version is already set to a non-zero value, it's definitely not a legacy thread
+        if self.version.gt(&0) {
+            return false;
+        }
+
+        // Look at the first byte of authority to see if it matches the version
+        // In a legacy thread, the version field would actually be the first byte of the authority
+        self.version.eq(&self.authority.as_ref()[0])
+    }
+
+    /// Migrates a legacy thread to the current version.
+    fn migrate_legacy_thread(&mut self) -> Result<()> {
+        let current_data_len: usize = self.to_account_info().data_len();
+        let new_space: usize = current_data_len + 1;
+        self.to_account_info().realloc(new_space, false)?;
+        let authority: Pubkey = self.authority;
+
+        self.authority = authority;
+        self.version = 1;
+
+        msg!(
+            "Legacy thread migrated to version {} (size: {} -> {})",
+            CURRENT_THREAD_VERSION,
+            current_data_len,
+            new_space
+        );
         Ok(())
     }
 }
@@ -155,7 +235,6 @@ pub enum TriggerContext {
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct ThreadSettings {
     pub fee: Option<u64>,
-    pub instructions: Option<Vec<SerializableInstruction>>,
     pub name: Option<String>,
     pub rate_limit: Option<u64>,
     pub trigger: Option<Trigger>,

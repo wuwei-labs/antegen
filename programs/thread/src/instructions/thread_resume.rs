@@ -10,19 +10,18 @@ pub struct ThreadResume<'info> {
     /// The thread to be resumed.
     #[account(
         mut,
+        has_one = authority,
         seeds = [
             SEED_THREAD,
             thread.authority.as_ref(),
             thread.id.as_slice(),
         ],
         bump = thread.bump,
-        has_one = authority
     )]
     pub thread: Account<'info, Thread>,
 }
 
 pub fn handler(ctx: Context<ThreadResume>) -> Result<()> {
-    // Get accounts
     let thread = &mut ctx.accounts.thread;
 
     // Resume the thread

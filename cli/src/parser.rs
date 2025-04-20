@@ -1,10 +1,12 @@
 use std::{convert::TryFrom, fs, path::PathBuf, str::FromStr};
 
-use clap::ArgMatches;
 use antegen_thread_program::state::{SerializableAccount, SerializableInstruction, Trigger};
+use clap::ArgMatches;
 use serde::{Deserialize as JsonDeserialize, Serialize as JsonSerialize};
 use solana_sdk::{
-    native_token::LAMPORTS_PER_SOL, pubkey::Pubkey, signature::{read_keypair_file, Keypair}, signer::Signer
+    pubkey::Pubkey,
+    signature::{read_keypair_file, Keypair},
+    signer::Signer,
 };
 
 use crate::{cli::CliCommand, errors::CliError};
@@ -80,7 +82,8 @@ fn parse_bpf_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
         solana_archive: parse_string("solana_archive", matches).ok(),
         antegen_archive: parse_string("antegen_archive", matches).ok(),
         dev: matches.get_flag("dev"),
-        trailing_args: matches.get_many::<String>("test_validator_args")
+        trailing_args: matches
+            .get_many::<String>("test_validator_args")
             .unwrap_or_default()
             .map(|s| s.to_string())
             .collect(),
@@ -98,8 +101,6 @@ fn parse_network_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
         Some(("config", config_matches)) => match config_matches.subcommand() {
             Some(("set", matches)) => Ok(CliCommand::NetworkConfigSet {
                 admin: parse_pubkey("admin", matches).ok(),
-                epoch_thread: parse_pubkey("epoch_thread", matches).ok(),
-                hasher_thread: parse_pubkey("hasher_thread", matches).ok(),
                 output_format: parse_string("output", matches).ok(),
             }),
             Some(("get", _)) => Ok(CliCommand::NetworkConfigGet {}),
@@ -108,19 +109,6 @@ fn parse_network_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
             )),
         },
         Some(("initialize", _)) => Ok(CliCommand::NetworkInitialize {}),
-        Some(("threads", thread_matches)) => match thread_matches.subcommand() {
-            Some(("create", create_matches)) => {
-                let sol_amount = create_matches
-                    .get_one::<f64>("amount")
-                    .copied()
-                    .unwrap_or(1.0);
-                let amount = (sol_amount * LAMPORTS_PER_SOL as f64) as u64;
-                Ok(CliCommand::NetworkThreadCreate { amount })
-            },
-            _ => Err(CliError::CommandNotRecognized(
-                matches.subcommand().unwrap().0.into(),
-            )),
-        },
         _ => Err(CliError::CommandNotRecognized(
             matches.subcommand().unwrap().0.into(),
         )),
@@ -130,14 +118,7 @@ fn parse_network_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
 fn parse_pool_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     match matches.subcommand() {
         Some(("get", matches)) => Ok(CliCommand::PoolGet {
-            id: parse_u64("id", matches)?,
-        }),
-        Some(("update", matches)) => Ok(CliCommand::PoolUpdate {
-            id: parse_u64("id", matches)?,
-            size: parse_u64("size", matches)?,
-        }),
-        Some(("rotate", matches)) => Ok(CliCommand::PoolRotate {
-            id: parse_u64("id", matches)?,
+            id: parse_u8("id", matches)?,
         }),
         Some(("list", _)) => Ok(CliCommand::PoolList {}),
         _ => Err(CliError::CommandNotRecognized(
@@ -148,18 +129,11 @@ fn parse_pool_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
 
 fn parse_thread_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     match matches.subcommand() {
-        Some(("crate-info", _)) => Ok(CliCommand::ThreadCrateInfo {}),
         Some(("create", matches)) => Ok(CliCommand::ThreadCreate {
             id: parse_string("id", matches)?,
             kickoff_instruction: parse_instruction_file("kickoff_instruction", matches)?,
             trigger: parse_trigger(matches)?,
         }),
-        Some(("memo-test", matches)) => Ok(CliCommand::ThreadMemoTest {
-            id: matches.get_one::<String>("id").map(|s| s.to_string()),
-            schedule: matches.get_one::<String>("schedule").map(|s| s.to_string()),
-            skippable: matches.get_one::<bool>("skippable").copied(),
-        }),
-        Some(("close-test", _)) => Ok(CliCommand::ThreadCloseTest {}),
         Some(("delete", matches)) => Ok(CliCommand::ThreadDelete {
             id: parse_string("id", matches).ok(),
             address: parse_pubkey("address", matches).ok(),
@@ -205,10 +179,10 @@ fn parse_worker_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
             signatory: parse_keypair_file("signatory_keypair", matches)?,
         }),
         Some(("get", matches)) => Ok(CliCommand::WorkerGet {
-            id: parse_u64("id", matches)?,
+            id: parse_u32("id", matches)?,
         }),
         Some(("update", matches)) => Ok(CliCommand::WorkerUpdate {
-            id: parse_u64("id", matches)?,
+            id: parse_u32("id", matches)?,
             commission_rate: parse_u64("commission_rate", matches).ok(),
             signatory: parse_keypair_file("signatory_keypair", matches).ok(),
         }),
@@ -270,6 +244,20 @@ fn parse_string(arg: &str, matches: &ArgMatches) -> Result<String, CliError> {
 pub fn _parse_i64(arg: &str, matches: &ArgMatches) -> Result<i64, CliError> {
     Ok(parse_string(arg, matches)?
         .parse::<i64>()
+        .map_err(|_err| CliError::BadParameter(arg.into()))
+        .unwrap())
+}
+
+pub fn parse_u8(arg: &str, matches: &ArgMatches) -> Result<u8, CliError> {
+    Ok(parse_string(arg, matches)?
+        .parse::<u8>()
+        .map_err(|_err| CliError::BadParameter(arg.into()))
+        .unwrap())
+}
+
+pub fn parse_u32(arg: &str, matches: &ArgMatches) -> Result<u32, CliError> {
+    Ok(parse_string(arg, matches)?
+        .parse::<u32>()
         .map_err(|_err| CliError::BadParameter(arg.into()))
         .unwrap())
 }

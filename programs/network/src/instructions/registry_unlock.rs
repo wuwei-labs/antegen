@@ -6,14 +6,16 @@ pub struct RegistryUnlock<'info> {
     pub admin: Signer<'info>,
 
     #[account(
-        address = Config::pubkey(),
-        has_one = admin
+        has_one = admin,
+        seeds = [SEED_CONFIG],
+        bump = config.bump,
     )]
     pub config: Account<'info, Config>,
 
     #[account(
         mut,
-        address = Registry::pubkey()
+        seeds = [SEED_REGISTRY],
+        bump = registry.bump,
     )]
     pub registry: Account<'info, Registry>,
 }

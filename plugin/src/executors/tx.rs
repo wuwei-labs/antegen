@@ -1,24 +1,17 @@
 use {
-    std::{
-        collections::{HashMap, HashSet},
-        fmt::Debug,
-        sync::{
-            atomic::{AtomicU64, Ordering},
-            Arc,
-        },
+    super::AccountGet,
+    crate::{config::PluginConfig, pool_position::PoolPosition, utils::read_or_new_keypair},
+    agave_geyser_plugin_interface::geyser_plugin_interface::{
+        GeyserPluginError, Result as PluginResult,
     },
+    antegen_network_program::state::{Builder, Pool},
+    antegen_thread_program::state::Thread,
     bincode::serialize,
-    antegen_network_program::state::{Pool, Registry, Worker},
-    antegen_thread_program::state::VersionedThread,
     log::info,
     solana_client::{
         nonblocking::{rpc_client::RpcClient, tpu_client::TpuClient},
         rpc_config::RpcSimulateTransactionConfig,
         tpu_client::TpuClientConfig,
-    },
-    agave_geyser_plugin_interface::geyser_plugin_interface::{
-        GeyserPluginError, 
-        Result as PluginResult,
     },
     solana_program::pubkey::Pubkey,
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
@@ -27,9 +20,15 @@ use {
         signature::{Keypair, Signature},
         transaction::{Transaction, VersionedTransaction},
     },
+    std::{
+        collections::{HashMap, HashSet},
+        fmt::Debug,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        },
+    },
     tokio::{runtime::Runtime, sync::RwLock},
-    crate::{config::PluginConfig, pool_position::PoolPosition, utils::read_or_new_keypair},
-    super::AccountGet,
 };
 
 /// Number of slots to wait before checking for a confirmed transaction.
@@ -124,35 +123,54 @@ impl TxExecutor {
             .ok();
 
         // Get self worker's position in the delegate pool.
-        let worker_pubkey = Worker::pubkey(self.config.worker_id);
-        if let Ok(pool_position) = (client.get::<Pool>(&Pool::pubkey(0)).await).map(|pool| {
-            let workers = &mut pool.workers.clone();
-            PoolPosition {
-                current_position: pool
-                    .workers
-                    .iter()
-                    .position(|k| k.eq(&worker_pubkey))
-                    .map(|i| i as u64),
-                workers: workers.clone(),
-            }
-        }) {
-            info!("pool_position: {:?}", pool_position);
+        let builder_pubkey = Builder::pubkey(self.config.builder_id);
+        let builder_result = client.get::<Builder>(&builder_pubkey).await;
+        match builder_result {
+            Ok(builder) => {
+                // Proceed with the existing code to get pool position...
+                if let Ok(pool_position) = (client.get::<Pool>(&Pool::pubkey(builder.pool)).await)
+                    .map(|pool| {
+                        let builders = &mut pool.builders.clone();
+                        PoolPosition {
+                            current_position: pool
+                                .builders
+                                .iter()
+                                .position(|k| k.eq(&builder_pubkey))
+                                .map(|i| i as u64),
+                            builders: builders.clone(),
+                        }
+                    })
+                {
+                    info!("pool_position: {:?}", pool_position);
 
-            // Rotate into the worker pool.
-            if pool_position.current_position.is_none() {
-                self.clone()
-                    .execute_pool_rotate_txs(client.clone(), slot, pool_position.clone())
-                    .await
-                    .ok();
-            }
+                    // Rotate into the worker pool.
+                    if pool_position.current_position.is_none() {
+                        self.clone()
+                            .execute_pool_rotate_txs(client.clone(), slot, pool_position.clone())
+                            .await
+                            .ok();
+                    }
 
-            // Execute thread transactions.
-            self.clone()
-                .execute_thread_exec_txs(client.clone(), slot, pool_position, runtime.clone())
-                .await
-                .ok();
+                    // Execute thread transactions.
+                    self.clone()
+                        .execute_thread_exec_txs(
+                            client.clone(),
+                            slot,
+                            pool_position,
+                            runtime.clone(),
+                        )
+                        .await
+                        .ok();
+                }
+            }
+            Err(err) => {
+                info!(
+                    "Builder account not found yet: {:?}. Waiting for account creation.",
+                    err
+                );
+                return Ok(());
+            }
         }
-
         Ok(())
     }
 
@@ -279,13 +297,11 @@ impl TxExecutor {
         if !should_attempt {
             return Ok(());
         }
-        let registry = client.get::<Registry>(&Registry::pubkey()).await.unwrap();
         if let Some(tx) = crate::builders::build_pool_rotation_tx(
             client.clone(),
             &self.keypair,
             pool_position,
-            registry,
-            self.config.worker_id,
+            self.config.builder_id,
         )
         .await
         {
@@ -311,7 +327,7 @@ impl TxExecutor {
         // Note we parallelize using rayon because this work is CPU heavy.
         let r_executable_threads = self.executable_threads.read().await;
         let thread_pubkeys =
-            if pool_position.current_position.is_none() && !pool_position.workers.is_empty() {
+            if pool_position.current_position.is_none() && !pool_position.builders.is_empty() {
                 // This worker is not in the pool. Get pubkeys of threads that are beyond the timeout window.
                 r_executable_threads
                     .iter()
@@ -417,7 +433,7 @@ impl TxExecutor {
         due_slot: u64,
         thread_pubkey: Pubkey,
     ) -> Option<(Pubkey, VersionedTransaction, u64)> {
-        let thread = match client.clone().get::<VersionedThread>(&thread_pubkey).await {
+        let thread = match client.clone().get::<Thread>(&thread_pubkey).await {
             Err(_err) => {
                 self.increment_simulation_failure(thread_pubkey).await;
                 return None;
@@ -426,7 +442,7 @@ impl TxExecutor {
         };
 
         // Exit early if the thread has been executed after it became due.
-        if let Some(exec_context) = thread.exec_context() {
+        if let Some(exec_context) = thread.exec_context {
             if exec_context.last_exec_at.gt(&due_slot) {
                 // Drop thread from the executable set to avoid bloat.
                 let mut w_executable_threads = self.executable_threads.write().await;
@@ -442,7 +458,7 @@ impl TxExecutor {
             due_slot,
             thread,
             thread_pubkey,
-            self.config.worker_id,
+            self.config.builder_id,
         )
         .await
         {
@@ -550,7 +566,9 @@ async fn get_tpu_client() -> TpuClient<QuicPool, QuicConnectionManager, QuicConf
         "tpu_client",
         rpc_client,
         LOCAL_WEBSOCKET_URL.into(),
-        TpuClientConfig { fanout_slots: TRANSACTION_CONFIRMATION_PERIOD },
+        TpuClientConfig {
+            fanout_slots: TRANSACTION_CONFIRMATION_PERIOD,
+        },
     )
     .await
     .unwrap();

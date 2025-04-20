@@ -1,24 +1,19 @@
 //! This program allows users to create transaction threads on Solana. Threads are dynamic, long-running
 //! transaction threads that can persist across blocks and even run indefinitely. Developers can use threads
 //! to schedule transactions and automate smart-contracts without relying on centralized infrastructure.
-#[macro_use]
-extern crate version;
-
 pub mod errors;
-pub mod state;
 mod instructions;
+pub mod state;
 
 use anchor_lang::prelude::*;
-use antegen_utils::{
-    thread::{SerializableInstruction, Trigger},
-    CrateInfo,
-};
+use antegen_utils::thread::{SerializableInstruction, Trigger};
 use instructions::*;
 use state::*;
 
 declare_id!("AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1");
 
 pub const TRANSACTION_BASE_FEE_REIMBURSEMENT: u64 = 5_000;
+pub const THREAD_MINIMUM_FEE: u64 = 1_000;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub enum ThreadId {
@@ -66,9 +61,9 @@ impl From<Pubkey> for ThreadId {
 pub mod thread_program {
     use super::*;
 
-    /// Return the crate information via `sol_set_return_data/sol_get_return_data`
-    pub fn get_crate_info(ctx: Context<GetCrateInfo>) -> Result<CrateInfo> {
-        get_crate_info::handler(ctx)
+    /// Advance nonce account for thread.
+    pub fn thread_claim(ctx: Context<ThreadClaim>, hash: String) -> Result<()> {
+        thread_claim::handler(ctx, hash)
     }
 
     /// Executes the next instruction on thread.
@@ -90,22 +85,6 @@ pub mod thread_program {
     /// Closes an existing thread account and returns the lamports to the owner.
     pub fn thread_delete(ctx: Context<ThreadDelete>) -> Result<()> {
         thread_delete::handler(ctx)
-    }
-
-    /// Appends a new instruction to the thread's instruction set.
-    pub fn thread_instruction_add(
-        ctx: Context<ThreadInstructionAdd>,
-        instruction: SerializableInstruction,
-    ) -> Result<()> {
-        thread_instruction_add::handler(ctx, instruction)
-    }
-
-    /// Removes an instruction to the thread's instruction set at the provied index.
-    pub fn thread_instruction_remove(
-        ctx: Context<ThreadInstructionRemove>,
-        index: u64,
-    ) -> Result<()> {
-        thread_instruction_remove::handler(ctx, index)
     }
 
     /// Kicks off a thread if its trigger condition is active.

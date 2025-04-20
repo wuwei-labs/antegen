@@ -21,7 +21,7 @@ name = "antegen_plugin"
 [dependencies]
 solana-cron = { workspace = true }
 antegen-utils = { workspace = true }
-antegen-plugin-utils= { workspace = true }
+antegen-plugin-utils = { workspace = true }
 antegen-thread-program = { workspace = true }
 antegen-network-program = { workspace = true }
 
@@ -31,6 +31,7 @@ agave-geyser-plugin-interface = { workspace = true }
 async_once = { workspace = true }
 async-trait = { workspace = true }
 bincode = { workspace = true }
+base64 = { workspace = true }
 bs58 = { workspace = true }
 bugsnag = { workspace = true }
 chrono = { workspace = true }
@@ -47,6 +48,7 @@ solana-account-decoder = { workspace = true }
 solana-client = { workspace = true }
 solana-logger = { workspace = true }
 solana-program = { workspace = true }
+solana-rpc-client-nonce-utils = { workspace = true }
 solana-quic-client = { workspace = true }
 solana-sdk = { workspace = true }
 solana-transaction-status = { workspace = true }

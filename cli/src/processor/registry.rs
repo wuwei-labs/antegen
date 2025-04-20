@@ -1,10 +1,7 @@
 use anchor_lang::{
     prelude::Pubkey,
-    solana_program::{
-        system_program,
-        instruction::Instruction
-    },
-    InstructionData, ToAccountMetas
+    solana_program::{instruction::Instruction, system_program},
+    InstructionData, ToAccountMetas,
 };
 use antegen_network_program::{state::*, ANTEGEN_SQUADS};
 
@@ -15,11 +12,6 @@ pub fn get(client: &Client) -> Result<(), CliError> {
     let registry: Registry = client
         .get::<Registry>(&registry_pubkey)
         .map_err(|_err| CliError::AccountDataNotParsable(registry_pubkey.to_string()))?;
-
-    let snapshot_pubkey: Pubkey = Snapshot::pubkey(registry.current_epoch);
-    let snapshot: Snapshot = client
-        .get::<Snapshot>(&snapshot_pubkey)
-        .map_err(|_err| CliError::AccountDataNotParsable(snapshot_pubkey.to_string()))?;
 
     let network_fee_pubkey: Pubkey = ANTEGEN_SQUADS;
     let fee_data: Vec<u8> = client
@@ -33,7 +25,6 @@ pub fn get(client: &Client) -> Result<(), CliError> {
 
     println!("{}\n{:#?}", registry_pubkey, registry);
     println!("Balance: {}\n", registry_balance);
-    println!("{}\n{:#?}", snapshot_pubkey, snapshot);
     Ok(())
 }
 
@@ -47,9 +38,9 @@ pub fn reset(client: &Client) -> Result<(), CliError> {
             admin: payer,
             config: Config::pubkey(),
             registry,
-            snapshot: Snapshot::pubkey(0),
             system_program: system_program::ID,
-        }.to_account_metas(Some(false)),
+        }
+        .to_account_metas(Some(false)),
         data: antegen_network_program::instruction::RegistryReset {}.data(),
     };
 
@@ -64,8 +55,9 @@ pub fn unlock(client: &Client) -> Result<(), CliError> {
         accounts: antegen_network_program::accounts::RegistryUnlock {
             admin: client.payer_pubkey(),
             config: Config::pubkey(),
-            registry: Registry::pubkey()
-        }.to_account_metas(Some(false)),
+            registry: Registry::pubkey(),
+        }
+        .to_account_metas(Some(false)),
         data: antegen_network_program::instruction::RegistryUnlock {}.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();

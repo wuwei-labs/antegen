@@ -1,59 +1,23 @@
+use crate::{errors::*, state::*, TRANSACTION_BASE_FEE_REIMBURSEMENT};
 use anchor_lang::{
     prelude::*,
     solana_program::{
         instruction::Instruction,
-        program::{get_return_data, invoke_signed}
+        program::{get_return_data, invoke_signed},
     },
     AnchorDeserialize, InstructionData,
 };
-use antegen_network_program::state::{Pool, Worker, WorkerAccount, WorkerCommission, SEED_WORKER_COMMISSION};
-use antegen_utils::thread::{SerializableInstruction, ThreadResponse, PAYER_PUBKEY};
-use crate::{errors::*, state::*, TRANSACTION_BASE_FEE_REIMBURSEMENT};
-
-/// The ID of the pool workers must be a member of to collect fees.
-const POOL_ID: u64 = 0;
-
-#[derive(Debug, Clone, Copy)]
-struct BalanceSnapshot {
-    signatory: u64,
-    commission: u64,
-}
-
-/// Represents changes in lamport balances between two snapshots
-#[derive(Debug)]
-struct BalanceChanges {
-    signatory: i64,
-    commission: i64,
-}
-
-impl BalanceSnapshot {
-    fn difference(&self, other: &Self) -> BalanceChanges {
-        BalanceChanges {
-            signatory: self.signatory as i64 - other.signatory as i64,
-            commission: self.commission as i64 - other.commission as i64,
-        }
-    }
-}
+use antegen_network_program::{network_program::TOTAL_BASIS_POINTS, state::*, ANTEGEN_SQUADS};
+use antegen_utils::thread::{
+    transfer_lamports, SerializableInstruction, ThreadResponse, PAYER_PUBKEY,
+};
 
 /// Accounts required by the `thread_exec` instruction.
 #[derive(Accounts)]
 pub struct ThreadExec<'info> {
-    /// The worker's fee account.
-    #[account(
-        mut,
-        seeds = [
-            SEED_WORKER_COMMISSION,
-            worker.key().as_ref(),
-        ],
-        bump,
-        seeds::program = antegen_network_program::ID,
-        has_one = worker,
-    )]
-    pub commission: Account<'info, WorkerCommission>,
-
-    /// The active worker pool.
-    #[account(address = Pool::pubkey(POOL_ID))]
-    pub pool: Box<Account<'info, Pool>>,
+    /// CHECKED: with worker account validation
+    #[account(mut)]
+    authority: UncheckedAccount<'info>,
 
     /// The signatory.
     #[account(mut)]
@@ -75,35 +39,26 @@ pub struct ThreadExec<'info> {
     pub thread: Box<Account<'info, Thread>>,
 
     /// The worker.
-    #[account(address = worker.pubkey())]
-    pub worker: Account<'info, Worker>,
-}
+    #[account(
+        has_one = authority,
+        address = builder.pubkey(),
+    )]
+    pub builder: Account<'info, Builder>,
 
-fn transfer_lamports<'info>(
-    from: &AccountInfo<'info>,
-    to: &AccountInfo<'info>,
-    amount: u64,
-) -> Result<()> {
-    **from.try_borrow_mut_lamports()? = from
-        .lamports()
-        .checked_sub(amount)
-        .unwrap();
-    **to.try_borrow_mut_lamports()? = to
-        .to_account_info()
-        .lamports()
-        .checked_add(amount)
-        .unwrap();
-    Ok(())
+    #[account(
+        mut,
+        address = ANTEGEN_SQUADS
+    )]
+    pub network_fee: SystemAccount<'info>,
 }
 
 pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
-    // Get accounts
-    let clock = Clock::get().unwrap();
-    let commission = &mut ctx.accounts.commission;
-    let pool = &ctx.accounts.pool;
-    let signatory = &mut ctx.accounts.signatory;
-    let thread = &mut ctx.accounts.thread;
-    let worker = &ctx.accounts.worker;
+    let clock: Clock = Clock::get().unwrap();
+    let signatory: &mut Signer = &mut ctx.accounts.signatory;
+    let thread: &mut Box<Account<Thread>> = &mut ctx.accounts.thread;
+    let builder: &Account<Builder> = &ctx.accounts.builder;
+    let authority: &mut UncheckedAccount = &mut ctx.accounts.authority;
+    let network_fee: &mut SystemAccount = &mut ctx.accounts.network_fee;
 
     // If the rate limit has been met, exit early.
     if thread.exec_context.unwrap().last_exec_at == clock.slot
@@ -112,10 +67,7 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
         return Err(AntegenThreadError::RateLimitExeceeded.into());
     }
 
-    let initial_balances = BalanceSnapshot {
-        signatory: signatory.lamports(),
-        commission: commission.to_account_info().lamports(),
-    };
+    let initial_signatory_balance: u64 = signatory.lamports();
 
     // Get the instruction to execute.
     // We have already verified that it is not null during account validation.
@@ -126,7 +78,7 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
         }
     }
 
-    let is_delete = instruction.data[..8] == *crate::instruction::ThreadDelete::DISCRIMINATOR;
+    let is_delete: bool = instruction.data[..8] == *crate::instruction::ThreadDelete::DISCRIMINATOR;
     // Invoke the provided instruction.
     invoke_signed(
         &Instruction::from(&*instruction),
@@ -145,7 +97,10 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
     }
 
     // Verify the inner instruction did not write data to the signatory address.
-    require!(signatory.data_is_empty(), AntegenThreadError::UnauthorizedWrite);
+    require!(
+        signatory.data_is_empty(),
+        AntegenThreadError::UnauthorizedWrite
+    );
 
     // Parse the thread response
     let thread_response: Option<ThreadResponse> = match get_return_data() {
@@ -160,8 +115,8 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
     };
 
     // Grab the next instruction from the thread response.
-    let mut close_to = None;
-    let mut next_instruction = None;
+    let mut close_to: Option<Pubkey> = None;
+    let mut next_instruction: Option<SerializableInstruction> = None;
     if let Some(thread_response) = thread_response {
         close_to = thread_response.close_to;
         next_instruction = thread_response.dynamic_instruction;
@@ -187,7 +142,7 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
     }
 
     // If there is no dynamic next instruction, get the next instruction from the instruction set.
-    let mut exec_index = thread.exec_context.unwrap().exec_index;
+    let mut exec_index: u64 = thread.exec_context.unwrap().exec_index;
     if next_instruction.is_none() {
         if let Some(ix) = thread.instructions.get((exec_index + 1) as usize) {
             next_instruction = Some(ix.clone());
@@ -207,12 +162,12 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
                 }
                 .to_account_metas(Some(true)),
                 data: crate::instruction::ThreadDelete {}.data(),
-            }.into(),
+            }
+            .into(),
         );
     } else {
         thread.next_instruction = next_instruction;
-    }
-
+    };
     // Update the exec context.
     thread.exec_context = Some(ExecContext {
         exec_index,
@@ -230,20 +185,16 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
         ..thread.exec_context.unwrap()
     });
 
-    // Calculate actual balance changes from inner instruction
-    let post_inner_balances = BalanceSnapshot {
-        signatory: signatory.lamports(),
-        commission: commission.to_account_info().lamports(),
-    };
-
-    let balance_changes = post_inner_balances.difference(&initial_balances);
     // Calculate reimbursement needs
-    let should_reimburse_transaction = clock.slot > thread.exec_context.unwrap().last_exec_at;
-    let mut required_reimbursement = if balance_changes.signatory.lt(&0) {
-        balance_changes.signatory.unsigned_abs()
+    let should_reimburse_transaction: bool =
+        clock.slot.gt(&thread.exec_context.unwrap().last_exec_at);
+
+    let mut required_reimbursement: u64;
+    if signatory.lamports().lt(&initial_signatory_balance) {
+        required_reimbursement = initial_signatory_balance.saturating_sub(signatory.lamports());
     } else {
-        0
-    };
+        required_reimbursement = 0;
+    }
 
     if should_reimburse_transaction {
         required_reimbursement = required_reimbursement
@@ -260,14 +211,26 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
         )?;
     }
 
-    // Only process worker fees if they haven't already been processed by inner instruction
-    if pool.clone().into_inner().workers.contains(&worker.key())
-        && balance_changes.commission.eq(&0)
-    {
+    if builder.pool.gt(&0) {
+        let fee: u64 = thread.fee;
+        let commission_rate: u64 = builder.commission_rate;
+        let commission_bps: u64 = commission_rate.saturating_mul(100);
+        let commission_amount: u64 = fee
+            .saturating_mul(commission_bps)
+            .saturating_div(TOTAL_BASIS_POINTS);
+        let network_fee_amount: u64 = fee.saturating_sub(commission_amount);
+
         transfer_lamports(
             &thread.to_account_info(),
-            &commission.to_account_info(),
-            thread.fee,
+            &authority.to_account_info(),
+            commission_amount,
+        )?;
+
+        // Transfer network fee
+        transfer_lamports(
+            &thread.to_account_info(),
+            &network_fee.to_account_info(),
+            network_fee_amount,
         )?;
     }
 

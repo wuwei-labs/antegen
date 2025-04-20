@@ -1,42 +1,39 @@
+use crate::{client::Client, errors::CliError};
 use anchor_lang::{
     solana_program::{instruction::Instruction, system_program},
-    AccountDeserialize,
-    InstructionData,
-    ToAccountMetas
+    InstructionData, ToAccountMetas,
 };
-use antegen_thread_program::state::{SerializableInstruction, Thread, VersionedThread, ThreadSettings, Trigger};
-use antegen_utils::CrateInfo;
-use solana_sdk::{native_token::LAMPORTS_PER_SOL, pubkey::Pubkey};
-use crate::{client::Client, errors::CliError};
-
-pub fn crate_info(client: &Client) -> Result<(), CliError> {
-    let ix = Instruction {
-        program_id: antegen_thread_program::ID,
-        accounts: antegen_thread_program::accounts::GetCrateInfo {
-            system_program: system_program::ID,
-        }.to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::GetCrateInfo {}.data(),
-    };
-    let crate_info: CrateInfo = client.get_return_data(ix).unwrap();
-    println!("{:#?}", crate_info);
-    Ok(())
-}
+use antegen_network_program::state::Config;
+use antegen_thread_program::state::{SerializableInstruction, Thread, ThreadSettings, Trigger};
+use solana_sdk::{
+    native_token::LAMPORTS_PER_SOL,
+    pubkey::Pubkey,
+    signature::Keypair,
+    signer::Signer,
+    sysvar::{recent_blockhashes, rent},
+};
 
 pub fn create(
     client: &Client,
     id: String,
     instructions: Vec<SerializableInstruction>,
-    trigger: Trigger
+    trigger: Trigger,
 ) -> Result<(), CliError> {
     let thread_pubkey = Thread::pubkey(client.payer_pubkey(), id.clone().into_bytes());
+    let nonce_keypair = Keypair::new();
+
     let ix = Instruction {
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadCreate {
             authority: client.payer_pubkey(),
             payer: client.payer_pubkey(),
+            thread: thread_pubkey,
+            nonce_account: nonce_keypair.pubkey(),
+            recent_blockhashes: recent_blockhashes::ID,
+            rent: rent::ID,
             system_program: system_program::ID,
-            thread: thread_pubkey
-        }.to_account_metas(Some(false)),
+        }
+        .to_account_metas(Some(false)),
         data: antegen_thread_program::instruction::ThreadCreate {
             amount: LAMPORTS_PER_SOL,
             id: id.into(),
@@ -45,101 +42,11 @@ pub fn create(
         }
         .data(),
     };
-    client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
-    get(client, thread_pubkey)?;
-    Ok(())
-}
-
-pub fn close_test(
-    client: &Client
-) -> Result<(), CliError> {
-    let base_thread_id = "close-test";
-
-    // Derive the PDA for state
-    let (thread_id, _bump) = Pubkey::find_program_address(
-        &[
-            b"thread",
-            base_thread_id.as_bytes()
-        ],
-        &antegen_test_program::ID
-    );
-
-    let close_ix = Instruction {
-        program_id: antegen_test_program::ID,
-        accounts: antegen_test_program::accounts::CloseTo {
-            to: client.payer_pubkey()
-        }.to_account_metas(Some(true)),
-        data: antegen_test_program::instruction::CloseTo {}.data(),
-    };
-
-    let instructions = vec![close_ix.into()];
-    let trigger = Trigger::Cron {
-        schedule: "0 * * * * * *".to_string(),
-        skippable: true,
-    };
-
-    let thread_pubkey = Thread::pubkey(client.payer_pubkey(), thread_id);
-    let thread_ix = Instruction {
-        program_id: antegen_thread_program::ID,
-        accounts: antegen_thread_program::accounts::ThreadCreate {
-            authority: client.payer_pubkey(),
-            payer: client.payer_pubkey(),
-            system_program: system_program::ID,
-            thread: thread_pubkey
-        }.to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::ThreadCreate {
-            amount: LAMPORTS_PER_SOL,
-            id: thread_id.into(),
-            instructions,
-            trigger,
-        }.data(),
-    };
-
-    client.send_and_confirm(&[thread_ix], &[client.payer()]).unwrap();
-    get(client, thread_pubkey)?;
-    Ok(())
-}
-
-pub fn memo_test(
-    client: &Client,
-    id: Option<String>,
-    schedule: Option<String>,
-    skippable: Option<bool>,
-) -> Result<(), CliError> {
-    let cluster_url = client.client.url();
-    if !cluster_url.contains("localhost") && !cluster_url.contains("127.0.0.1") {
-        return Err(CliError::FailedLocalnet(
-            "This command is for testing on localnet (localhost)".to_string()
-        ));
-    }
-
-    let thread_id = id.unwrap_or_else(|| "memo-test".to_string());
-    let thread_pubkey = Thread::pubkey(client.payer_pubkey(), thread_id.clone().into_bytes());
-
-    // Airdrop 1 SOL to the thread for rent
     client
-        .airdrop(&thread_pubkey, LAMPORTS_PER_SOL)
-        .map_err(|e| CliError::Custom(format!("airdrop to thread failed: {}", e)))?;
-    println!("Airdropped 1 SOL to thread: {}", thread_pubkey);
-
-    let memo_ix = Instruction {
-        program_id: spl_memo::id(),
-        data: "Hello, Thread!".as_bytes().to_vec(),
-        accounts: vec![]
-    };
-
-    let instructions = vec![memo_ix.into()];
-    let trigger = Trigger::Cron {
-        schedule: schedule.unwrap_or_else(|| "*/10 * * * * * *".to_string()),
-        skippable: skippable.unwrap_or_default(),
-    };
-
-    create(
-        client,
-        thread_id,
-        instructions,
-        trigger
-    )
+        .send_and_confirm(&[ix], &[client.payer(), &nonce_keypair])
+        .unwrap();
+    get(client, thread_pubkey)?;
+    Ok(())
 }
 
 pub fn delete(client: &Client, address: Pubkey) -> Result<(), CliError> {
@@ -149,8 +56,9 @@ pub fn delete(client: &Client, address: Pubkey) -> Result<(), CliError> {
             authority: client.payer_pubkey(),
             close_to: client.payer_pubkey(),
             thread: address,
-        }.to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::ThreadDelete { }.data(),
+        }
+        .to_account_metas(Some(false)),
+        data: antegen_thread_program::instruction::ThreadDelete {}.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
     Ok(())
@@ -158,7 +66,7 @@ pub fn delete(client: &Client, address: Pubkey) -> Result<(), CliError> {
 
 pub fn get(client: &Client, address: Pubkey) -> Result<(), CliError> {
     let data = client.get_account_data(&address).unwrap();
-    let thread = VersionedThread::try_deserialize(&mut data.as_slice()).unwrap();
+    let thread = Thread::try_from(data).unwrap();
     println!("Address: {}\n{:#?}", address, thread);
     Ok(())
 }
@@ -170,7 +78,8 @@ pub fn pause(client: &Client, id: String) -> Result<(), CliError> {
         accounts: antegen_thread_program::accounts::ThreadPause {
             authority: client.payer_pubkey(),
             thread: thread_pubkey,
-        }.to_account_metas(Some(false)),
+        }
+        .to_account_metas(Some(false)),
         data: antegen_thread_program::instruction::ThreadPause {}.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
@@ -184,8 +93,9 @@ pub fn resume(client: &Client, id: String) -> Result<(), CliError> {
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadResume {
             authority: client.payer_pubkey(),
-            thread: thread_pubkey
-        }.to_account_metas(Some(false)),
+            thread: thread_pubkey,
+        }
+        .to_account_metas(Some(false)),
         data: antegen_thread_program::instruction::ThreadResume {}.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
@@ -199,8 +109,9 @@ pub fn reset(client: &Client, id: String) -> Result<(), CliError> {
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadReset {
             authority: client.payer_pubkey(),
-            thread: thread_pubkey
-        }.to_account_metas(Some(false)),
+            thread: thread_pubkey,
+        }
+        .to_account_metas(Some(false)),
         data: antegen_thread_program::instruction::ThreadReset {}.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
@@ -225,7 +136,6 @@ pub fn update(
     };
     let settings = ThreadSettings {
         fee: None,
-        instructions: None,
         name: None,
         rate_limit,
         trigger,
@@ -234,9 +144,10 @@ pub fn update(
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadUpdate {
             authority: client.payer_pubkey(),
-            system_program: system_program::ID,
-            thread: thread_pubkey
-        }.to_account_metas(Some(false)),
+            config: Config::pubkey(),
+            thread: thread_pubkey,
+        }
+        .to_account_metas(Some(false)),
         data: antegen_thread_program::instruction::ThreadUpdate { settings }.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();

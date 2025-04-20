@@ -1,50 +1,35 @@
 use {
-  crate::state::*,
-  anchor_lang::{prelude::*, solana_program::system_program},
+    crate::state::*,
+    anchor_lang::{prelude::*, solana_program::system_program},
 };
-use std::mem::size_of;
 
 #[derive(Accounts)]
 pub struct RegistryReset<'info> {
-  #[account(mut)]
-  pub admin: Signer<'info>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
 
-  #[account(
-      address = Config::pubkey(), 
-      has_one = admin
-  )]
-  pub config: Account<'info, Config>,
+    #[account(
+      has_one = admin,
+      seeds = [SEED_CONFIG],
+      bump = config.bump,
+    )]
+    pub config: Account<'info, Config>,
 
-  #[account(
+    #[account(
       mut,
-      address = Registry::pubkey()
-  )]
-  pub registry: Account<'info, Registry>,
+      seeds = [SEED_REGISTRY],
+      bump = registry.bump,
+    )]
+    pub registry: Account<'info, Registry>,
 
-  #[account(
-      init_if_needed,
-      seeds = [
-          SEED_SNAPSHOT,
-          (0 as u64).to_be_bytes().as_ref(),
-      ],
-      bump,
-      payer = admin,
-      space = 8 + size_of::<Snapshot>(),
-  )]
-  pub snapshot: Account<'info, Snapshot>,
-
-  #[account(address = system_program::ID)]
-  pub system_program: Program<'info, System>,
+    #[account(address = system_program::ID)]
+    pub system_program: Program<'info, System>,
 }
 
 pub fn handler(ctx: Context<RegistryReset>) -> Result<()> {
-  // Get accounts
-  let registry: &mut Account<Registry> = &mut ctx.accounts.registry;
-  let snapshot: &mut Account<Snapshot> = &mut ctx.accounts.snapshot;
+    let registry: &mut Account<Registry> = &mut ctx.accounts.registry;
 
-  // Reset accounts to their initial state
-  registry.reset()?;
-  snapshot.init(0)?;
-
-  Ok(())
+    // Reset accounts to their initial state
+    registry.reset()?;
+    Ok(())
 }

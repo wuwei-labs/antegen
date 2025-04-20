@@ -18,13 +18,13 @@ pub struct ThreadWithdraw<'info> {
     /// The thread to be.
     #[account(
         mut,
+        has_one = authority,
         seeds = [
             SEED_THREAD,
             thread.authority.as_ref(),
             thread.id.as_slice(),
         ],
         bump = thread.bump,
-        has_one = authority,
     )]
     pub thread: Account<'info, Thread>,
 }
@@ -48,16 +48,6 @@ pub fn handler(ctx: Context<ThreadWithdraw>, amount: u64) -> Result<()> {
     );
 
     // Withdraw balance from thread to the pay_to account
-    **thread.to_account_info().try_borrow_mut_lamports()? = thread
-        .to_account_info()
-        .lamports()
-        .checked_sub(amount)
-        .unwrap();
-    **pay_to.to_account_info().try_borrow_mut_lamports()? = pay_to
-        .to_account_info()
-        .lamports()
-        .checked_add(amount)
-        .unwrap();
-
+    transfer_lamports(&thread.to_account_info(), &pay_to.to_account_info(), amount)?;
     Ok(())
 }

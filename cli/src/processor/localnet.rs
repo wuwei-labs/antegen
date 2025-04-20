@@ -1,33 +1,19 @@
 #[allow(deprecated)]
 use {
     crate::{
-        client::Client,
-        config::CliConfig,
-        deps,
-        errors::CliError,
-        parser::ProgramInfo,
-        print::print_style,
-        print_status
-    },
-    anyhow::{
-        Context,
-        Result,
+        client::Client, config::CliConfig, deps, errors::CliError, parser::ProgramInfo,
+        print::print_style, print_status,
     },
     antegen_utils::explorer::Explorer,
+    anyhow::{Context, Result},
     solana_sdk::{
         commitment_config::CommitmentConfig,
         native_token::LAMPORTS_PER_SOL,
         pubkey::Pubkey,
-        signature::{
-            read_keypair_file,
-            Signer,
-        },
+        signature::{read_keypair_file, Signer},
     },
     std::fs,
-    std::process::{
-        Command,
-        Stdio
-    },
+    std::process::{Command, Stdio},
 };
 
 pub fn start(
@@ -44,7 +30,7 @@ pub fn start(
     config.dev = dev;
 
     if dev {
-        std::env::set_var("RUST_LOG", "antegen_plugin=debug");
+        std::env::set_var("RUST_LOG", "antegen_plugin=debug,solana_validator=debug,solana_runtime=debug,solana_transaction_status=debug,solana_ledger=debug");
     }
 
     deps::download_deps(
@@ -61,17 +47,17 @@ pub fn start(
     // Start the validator
     start_test_validator(
         config,
-        program_infos, 
+        program_infos,
         clone_addresses,
-        trailing_args,  // Pass trailing args to validator
+        trailing_args, // Pass trailing args to validator
     )?;
 
     wait_for_validator(client, 10)?;
 
     // Initialize Antegen
     super::network::initialize(client)?;
-    super::network::create_threads(client, LAMPORTS_PER_SOL)?;
     register_worker(client, config)?;
+    super::network::create_threads(client, LAMPORTS_PER_SOL)?;
 
     Ok(())
 }
@@ -91,9 +77,8 @@ fn register_worker(client: &Client, config: &CliConfig) -> Result<()> {
         .airdrop(&signatory.pubkey(), LAMPORTS_PER_SOL)
         .context("airdrop to signatory failed")?;
     super::worker::create(client, signatory, true).context("worker::create failed")?;
-
-    let worker_info = super::worker::_get(client, 0);
-    print_status!("Worker   👷", "{}", explorer.account(worker_info?.worker_pubkey));
+    let builder_info = super::worker::_get(client, 1);
+    print_status!("Builder   👷", "{}", explorer.account(builder_info?.pubkey));
     Ok(())
 }
 
@@ -115,7 +100,7 @@ fn start_test_validator(
     config: &CliConfig,
     program_infos: Vec<ProgramInfo>,
     clone_addresses: Vec<Pubkey>,
-    trailing_args: Vec<String>
+    trailing_args: Vec<String>,
 ) -> Result<()> {
     let path = config.active_runtime("solana-test-validator").to_owned();
     let duration = chrono::Duration::hours(2);
@@ -126,8 +111,9 @@ fn start_test_validator(
     if trailing_args.contains(&"--help".to_string()) || trailing_args.contains(&"-h".to_string()) {
         let mut help_cmd = Command::new(&path);
         help_cmd.arg("--help");
-        
-        let status = help_cmd.status()
+
+        let status = help_cmd
+            .status()
             .context("Failed to execute solana-test-validator --help")?;
         std::process::exit(status.code().unwrap_or(1));
     }
@@ -142,7 +128,7 @@ fn start_test_validator(
     cmd.arg(format!("{}h", duration.num_hours()))
         .arg(&path)
         .arg("--reset")
-        .arg("--log")  // Enable logging
+        .arg("--log") // Enable logging
         .bpf_program(config, antegen_network_program::ID, "network")
         .bpf_program(config, antegen_thread_program::ID, "thread")
         .bpf_program(config, antegen_test_program::ID, "test")
@@ -161,9 +147,17 @@ fn start_test_validator(
     // Detach the process
     std::mem::forget(process);
 
-    print_status!("Running  🏃", "Solana Validator with Antegen {}", env!("CARGO_PKG_VERSION").to_owned());
+    print_status!(
+        "Running  🏃",
+        "Solana Validator with Antegen {}",
+        env!("CARGO_PKG_VERSION").to_owned()
+    );
     print_status!("Explorer 🔍", "{}", explorer.base());
-    print_status!("Timeout  ⏰", "Validator will automatically stop at {}", end_time.format("%Y-%m-%d %H:%M:%S"));
+    print_status!(
+        "Timeout  ⏰",
+        "Validator will automatically stop at {}",
+        end_time.format("%Y-%m-%d %H:%M:%S")
+    );
 
     Ok(())
 }

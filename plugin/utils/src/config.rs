@@ -1,11 +1,8 @@
 use {
-    serde::{
-        Serialize,
-        Deserialize
-    },
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         GeyserPluginError, Result as PluginResult,
     },
+    serde::{Deserialize, Serialize},
     std::{fs::File, path::Path},
 };
 
@@ -19,7 +16,7 @@ pub struct PluginConfig {
     pub libpath: Option<String>,
     pub thread_count: usize,
     pub transaction_timeout_threshold: u64,
-    pub worker_id: u64,
+    pub builder_id: u32,
 }
 
 impl Default for PluginConfig {
@@ -29,7 +26,7 @@ impl Default for PluginConfig {
             libpath: None,
             transaction_timeout_threshold: DEFAULT_TRANSACTION_TIMEOUT_THRESHOLD,
             thread_count: DEFAULT_THREAD_COUNT,
-            worker_id: 0,
+            builder_id: 1,
         }
     }
 }
