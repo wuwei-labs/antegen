@@ -1,6 +1,6 @@
 use antegen_network_program::state::MAX_COMMISSION_RATE;
-use clap::{value_parser, Arg, ArgAction, ArgGroup, Command};
 use antegen_thread_program::state::{SerializableInstruction, Trigger};
+use clap::{value_parser, Arg, ArgAction, ArgGroup, Command};
 use solana_sdk::{pubkey::Pubkey, signature::Keypair};
 
 use crate::parser::ProgramInfo;
@@ -12,11 +12,8 @@ pub enum CliCommand {
         schedule: String,
     },
     NetworkInitialize {},
-    NetworkThreadCreate { amount: u64 },
     NetworkConfigSet {
         admin: Option<Pubkey>,
-        epoch_thread: Option<Pubkey>,
-        hasher_thread: Option<Pubkey>,
         output_format: Option<String>,
     },
     NetworkConfigGet,
@@ -30,30 +27,14 @@ pub enum CliCommand {
         trailing_args: Vec<String>,
     },
     PoolGet {
-        id: u64,
+        id: u8,
     },
     PoolList {},
-    PoolUpdate {
-        id: u64,
-        size: u64,
-    },
-    PoolRotate {
-        id: u64,
-    },
-    // TODO Rename to Version. Use flags to filter by program.
-    //      Default to listing all deployed program versions on the user's configured cluster.
-    ThreadCrateInfo,
     ThreadCreate {
         id: String,
         kickoff_instruction: SerializableInstruction,
         trigger: Trigger,
     },
-    ThreadMemoTest {  // New command for testing
-        id: Option<String>,
-        schedule: Option<String>,
-        skippable: Option<bool>,
-    },
-    ThreadCloseTest {},
     ThreadDelete {
         id: Option<String>,
         address: Option<Pubkey>,
@@ -87,10 +68,10 @@ pub enum CliCommand {
         signatory: Keypair,
     },
     WorkerGet {
-        id: u64,
+        id: u32,
     },
     WorkerUpdate {
-        id: u64,
+        id: u32,
         commission_rate: Option<u64>,
         signatory: Option<Keypair>,
     },
@@ -370,35 +351,6 @@ pub fn app() -> Command {
                                 .args(&["account", "cron", "immediate"])
                                 .required(true),
                         ),
-                )
-                .subcommand(
-                    Command::new("memo-test")
-                        .about("Create a test thread (localnet only)")
-                        .arg(
-                            Arg::new("id")
-                                .short('i')
-                                .long("id")
-                                .required(false)
-                                .help("Thread identifier, required to do multiples (default: memo-test")
-                        )
-                        .arg(
-                            Arg::new("schedule")
-                                .long("schedule")
-                                .required(false)
-                                .help("Cron schedule (default: */10 * * * * * *)")
-                        )
-                        .arg(
-                            Arg::new("skippable")
-                                .long("skippable")
-                                .required(false)
-                                .action(ArgAction::SetTrue)
-                                .default_value("false")
-                                .help("Whether to skip missed triggers")
-                        )
-                )
-                .subcommand(
-                    Command::new("close-test")
-                        .about("Create a test thread (localnet only)")
                 )
                 .subcommand(
                     Command::new("delete")

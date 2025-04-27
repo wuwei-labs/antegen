@@ -1,15 +1,10 @@
 use {
     crate::{
-        config::PluginConfig,
-        events::AccountUpdateEvent,
-        executors::Executors,
+        config::PluginConfig, events::AccountUpdateEvent, executors::Executors,
         observers::Observers,
     },
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        GeyserPlugin,
-        ReplicaAccountInfo,
-        ReplicaAccountInfoVersions,
-        Result as PluginResult,
+        GeyserPlugin, ReplicaAccountInfo, ReplicaAccountInfoVersions, Result as PluginResult,
         SlotStatus,
     },
     log::info,
@@ -44,7 +39,8 @@ impl GeyserPlugin for AntegenPlugin {
     fn on_load(&mut self, config_file: &str, is_reload: bool) -> PluginResult<()> {
         solana_logger::setup_with_default("info");
         info!(
-            "antegen-plugin crate-info - geyser_interface_version: {}, rustc: {}",
+            "antegen-plugin v{} - geyser_interface_version: {}, rustc: {}",
+            env!("CARGO_PKG_VERSION"),
             env!("GEYSER_INTERFACE_VERSION"),
             env!("RUSTC_VERSION")
         );

@@ -8,8 +8,8 @@ pub struct ConfigUpdate<'info> {
 
     #[account(
         mut,
+        has_one = admin,
         address = Config::pubkey(),
-        has_one = admin
     )]
     pub config: Account<'info, Config>,
 }

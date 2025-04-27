@@ -1,9 +1,5 @@
 use anchor_lang::{prelude::Clock, AccountDeserialize};
-use antegen_utils::ProgramLogsDeserializable;
-use solana_client::{
-    client_error, rpc_client::RpcClient,
-    rpc_response::RpcSimulateTransactionResult,
-};
+use solana_client::{client_error, rpc_client::RpcClient};
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     hash::Hash,
@@ -20,7 +16,6 @@ use std::{
     str::FromStr,
 };
 use thiserror::Error;
-
 
 #[derive(Debug, Error)]
 pub enum ClientError {
@@ -58,30 +53,6 @@ impl Client {
         bincode::deserialize::<Clock>(&clock_data).map_err(|_| ClientError::DeserializationError)
     }
 
-    pub fn get_return_data<T: ProgramLogsDeserializable>(
-        &self,
-        ix: Instruction,
-    ) -> ClientResult<T> {
-        // let result = self.simulate_transaction(&[ix.clone()], &[self.payer()])?;
-
-        // After we can upgrade our Solana SDK version to 1.14.0 we can just use the below code:
-        // let data = result.logs;
-        // Ok(T::try_from_slice(logs, &data)
-        //     .map_err(|_| ClientError::DeserializationError)?)
-        //
-        // But for the time being since RpcSimulateTransactionResult.data does not exist yet,
-        // We can only parse the logs ourselves to find the return_data
-        let logs = self.get_instruction_logs(ix.clone())?;
-        T::try_from_program_logs(logs, &ix.program_id)
-            .map_err(|_| ClientError::DeserializationError)
-    }
-
-    pub fn get_instruction_logs(&self, ix: Instruction) -> ClientResult<Vec<String>> {
-        let result = self.simulate_transaction(&[ix], &[self.payer()])?;
-        let logs = result.logs.ok_or(ClientError::DeserializationError)?;
-        Ok(logs)
-    }
-
     pub fn payer(&self) -> &Keypair {
         &self.payer
     }
@@ -110,20 +81,6 @@ impl Client {
         Ok(self.send_and_confirm_transaction(&tx)?)
     }
 
-    pub fn simulate_transaction<T: Signers>(
-        &self,
-        ixs: &[Instruction],
-        signers: &T,
-    ) -> ClientResult<RpcSimulateTransactionResult> {
-        let tx = self.transaction(ixs, signers)?;
-        let result = self.client.simulate_transaction(&tx)?;
-        if result.value.err.is_some() {
-            Err(ClientError::DeserializationError)
-        } else {
-            Ok(result.value)
-        }
-    }
-
     fn transaction<T: Signers>(
         &self,
         ixs: &[Instruction],
@@ -134,7 +91,6 @@ impl Client {
         Ok(tx)
     }
 }
-
 
 impl Debug for Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -155,4 +111,3 @@ impl DerefMut for Client {
         &mut self.client
     }
 }
-

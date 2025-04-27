@@ -79,6 +79,7 @@ chrono = { version = "0.4.39", default-features = false, features = ["alloc"] }
 clap = { version = "4.5.23", features = ["derive"] }
 dirs-next = { version = "2.0.0" }
 futures = { version = "0.3.31" }
+getrandom = { version = "0.2.2", features = ["custom"] }
 indicatif = { version = "0.17" }
 lazy_static = { version = "1.5.0" }
 log = { version = "0.4" }
@@ -99,6 +100,7 @@ solana-cli-config = { version = "=2.1.21" }
 solana-client = { version = "=2.1.21" }
 solana-logger = { version = "=2.1.21" }
 solana-program = { version = "=2.1.21" }
+solana-rpc-client-nonce-utils = { version = "=2.1.21" }
 solana-quic-client = { version = "=2.1.21" }
 solana-sdk = { version = "=2.1.21" }
 solana-transaction-status = { version = "=2.1.21" }

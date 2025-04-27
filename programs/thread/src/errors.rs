@@ -13,9 +13,13 @@ pub enum AntegenThreadError {
     #[msg("The thread is in an invalid state")]
     InvalidThreadState,
 
-    /// TThe provided trigger variant is invalid.
+    /// The provided trigger variant is invalid.
     #[msg("The trigger variant cannot be changed")]
     InvalidTriggerVariant,
+
+    /// TThe provided nonce account is invalid.
+    #[msg("The trigger variant cannot be changed")]
+    InvalidNonceAccount,
 
     /// Thrown if a exec instruction is invalid because the thread's trigger condition has not been met.
     #[msg("The trigger condition has not been activated")]
@@ -52,5 +56,4 @@ pub enum AntegenThreadError {
 
     #[msg("MathOverflow")]
     MathOverflow,
-
 }

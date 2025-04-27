@@ -1,7 +1,7 @@
 mod config;
 mod crontab;
-mod network;
 mod localnet;
+mod network;
 mod pool;
 mod registry;
 // mod snapshot;
@@ -9,16 +9,13 @@ mod thread;
 mod worker;
 
 use {
+    crate::{
+        cli::CliCommand, client::Client, config::CliConfig, errors::CliError,
+        processor::thread::parse_pubkey_from_id_or_address,
+    },
     anyhow::Result,
     clap::ArgMatches,
     solana_sdk::signature::read_keypair_file,
-    crate::{
-        client::Client,
-        cli::CliCommand,
-        config::CliConfig,
-        errors::CliError,
-        processor::thread::parse_pubkey_from_id_or_address,
-    },
 };
 
 pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
@@ -45,14 +42,11 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
     match command {
         CliCommand::Crontab { schedule } => crontab::get(&client, schedule),
         CliCommand::NetworkInitialize {} => network::initialize(&client),
-        CliCommand::NetworkThreadCreate { amount } => network::create_threads(&client, amount),
         CliCommand::NetworkConfigGet => config::get(&client),
         CliCommand::NetworkConfigSet {
             admin,
-            epoch_thread,
-            hasher_thread,
-            output_format
-        } => config::set(&client, admin, epoch_thread, hasher_thread, output_format),
+            output_format,
+        } => config::set(&client, admin, output_format),
         CliCommand::Localnet {
             clone_addresses,
             program_infos,
@@ -70,28 +64,19 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             solana_archive,
             antegen_archive,
             dev,
-            trailing_args
+            trailing_args,
         ),
         CliCommand::PoolGet { id } => pool::get(&client, id),
         CliCommand::PoolList {} => pool::list(&client),
-        CliCommand::PoolUpdate { id, size } => pool::update(&client, id, size),
-        CliCommand::PoolRotate { id} => pool::rotate(&client, id),
-        CliCommand::ThreadCrateInfo {} => thread::crate_info(&client),
         CliCommand::ThreadCreate {
             id,
             kickoff_instruction,
             trigger,
         } => thread::create(&client, id, vec![kickoff_instruction], trigger),
-        CliCommand::ThreadMemoTest { 
-            id,
-            schedule,
-            skippable
-        } => thread::memo_test(&client, id, schedule, skippable),
-        CliCommand::ThreadCloseTest {} => thread::close_test(&client),
         CliCommand::ThreadDelete { id, address } => {
             let pubkey = parse_pubkey_from_id_or_address(client.payer_pubkey(), id, address)?;
             thread::delete(&client, pubkey)
-        },
+        }
         CliCommand::ThreadPause { id } => thread::pause(&client, id),
         CliCommand::ThreadResume { id } => thread::resume(&client, id),
         CliCommand::ThreadReset { id } => thread::reset(&client, id),
@@ -108,8 +93,12 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
         CliCommand::RegistryReset => registry::reset(&client),
         CliCommand::RegistryUnlock => registry::unlock(&client),
         CliCommand::WorkerCreate { signatory } => worker::create(&client, signatory, false),
-        CliCommand::WorkerGet { id} => worker::get(&client, id),
-        CliCommand::WorkerUpdate { id, commission_rate, signatory } => worker::update(&client, id, commission_rate, signatory),
+        CliCommand::WorkerGet { id } => worker::get(&client, id),
+        CliCommand::WorkerUpdate {
+            id,
+            commission_rate,
+            signatory,
+        } => worker::update(&client, id, commission_rate, signatory),
     }
 }
 

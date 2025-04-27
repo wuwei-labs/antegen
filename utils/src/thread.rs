@@ -82,9 +82,9 @@ pub enum Trigger {
     Pyth {
         /// The address of the price feed to monitor.
         price_feed: Pubkey,
-        /// The equality operator (gte or lte) used to compare prices. 
+        /// The equality operator (gte or lte) used to compare prices.
         equality: Equality,
-        /// The limit price to compare the Pyth feed to. 
+        /// The limit price to compare the Pyth feed to.
         limit: i64,
     },
 }
@@ -226,4 +226,14 @@ impl SerializableAccount {
             is_writable: false,
         }
     }
+}
+
+pub fn transfer_lamports<'info>(
+    from: &AccountInfo<'info>,
+    to: &AccountInfo<'info>,
+    amount: u64,
+) -> Result<()> {
+    **from.try_borrow_mut_lamports()? = from.lamports().checked_sub(amount).unwrap();
+    **to.try_borrow_mut_lamports()? = to.to_account_info().lamports().checked_add(amount).unwrap();
+    Ok(())
 }

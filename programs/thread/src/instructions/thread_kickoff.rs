@@ -5,8 +5,13 @@ use std::{
 };
 
 use crate::{errors::*, state::*, TRANSACTION_BASE_FEE_REIMBURSEMENT};
-use anchor_lang::prelude::*;
-use antegen_network_program::state::{Worker, WorkerAccount};
+use anchor_lang::{
+    prelude::*,
+    solana_program::{
+        program::invoke, system_instruction::authorize_nonce_account, system_program,
+    },
+};
+use antegen_network_program::state::*;
 use antegen_utils::thread::Trigger;
 use chrono::{DateTime, Utc};
 use pyth_sdk_solana::state::SolanaPriceAccount;
@@ -15,11 +20,9 @@ use solana_cron::Schedule;
 /// Accounts required by the `thread_kickoff` instruction.
 #[derive(Accounts)]
 pub struct ThreadKickoff<'info> {
-    /// The signatory.
     #[account(mut)]
     pub signatory: Signer<'info>,
 
-    /// The thread to kickoff.
     #[account(
         mut,
         seeds = [
@@ -33,16 +36,64 @@ pub struct ThreadKickoff<'info> {
     )]
     pub thread: Box<Account<'info, Thread>>,
 
-    /// The worker.
-    #[account(address = worker.pubkey())]
-    pub worker: Account<'info, Worker>,
+    #[account(address = builder.pubkey())]
+    pub builder: Account<'info, Builder>,
+
+    /// CHECK: For new nonce authority
+    #[account(
+        mut,
+        address = thread.nonce_account,
+    )]
+    pub nonce_account: UncheckedAccount<'info>,
+
+    #[account(address = system_program::ID)]
+    pub system_program: Program<'info, System>,
+}
+
+fn next_timestamp(after: i64, schedule: String) -> Option<i64> {
+    Schedule::from_str(&schedule)
+        .unwrap()
+        .next_after(&DateTime::<Utc>::from_timestamp(after, 0).unwrap())
+        .take()
+        .map(|datetime| datetime.timestamp())
 }
 
 pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
-    // Get accounts.
-    let signatory = &mut ctx.accounts.signatory;
-    let thread = &mut ctx.accounts.thread;
-    let clock = Clock::get().unwrap();
+    let signatory: &mut Signer = &mut ctx.accounts.signatory;
+    let thread: &mut Box<Account<Thread>> = &mut ctx.accounts.thread;
+    let nonce_account: &UncheckedAccount = &ctx.accounts.nonce_account;
+    let system_program: &Program<System> = &ctx.accounts.system_program;
+
+    let clock: Clock = Clock::get().unwrap();
+
+    // Handle thread migration if needed
+    // This will detect and migrate legacy threads with no version field
+    // or threads with old versions to the current version
+    thread.migrate_if_needed()?;
+
+    invoke(
+        &authorize_nonce_account(&nonce_account.key(), &signatory.key(), &thread.key()),
+        &[
+            nonce_account.to_account_info(),
+            thread.to_account_info(),
+            system_program.to_account_info(),
+        ],
+    )?;
+
+    // Get the current started at for last started at value
+    let last_started_at = thread
+        .exec_context
+        .as_ref()
+        .map(|ctx| match ctx.trigger_context {
+            TriggerContext::Cron { started_at } => started_at,
+            TriggerContext::Timestamp { started_at } => started_at,
+            TriggerContext::Slot { started_at } => started_at as i64,
+            TriggerContext::Epoch { started_at } => started_at as i64,
+            TriggerContext::Pyth { price } => price,
+            TriggerContext::Account { data_hash } => data_hash as i64,
+            _ => thread.created_at.unix_timestamp,
+        })
+        .unwrap_or(thread.created_at.unix_timestamp);
 
     match thread.trigger.clone() {
         Trigger::Account {
@@ -95,7 +146,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                         execs_since_reimbursement: 0,
                         execs_since_slot: 0,
                         last_exec_at: clock.slot,
-                        last_exec_timestamp: clock.unix_timestamp,
+                        last_exec_timestamp: last_started_at,
                         trigger_context: TriggerContext::Account { data_hash },
                     })
                 }
@@ -105,17 +156,8 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
             schedule,
             skippable,
         } => {
-            // Get the reference timestamp for calculating the thread's scheduled target timestamp.
-            let reference_timestamp = match thread.exec_context.clone() {
-                None => thread.created_at.unix_timestamp,
-                Some(exec_context) => match exec_context.trigger_context {
-                    TriggerContext::Cron { started_at } => started_at,
-                    _ => return Err(AntegenThreadError::InvalidThreadState.into()),
-                },
-            };
-            msg!("reference_timestamp: {}", reference_timestamp);
             // Verify the current timestamp is greater than or equal to the threshold timestamp.
-            let threshold_timestamp = next_timestamp(reference_timestamp, schedule.clone())
+            let threshold_timestamp = next_timestamp(last_started_at, schedule.clone())
                 .ok_or(AntegenThreadError::TriggerConditionFailed)?;
             require!(
                 clock.unix_timestamp.ge(&threshold_timestamp),
@@ -136,7 +178,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 execs_since_reimbursement: 0,
                 execs_since_slot: 0,
                 last_exec_at: clock.slot,
-                last_exec_timestamp: reference_timestamp,
+                last_exec_timestamp: last_started_at,
                 trigger_context: TriggerContext::Cron { started_at },
             });
         }
@@ -151,7 +193,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 execs_since_reimbursement: 0,
                 execs_since_slot: 0,
                 last_exec_at: clock.slot,
-                last_exec_timestamp: clock.unix_timestamp,
+                last_exec_timestamp: last_started_at,
                 trigger_context: TriggerContext::Now,
             });
         }
@@ -165,7 +207,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 execs_since_reimbursement: 0,
                 execs_since_slot: 0,
                 last_exec_at: clock.slot,
-                last_exec_timestamp: clock.unix_timestamp,
+                last_exec_timestamp: last_started_at,
                 trigger_context: TriggerContext::Slot { started_at: slot },
             });
         }
@@ -179,7 +221,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 execs_since_reimbursement: 0,
                 execs_since_slot: 0,
                 last_exec_at: clock.slot,
-                last_exec_timestamp: clock.unix_timestamp,
+                last_exec_timestamp: last_started_at,
                 trigger_context: TriggerContext::Epoch { started_at: epoch },
             })
         }
@@ -193,7 +235,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 execs_since_reimbursement: 0,
                 execs_since_slot: 0,
                 last_exec_at: clock.slot,
-                last_exec_timestamp: clock.unix_timestamp,
+                last_exec_timestamp: last_started_at,
                 trigger_context: TriggerContext::Timestamp {
                     started_at: unix_ts,
                 },
@@ -232,7 +274,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                                 execs_since_reimbursement: 0,
                                 execs_since_slot: 0,
                                 last_exec_at: clock.slot,
-                                last_exec_timestamp: clock.unix_timestamp,
+                                last_exec_timestamp: last_started_at,
                                 trigger_context: TriggerContext::Pyth {
                                     price: current_price.price,
                                 },
@@ -248,7 +290,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                                 execs_since_reimbursement: 0,
                                 execs_since_slot: 0,
                                 last_exec_at: clock.slot,
-                                last_exec_timestamp: clock.unix_timestamp,
+                                last_exec_timestamp: last_started_at,
                                 trigger_context: TriggerContext::Pyth {
                                     price: current_price.price,
                                 },
@@ -265,28 +307,10 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
         thread.next_instruction = Some(kickoff_instruction.clone());
     }
 
-    // Now that the account is sufficiently funded, reallocate
-    thread.realloc()?;
-
     // Reimburse signatory for transaction fee.
-    **thread.to_account_info().try_borrow_mut_lamports()? = thread
-        .to_account_info()
-        .lamports()
-        .checked_sub(TRANSACTION_BASE_FEE_REIMBURSEMENT)
-        .unwrap();
-    **signatory.to_account_info().try_borrow_mut_lamports()? = signatory
-        .to_account_info()
-        .lamports()
-        .checked_add(TRANSACTION_BASE_FEE_REIMBURSEMENT)
-        .unwrap();
-
-    Ok(())
-}
-
-fn next_timestamp(after: i64, schedule: String) -> Option<i64> {
-    Schedule::from_str(&schedule)
-        .unwrap()
-        .next_after(&DateTime::<Utc>::from_timestamp(after, 0).unwrap())
-        .take()
-        .map(|datetime| datetime.timestamp())
+    transfer_lamports(
+        &thread.to_account_info(),
+        &signatory.to_account_info(),
+        TRANSACTION_BASE_FEE_REIMBURSEMENT,
+    )
 }

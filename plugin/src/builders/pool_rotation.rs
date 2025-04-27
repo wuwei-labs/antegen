@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
-use anchor_lang::{
-    solana_program::instruction::Instruction,
-    InstructionData, ToAccountMetas
-};
-use antegen_network_program::state::{Config, Pool, Registry, Worker};
+use anchor_lang::{solana_program::instruction::Instruction, InstructionData, ToAccountMetas};
+use antegen_network_program::state::*;
 use log::info;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{signature::Keypair, signer::Signer, transaction::Transaction};
@@ -15,33 +12,27 @@ pub async fn build_pool_rotation_tx<'a>(
     client: Arc<RpcClient>,
     keypair: &Keypair,
     pool_position: PoolPosition,
-    registry: Registry,
-    worker_id: u64,
+    builder_id: u32,
 ) -> Option<Transaction> {
-    info!("current_position: {:?}",
-        pool_position.current_position,
-    );
-
-    // Exit early if the rotator is not intialized
-    if registry.nonce == 0 {
-        return None;
-    }
+    info!("current_position: {:?}", pool_position.current_position,);
 
     // Exit early if the worker is already in the pool.
     if pool_position.current_position.is_some() {
         return None;
     }
 
+    let pool_id: u8 = 0 as u8;
     // Build rotation instruction to rotate the worker into pool 0.
     let ix = Instruction {
         program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::PoolRotate {
+        accounts: antegen_network_program::accounts::BuilderAdd {
             config: Config::pubkey(),
-            pool: Pool::pubkey(0),
+            pool: Pool::pubkey(pool_id),
             signatory: keypair.pubkey(),
-            worker: Worker::pubkey(worker_id),
-        }.to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::PoolRotate {}.data(),
+            builder: Builder::pubkey(builder_id),
+        }
+        .to_account_metas(Some(false)),
+        data: antegen_network_program::instruction::BuilderAdd {}.data(),
     };
 
     // Build and sign tx.

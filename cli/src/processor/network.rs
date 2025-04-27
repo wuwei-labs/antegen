@@ -1,29 +1,18 @@
 use {
-    crate::{
-        client::Client,
-        errors::CliError,
-        print::print_style,
-        print_status
-    }, anchor_lang::{
+    crate::{client::Client, errors::CliError, print::print_style, print_status},
+    anchor_lang::{
         prelude::Pubkey,
-        solana_program::{
-            instruction::Instruction,
-            system_program,
-        },
-        InstructionData,
-        ToAccountMetas,
-    }, antegen_network_program::{
-        state::{
-            Config,
-            Pool,
-            Registry,
-            Snapshot
-        },
-        ANTEGEN_SQUADS, EPOCH_THREAD_ID, HASHER_THREAD_ID
+        solana_program::{instruction::Instruction, system_program},
+        InstructionData, ToAccountMetas,
     },
-    antegen_thread_program::state::{Thread, Trigger},
-    antegen_utils::explorer::Explorer,
-    anyhow::Context
+    antegen_network_program::state::{Config, Pool, Registry},
+    antegen_thread_program::state::Thread,
+    antegen_utils::{explorer::Explorer, thread::Trigger},
+    solana_sdk::{
+        signature::Keypair,
+        signer::Signer,
+        sysvar::{recent_blockhashes, rent},
+    },
 };
 
 pub fn initialize(client: &Client) -> Result<(), CliError> {
@@ -35,9 +24,9 @@ pub fn initialize(client: &Client) -> Result<(), CliError> {
             payer,
             config: Config::pubkey(),
             registry,
-            snapshot: Snapshot::pubkey(0),
             system_program: system_program::ID,
-        }.to_account_metas(Some(false)),
+        }
+        .to_account_metas(Some(false)),
         data: antegen_network_program::instruction::Initialize {}.data(),
     };
     let ix_b: Instruction = Instruction {
@@ -47,7 +36,8 @@ pub fn initialize(client: &Client) -> Result<(), CliError> {
             pool: Pool::pubkey(0),
             registry: Registry::pubkey(),
             system_program: system_program::ID,
-        }.to_account_metas(Some(false)),
+        }
+        .to_account_metas(Some(false)),
         data: antegen_network_program::instruction::PoolCreate {}.data(),
     };
 
@@ -59,137 +49,53 @@ pub fn initialize(client: &Client) -> Result<(), CliError> {
 }
 
 pub fn create_threads(client: &Client, amount: u64) -> Result<(), CliError> {
-    #[cfg(feature = "mainnet")]
-    let cron_epoch: &str = "@hourly";
-
-    #[cfg(not(feature = "mainnet"))]
-    let cron_epoch: &str = "0 * * * * * *";
-
-    #[cfg(feature = "mainnet")]
-    let cron_hasher: &str = "0 */15 * * * * *";
-
-    #[cfg(not(feature = "mainnet"))]
-    let cron_hasher: &str = "*/15 * * * * * *";
-
+    let cron_schedule: &str = "*/15 * * * * * *";
     let explorer: Explorer = Explorer::from(client.client.url());
     let payer: Pubkey = client.payer_pubkey();
-    let admin: Pubkey = if cfg!(feature = "mainnet") {
-        ANTEGEN_SQUADS
-    } else {
-        payer
+    let thread_pubkey: Pubkey = Thread::pubkey(payer, "memo-test".to_string());
+    let nonce_keypair: Keypair = Keypair::new();
+
+    let memo_ix = Instruction {
+        program_id: spl_memo::id(),
+        data: "Hello, Thread!".as_bytes().to_vec(),
+        accounts: vec![],
     };
 
-    // Create epoch thread.
-    let epoch_thread_pubkey: Pubkey = Thread::pubkey(admin, EPOCH_THREAD_ID);
-    let ix_a1: Instruction = Instruction {
-        program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::DistributeFeesJob {
-            config: Config::pubkey(),
-            registry: Registry::pubkey(),
-            thread: epoch_thread_pubkey,
-        }.to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::DistributeFeesJob {}.data(),
-    };
-
-    let ix_a2: Instruction = Instruction {
-        program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::TakeSnapshotJob {
-            config: Config::pubkey(),
-            registry: Registry::pubkey(),
-            thread: epoch_thread_pubkey,
-        }.to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::TakeSnapshotJob {}.data(),
-    };
-
-    let ix_a3: Instruction = Instruction {
-        program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::EpochCutover {
-            config: Config::pubkey(),
-            registry: Registry::pubkey(),
-            thread: epoch_thread_pubkey,
-        }.to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::IncrementEpoch {}.data(),
-    };
-
-    let ix_a4: Instruction = Instruction {
-        program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::DeleteSnapshotJob {
-            config: Config::pubkey(),
-            registry: Registry::pubkey(),
-            thread: epoch_thread_pubkey,
-        }.to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::DeleteSnapshotJob {}.data(),
-    };
-
-    let ix_a: Instruction = Instruction {
+    let ix: Instruction = Instruction {
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadCreate {
-            authority: admin,
+            authority: payer,
             payer,
+            thread: thread_pubkey,
+            nonce_account: nonce_keypair.pubkey(),
+            recent_blockhashes: recent_blockhashes::ID,
+            rent: rent::ID,
             system_program: system_program::ID,
-            thread: epoch_thread_pubkey,
-        }.to_account_metas(Some(false)),
+        }
+        .to_account_metas(Some(false)),
         data: antegen_thread_program::instruction::ThreadCreate {
             amount,
-            id: EPOCH_THREAD_ID.into(),
-            instructions: vec![
-                ix_a1.into(),
-                ix_a2.into(),
-                ix_a3.into(),
-                ix_a4.into(),
-            ],
+            id: "memo-test".into(),
+            instructions: vec![memo_ix.into()],
             trigger: Trigger::Cron {
-                schedule: cron_epoch.into(),
+                schedule: cron_schedule.into(),
                 skippable: true,
             },
-        }.data(),
-    };
-
-    // Create hasher thread.
-    let hasher_thread_pubkey: Pubkey = Thread::pubkey(admin, HASHER_THREAD_ID);
-    let ix_b1: Instruction = Instruction {
-        program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::RegistryNonceHash {
-            config: Config::pubkey(),
-            registry: Registry::pubkey(),
-            thread: hasher_thread_pubkey,
-        }.to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::RegistryNonceHash {}.data(),
-    };
-
-    let ix_b: Instruction = Instruction {
-        program_id: antegen_thread_program::ID,
-        accounts: antegen_thread_program::accounts::ThreadCreate {
-            authority: admin,
-            payer,
-            system_program: system_program::ID,
-            thread: hasher_thread_pubkey,
-        }.to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::ThreadCreate {
-            amount,
-            id: HASHER_THREAD_ID.into(),
-            instructions: vec![
-                ix_b1.into(),
-            ],
-            trigger: Trigger::Cron {
-                schedule: cron_hasher.into(),
-                skippable: true,
-            },
-        }.data(),
+        }
+        .data(),
     };
 
     client
-        .send_and_confirm(&vec![ix_a], &[client.payer()])
-        .context(format!(
-            "Failed to create thread: {} or update config",
-            EPOCH_THREAD_ID,
-        ))?;
-    client
-        .send_and_confirm(&vec![ix_b], &[client.payer()])
-        .context(format!("Failed to create thread: {}", HASHER_THREAD_ID))?;
+        .send_and_confirm(&vec![ix], &[client.payer(), &nonce_keypair])
+        .map_err(|err| {
+            eprintln!("Transaction error details: {:?}", err);
+            anyhow::anyhow!("Failed to create thread: memo-test: {}", err)
+        })?;
 
-    print_status!("Epoch    🧵", "{}", explorer.account(epoch_thread_pubkey.to_string()));
-    print_status!("Hasher   🧵", "{}", explorer.account(hasher_thread_pubkey.to_string()));
-    print_status!("Admin    👔", "{}", explorer.account(admin.to_string()));
+    print_status!(
+        "Memo Test  🧵",
+        "{}",
+        explorer.account(thread_pubkey.to_string())
+    );
     Ok(())
 }

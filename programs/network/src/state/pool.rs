@@ -1,48 +1,67 @@
+use crate::errors::AntegenNetworkError;
+use crate::*;
 use anchor_lang::{prelude::*, AnchorDeserialize};
 
 pub const SEED_POOL: &[u8] = b"pool";
-
-const DEFAULT_POOL_SIZE: u64 = 1;
+pub const POOL_SIZE_MAX: u8 = 10;
 
 /**
  * Pool
  */
 
 #[account]
-#[derive(Debug)]
+#[derive(Debug, InitSpace)]
 pub struct Pool {
-    pub id: u64,
-    pub size: u64,
-    pub workers: Vec<Pubkey>,
+    pub version: u64,
+    pub bump: u8,
+    pub id: u8,
+    pub locked: bool,
+    #[max_len(POOL_SIZE_MAX)]
+    pub builders: Vec<Pubkey>,
+}
+
+#[derive(Accounts)]
+#[instruction(pool_id: u8)]
+pub struct MigratePool<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [
+            SEED_POOL,
+            pool_id.to_be_bytes().as_ref(),
+        ],
+        constraint = config.admin == authority.key(),
+        realloc = 8 + Pool::INIT_SPACE,
+        realloc::payer = authority,
+        realloc::zero = false,
+        bump,
+    )]
+    pub pool: Account<'info, Pool>,
+
+    #[account(
+        seeds = [SEED_CONFIG],
+        bump = config.bump,
+    )]
+    pub config: Account<'info, Config>,
+    pub system_program: Program<'info, System>,
 }
 
 impl Pool {
-    pub fn pubkey(id: u64) -> Pubkey {
+    pub fn pubkey(id: u8) -> Pubkey {
         Pubkey::find_program_address(&[SEED_POOL, id.to_be_bytes().as_ref()], &crate::ID).0
     }
 }
 
 /**
- * PoolSettings
- */
-
-#[derive(AnchorSerialize, AnchorDeserialize)]
-pub struct PoolSettings {
-    pub size: u64,
-}
-
-/**
  * PoolAccount
  */
-
 pub trait PoolAccount {
     fn pubkey(&self) -> Pubkey;
-
-    fn init(&mut self, id: u64) -> Result<()>;
-
-    fn rotate(&mut self, worker: Pubkey) -> Result<()>;
-
-    fn update(&mut self, settings: &PoolSettings) -> Result<()>;
+    fn init(&mut self, id: u8) -> Result<()>;
+    fn add_builder(&mut self, builder: Pubkey) -> Result<()>;
+    fn remove_builder(&mut self, builder: Pubkey) -> Result<()>;
 }
 
 impl PoolAccount for Account<'_, Pool> {
@@ -50,28 +69,38 @@ impl PoolAccount for Account<'_, Pool> {
         Pool::pubkey(self.id)
     }
 
-    fn init(&mut self, id: u64) -> Result<()> {
+    fn init(&mut self, id: u8) -> Result<()> {
         self.id = id;
-        self.size = DEFAULT_POOL_SIZE;
-        self.workers = Vec::new();
+        self.builders = Vec::new();
         Ok(())
     }
 
-    fn rotate(&mut self, worker: Pubkey) -> Result<()> {
-        let old_size = self.size;
-        // Push new worker into the pool.
-        self.workers.push(worker);
-        // Drain pool to the configured size limit.
-        self.workers.truncate(old_size as usize);
+    fn add_builder(&mut self, builder: Pubkey) -> Result<()> {
+        // Check if the builder is already in the pool
+        require!(
+            !self.builders.contains(&builder),
+            AntegenNetworkError::BuilderInPool
+        );
+
+        // Check if there's space available based on capacity
+        require!(
+            self.builders.len() < POOL_SIZE_MAX as usize,
+            AntegenNetworkError::PoolFull
+        );
+
+        // Push new builder into the pool.
+        self.builders.push(builder);
         Ok(())
     }
 
-    fn update(&mut self, settings: &PoolSettings) -> Result<()> {
-        let new_size = settings.size;  // Store the size locally first
-        self.size = new_size; 
+    fn remove_builder(&mut self, builder: Pubkey) -> Result<()> {
+        // Check if the builder exists in the pool first
+        require!(
+            self.builders.contains(&builder),
+            AntegenNetworkError::BuilderNotInPool
+        );
 
-        // Drain pool to the configured size limit.
-        self.workers.truncate(new_size as usize);
+        self.builders.retain(|w| w != &builder);
         Ok(())
     }
 }
