@@ -1,16 +1,9 @@
 use agave_geyser_plugin_interface::geyser_plugin_interface::{
     GeyserPluginError, ReplicaAccountInfo,
 };
-use anchor_lang::{prelude::AccountInfo, AccountDeserialize};
+use anchor_lang::AccountDeserialize;
 use antegen_thread_program::state::Thread;
-use pyth_sdk_solana::{state::SolanaPriceAccount, PriceFeed};
 use solana_program::{clock::Clock, pubkey::Pubkey, sysvar};
-use static_pubkey::static_pubkey;
-
-static PYTH_ORACLE_PROGRAM_ID_MAINNET: Pubkey =
-    static_pubkey!("FsJ3A3u2vn5cTVofAjvy6y5kwABJAqYWpe4975bi2epH");
-static PYTH_ORACLE_PROGRAM_ID_DEVNET: Pubkey =
-    static_pubkey!("gSbePebfvPy7tRqimPoVecS2UsBvYv46ynrzWocc92s");
 
 use log::info;
 
@@ -18,7 +11,6 @@ use log::info;
 pub enum AccountUpdateEvent {
     Clock { clock: Clock },
     Thread { thread: Thread },
-    PriceFeed { price_feed: PriceFeed },
 }
 
 impl TryFrom<&mut ReplicaAccountInfo<'_>> for AccountUpdateEvent {
@@ -55,29 +47,6 @@ impl TryFrom<&mut ReplicaAccountInfo<'_>> for AccountUpdateEvent {
                     });
                 }
             };
-        }
-
-        // If the account belongs to Pyth, attempt to parse it.
-        if owner_pubkey == PYTH_ORACLE_PROGRAM_ID_MAINNET
-            || owner_pubkey == PYTH_ORACLE_PROGRAM_ID_DEVNET
-        {
-            let data = &mut account_info.data.to_vec();
-            let acc_info = AccountInfo::new(
-                &account_pubkey,
-                false,
-                false,
-                &mut account_info.lamports,
-                data,
-                &owner_pubkey,
-                account_info.executable,
-                account_info.rent_epoch,
-            );
-            let price_feed = SolanaPriceAccount::account_info_to_feed(&acc_info).map_err(|_| {
-                GeyserPluginError::AccountsUpdateError {
-                    msg: "Failed to parse Pyth price account".into(),
-                }
-            })?;
-            return Ok(AccountUpdateEvent::PriceFeed { price_feed });
         }
 
         Err(GeyserPluginError::AccountsUpdateError {

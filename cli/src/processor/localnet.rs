@@ -52,7 +52,7 @@ pub fn start(
         trailing_args, // Pass trailing args to validator
     )?;
 
-    wait_for_validator(client, 10)?;
+    wait_for_validator(client, 120)?;
 
     // Initialize Antegen
     super::network::initialize(client)?;

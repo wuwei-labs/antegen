@@ -1,18 +1,25 @@
-pub mod thread;
+pub mod plugin;
 
 use std::{fmt::Debug, sync::Arc};
 
-use thread::ThreadObserver;
+use agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPluginError;
+use plugin::ThreadObserver;
 
 pub struct Observers {
-    pub thread: Arc<ThreadObserver>,
+    pub plugin: Arc<ThreadObserver>,
 }
 
 impl Observers {
-    pub fn new() -> Self {
-        Observers {
-            thread: Arc::new(ThreadObserver::new()),
-        }
+    // Make this return a Result that can be propagated up
+    pub async fn new() -> Result<Self, GeyserPluginError> {
+        // Await the future and handle any errors
+        let thread_observer = ThreadObserver::new().await.map_err(|e| {
+            GeyserPluginError::Custom(format!("Failed to create ThreadObserver: {}", e).into())
+        })?;
+
+        Ok(Observers {
+            plugin: Arc::new(thread_observer),
+        })
     }
 }
 

@@ -28,6 +28,7 @@ antegen-network-program = { workspace = true }
 anchor-lang = { workspace = true }
 
 agave-geyser-plugin-interface = { workspace = true }
+async-nats = { workspace = true }
 async_once = { workspace = true }
 async-trait = { workspace = true }
 bincode = { workspace = true }
@@ -37,6 +38,7 @@ bugsnag = { workspace = true }
 chrono = { workspace = true }
 futures = { workspace = true }
 lazy_static = { workspace = true }
+libsql = { workspace = true }
 log = { workspace = true }
 prost = { workspace = true }
 pyth-sdk-solana = { workspace = true }
@@ -53,6 +55,7 @@ solana-quic-client = { workspace = true }
 solana-sdk = { workspace = true }
 solana-transaction-status = { workspace = true }
 static-pubkey = { workspace = true }
+tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 

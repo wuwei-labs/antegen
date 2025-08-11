@@ -2,6 +2,10 @@ pub use antegen_thread_program::errors;
 pub use antegen_thread_program::program::ThreadProgram;
 pub use antegen_thread_program::ID;
 
+pub mod seeds {
+    pub use antegen_thread_program::state::SEED_THREAD;
+}
+
 pub mod state {
     pub use antegen_thread_program::state::{
         ClockData, ExecContext, SerializableAccount, SerializableInstruction, Thread,
@@ -10,8 +14,8 @@ pub mod state {
 }
 
 pub mod utils {
-    pub use antegen_thread_program::state::PAYER_PUBKEY;
     pub use antegen_thread_program::state::Equality;
+    pub use antegen_thread_program::state::PAYER_PUBKEY;
 }
 
 pub mod cpi {
@@ -34,7 +38,7 @@ pub mod cpi {
     }
 
     pub fn thread_delete<'info>(
-        ctx: CpiContext<'_, '_, '_, 'info, ThreadDelete<'info>>
+        ctx: CpiContext<'_, '_, '_, 'info, ThreadDelete<'info>>,
     ) -> Result<()> {
         antegen_thread_program::cpi::thread_delete(ctx)
     }

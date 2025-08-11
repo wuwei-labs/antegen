@@ -77,16 +77,6 @@ pub enum Trigger {
 
     /// Allows a thread to be kicked off according to a unix timestamp.
     Timestamp { unix_ts: i64 },
-
-    /// Allows a thread to be kicked off according to a Pyth price feed movement.
-    Pyth {
-        /// The address of the price feed to monitor.
-        price_feed: Pubkey,
-        /// The equality operator (gte or lte) used to compare prices.
-        equality: Equality,
-        /// The limit price to compare the Pyth feed to.
-        limit: i64,
-    },
 }
 
 /// Operators for describing how to compare two values to one another.  

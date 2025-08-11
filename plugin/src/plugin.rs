@@ -1,32 +1,32 @@
 use {
-    crate::{
-        config::PluginConfig, events::AccountUpdateEvent, executors::Executors,
-        observers::Observers,
-    },
+    crate::{config::PluginConfig, events::AccountUpdateEvent, observers::Observers},
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        GeyserPlugin, ReplicaAccountInfo, ReplicaAccountInfoVersions, Result as PluginResult,
-        SlotStatus,
+        GeyserPlugin, GeyserPluginError, ReplicaAccountInfo, ReplicaAccountInfoVersions,
+        Result as PluginResult, SlotStatus,
     },
-    log::info,
+    log::{error, info},
     solana_program::pubkey::Pubkey,
     std::{fmt::Debug, sync::Arc},
     tokio::runtime::{Builder, Runtime},
 };
 
 pub struct AntegenPlugin {
-    pub inner: Arc<Inner>,
+    pub inner: Option<Arc<Inner>>,
 }
 
 impl Debug for AntegenPlugin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "inner: {:?}", self.inner)
+        match &self.inner {
+            Some(inner) => write!(f, "inner: {:?}", inner),
+            None => write!(f, "inner: None"),
+        }
     }
 }
 
 #[derive(Debug)]
 pub struct Inner {
     pub config: PluginConfig,
-    pub executors: Arc<Executors>,
+    // pub executors: Arc<Executors>,
     pub observers: Arc<Observers>,
     pub runtime: Arc<Runtime>,
 }
@@ -48,11 +48,39 @@ impl GeyserPlugin for AntegenPlugin {
         info!("Loading snapshot..., isReload: {}", is_reload);
         let config = PluginConfig::read_from(config_file)?;
         println!("config_file: {:?}", config_file);
-        *self = AntegenPlugin::new_from_config(config);
+
+        // Create runtime here
+        let runtime = build_runtime(config.clone());
+
+        // Initialize observers asynchronously
+        let observers_result = runtime.block_on(async {
+            match Observers::new().await {
+                // Note the .await here
+                Ok(observers) => Ok(observers),
+                Err(e) => {
+                    let error_msg = format!("Failed to create observers: {}", e);
+                    error!("{}", error_msg);
+                    Err(GeyserPluginError::Custom(error_msg.into()))
+                }
+            }
+        })?;
+
+        // let executors = Arc::new(Executors::new(config.clone()));
+
+        self.inner = Some(Arc::new(Inner {
+            config,
+            // executors,
+            observers: Arc::new(observers_result),
+            runtime,
+        }));
+
         Ok(())
     }
 
-    fn on_unload(&mut self) {}
+    fn on_unload(&mut self) {
+        // Clean up resources if needed
+        self.inner = None;
+    }
 
     fn update_account(
         &self,
@@ -60,6 +88,11 @@ impl GeyserPlugin for AntegenPlugin {
         slot: u64,
         is_startup: bool,
     ) -> PluginResult<()> {
+        let inner = match &self.inner {
+            Some(inner) => inner.clone(),
+            None => return Ok(()), // No-op if not initialized
+        };
+
         // Parse account info.
         let account_info = &mut match account {
             ReplicaAccountInfoVersions::V0_0_1(account_info) => ReplicaAccountInfo {
@@ -94,13 +127,13 @@ impl GeyserPlugin for AntegenPlugin {
         let event = AccountUpdateEvent::try_from(account_info);
 
         // Process event on tokio task.
-        self.inner.clone().spawn(|inner| async move {
+        inner.clone().spawn(|inner| async move {
             // Send all account updates to the thread observer for account listeners.
             // Only process account updates if we're past the startup phase.
             if !is_startup {
                 inner
                     .observers
-                    .thread
+                    .plugin
                     .clone()
                     .observe_account(account_pubkey, slot)
                     .await?;
@@ -112,7 +145,7 @@ impl GeyserPlugin for AntegenPlugin {
                     AccountUpdateEvent::Clock { clock } => {
                         inner
                             .observers
-                            .thread
+                            .plugin
                             .clone()
                             .observe_clock(clock)
                             .await
@@ -121,18 +154,9 @@ impl GeyserPlugin for AntegenPlugin {
                     AccountUpdateEvent::Thread { thread } => {
                         inner
                             .observers
-                            .thread
+                            .plugin
                             .clone()
                             .observe_thread(thread, account_pubkey, slot)
-                            .await
-                            .ok();
-                    }
-                    AccountUpdateEvent::PriceFeed { price_feed } => {
-                        inner
-                            .observers
-                            .thread
-                            .clone()
-                            .observe_price_feed(account_pubkey, price_feed)
                             .await
                             .ok();
                     }
@@ -154,15 +178,16 @@ impl GeyserPlugin for AntegenPlugin {
         _parent: Option<u64>,
         status: &SlotStatus,
     ) -> PluginResult<()> {
+        let inner = match &self.inner {
+            Some(inner) => inner.clone(),
+            None => return Ok(()), // No-op if not initialized
+        };
+
         let status = status.clone();
-        self.inner.clone().spawn(|inner| async move {
+        inner.clone().spawn(|inner| async move {
             match status {
                 SlotStatus::Processed => {
-                    inner
-                        .executors
-                        .clone()
-                        .process_slot(inner.observers.clone(), slot, inner.runtime.clone())
-                        .await?;
+                    inner.observers.plugin.clone().process_slot(slot).await?;
                 }
                 _ => (),
             }
@@ -196,24 +221,14 @@ impl GeyserPlugin for AntegenPlugin {
 }
 
 impl AntegenPlugin {
-    fn new_from_config(config: PluginConfig) -> Self {
-        let runtime = build_runtime(config.clone());
-        let observers = Arc::new(Observers::new());
-        let executors = Arc::new(Executors::new(config.clone()));
-        Self {
-            inner: Arc::new(Inner {
-                config,
-                executors,
-                observers,
-                runtime,
-            }),
-        }
+    pub fn new() -> Self {
+        Self { inner: None }
     }
 }
 
 impl Default for AntegenPlugin {
     fn default() -> Self {
-        Self::new_from_config(PluginConfig::default())
+        Self::new()
     }
 }
 

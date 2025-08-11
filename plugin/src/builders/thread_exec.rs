@@ -111,6 +111,15 @@ pub async fn build_thread_exec_tx(
             builder.authority,
         )
     } else {
+        match client.get_balance(&signatory_pubkey).await {
+            Ok(balance) => {
+                info!("Signatory balance: {}", balance);
+            }
+            Err(err) => {
+                info!("Failed to get signatory balance: {:?}", err);
+            }
+        }
+
         build_kickoff_ix(
             thread.clone(),
             thread_pubkey,
@@ -358,6 +367,13 @@ fn build_kickoff_ix(
     signatory_pubkey: Pubkey,
     builder_pubkey: Pubkey,
 ) -> Instruction {
+    info!("--- build_kickoff_ix input parameters ---");
+    info!("thread: {:?}", thread);
+    info!("thread_pubkey: {}", thread_pubkey);
+    info!("signatory_pubkey: {}", signatory_pubkey);
+    info!("builder_pubkey: {}", builder_pubkey);
+    info!("--------------------------------------");
+
     let mut kickoff_ix = Instruction {
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadKickoff {
@@ -379,15 +395,6 @@ fn build_kickoff_ix(
             size: _,
         } => kickoff_ix.accounts.push(AccountMeta {
             pubkey: address,
-            is_signer: false,
-            is_writable: false,
-        }),
-        Trigger::Pyth {
-            price_feed,
-            equality: _,
-            limit: _,
-        } => kickoff_ix.accounts.push(AccountMeta {
-            pubkey: price_feed,
             is_signer: false,
             is_writable: false,
         }),
