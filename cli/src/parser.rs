@@ -1,6 +1,7 @@
 use std::{convert::TryFrom, fs, path::PathBuf, str::FromStr};
 
-use antegen_thread_program::state::{SerializableAccount, SerializableInstruction, Trigger};
+use antegen_thread_program::state::Trigger;
+use antegen_utils::thread::{SerializableAccountMeta, SerializableInstruction};
 use clap::ArgMatches;
 use serde::{Deserialize as JsonDeserialize, Serialize as JsonSerialize};
 use solana_sdk::{
@@ -19,10 +20,9 @@ impl TryFrom<&ArgMatches> for CliCommand {
             Some(("crontab", matches)) => parse_crontab_command(matches),
             Some(("network", matches)) => parse_network_command(matches),
             Some(("localnet", matches)) => parse_bpf_command(matches),
-            Some(("pool", matches)) => parse_pool_command(matches),
             Some(("thread", matches)) => parse_thread_command(matches),
             Some(("registry", matches)) => parse_registry_command(matches),
-            Some(("worker", matches)) => parse_worker_command(matches),
+            Some(("builder", matches)) => parse_builder_command(matches),
             _ => Err(CliError::CommandNotRecognized(
                 matches.subcommand().unwrap().0.into(),
             )),
@@ -98,16 +98,6 @@ fn parse_crontab_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
 
 fn parse_network_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     match matches.subcommand() {
-        Some(("config", config_matches)) => match config_matches.subcommand() {
-            Some(("set", matches)) => Ok(CliCommand::NetworkConfigSet {
-                admin: parse_pubkey("admin", matches).ok(),
-                output_format: parse_string("output", matches).ok(),
-            }),
-            Some(("get", _)) => Ok(CliCommand::NetworkConfigGet {}),
-            _ => Err(CliError::CommandNotRecognized(
-                matches.subcommand().unwrap().0.into(),
-            )),
-        },
         Some(("initialize", _)) => Ok(CliCommand::NetworkInitialize {}),
         _ => Err(CliError::CommandNotRecognized(
             matches.subcommand().unwrap().0.into(),
@@ -115,23 +105,11 @@ fn parse_network_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     }
 }
 
-fn parse_pool_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
-    match matches.subcommand() {
-        Some(("get", matches)) => Ok(CliCommand::PoolGet {
-            id: parse_u8("id", matches)?,
-        }),
-        Some(("list", _)) => Ok(CliCommand::PoolList {}),
-        _ => Err(CliError::CommandNotRecognized(
-            matches.subcommand().unwrap().0.into(),
-        )),
-    }
-}
 
 fn parse_thread_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     match matches.subcommand() {
         Some(("create", matches)) => Ok(CliCommand::ThreadCreate {
             id: parse_string("id", matches)?,
-            kickoff_instruction: parse_instruction_file("kickoff_instruction", matches)?,
             trigger: parse_trigger(matches)?,
         }),
         Some(("delete", matches)) => Ok(CliCommand::ThreadDelete {
@@ -142,18 +120,11 @@ fn parse_thread_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
             id: parse_string("id", matches).ok(),
             address: parse_pubkey("address", matches).ok(),
         }),
-        Some(("pause", matches)) => Ok(CliCommand::ThreadPause {
-            id: parse_string("id", matches)?,
-        }),
-        Some(("resume", matches)) => Ok(CliCommand::ThreadResume {
-            id: parse_string("id", matches)?,
-        }),
-        Some(("reset", matches)) => Ok(CliCommand::ThreadReset {
+        Some(("toggle", matches)) => Ok(CliCommand::ThreadToggle {
             id: parse_string("id", matches)?,
         }),
         Some(("update", matches)) => Ok(CliCommand::ThreadUpdate {
             id: parse_string("id", matches)?,
-            rate_limit: parse_u64("rate_limit", matches).ok(),
             schedule: parse_string("schedule", matches).ok(),
         }),
         _ => Err(CliError::CommandNotRecognized(
@@ -173,18 +144,24 @@ fn parse_registry_command(matches: &ArgMatches) -> Result<CliCommand, CliError> 
     }
 }
 
-fn parse_worker_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
+fn parse_builder_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     match matches.subcommand() {
-        Some(("create", matches)) => Ok(CliCommand::WorkerCreate {
+        Some(("create", matches)) => Ok(CliCommand::BuilderCreate {
             signatory: parse_keypair_file("signatory_keypair", matches)?,
         }),
-        Some(("get", matches)) => Ok(CliCommand::WorkerGet {
+        Some(("get", matches)) => Ok(CliCommand::BuilderGet {
             id: parse_u32("id", matches)?,
         }),
-        Some(("update", matches)) => Ok(CliCommand::WorkerUpdate {
+        Some(("update", matches)) => Ok(CliCommand::BuilderUpdate {
             id: parse_u32("id", matches)?,
             commission_rate: parse_u64("commission_rate", matches).ok(),
             signatory: parse_keypair_file("signatory_keypair", matches).ok(),
+        }),
+        Some(("activate", matches)) => Ok(CliCommand::BuilderActivate {
+            id: parse_u32("id", matches)?,
+        }),
+        Some(("deactivate", matches)) => Ok(CliCommand::BuilderDeactivate {
+            id: parse_u32("id", matches)?,
         }),
         _ => Err(CliError::CommandNotRecognized(
             matches.subcommand().unwrap().0.into(),
@@ -206,14 +183,15 @@ fn parse_trigger(matches: &ArgMatches) -> Result<Trigger, CliError> {
             schedule: parse_string("cron", matches)?,
             skippable: true,
         });
-    } else if matches.contains_id("now") {
+    } else if matches.contains_id("immediate") {
         return Ok(Trigger::Now);
     }
 
     Err(CliError::BadParameter("trigger".into()))
 }
 
-fn parse_instruction_file(
+// Removed - no longer needed for thread creation
+fn _parse_instruction_file(
     arg: &str,
     matches: &ArgMatches,
 ) -> Result<SerializableInstruction, CliError> {
@@ -248,12 +226,6 @@ pub fn _parse_i64(arg: &str, matches: &ArgMatches) -> Result<i64, CliError> {
         .unwrap())
 }
 
-pub fn parse_u8(arg: &str, matches: &ArgMatches) -> Result<u8, CliError> {
-    Ok(parse_string(arg, matches)?
-        .parse::<u8>()
-        .map_err(|_err| CliError::BadParameter(arg.into()))
-        .unwrap())
-}
 
 pub fn parse_u32(arg: &str, matches: &ArgMatches) -> Result<u32, CliError> {
     Ok(parse_string(arg, matches)?
@@ -288,8 +260,8 @@ impl TryFrom<&JsonInstructionData> for SerializableInstruction {
             accounts: value
                 .accounts
                 .iter()
-                .map(|acc| SerializableAccount::try_from(acc).unwrap())
-                .collect::<Vec<SerializableAccount>>(),
+                .map(|acc| SerializableAccountMeta::try_from(acc).unwrap())
+                .collect::<Vec<SerializableAccountMeta>>(),
             data: value.data.clone(),
         })
     }
@@ -310,11 +282,11 @@ pub struct JsonAccountMetaData {
     pub is_writable: bool,
 }
 
-impl TryFrom<&JsonAccountMetaData> for SerializableAccount {
+impl TryFrom<&JsonAccountMetaData> for SerializableAccountMeta {
     type Error = CliError;
 
     fn try_from(value: &JsonAccountMetaData) -> Result<Self, Self::Error> {
-        Ok(SerializableAccount {
+        Ok(SerializableAccountMeta {
             pubkey: Pubkey::from_str(value.pubkey.as_str())
                 .map_err(|_err| CliError::BadParameter("Could not parse pubkey".into()))?,
             is_signer: value.is_signer,

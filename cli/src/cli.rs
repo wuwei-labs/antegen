@@ -1,5 +1,5 @@
 use antegen_network_program::state::MAX_COMMISSION_RATE;
-use antegen_thread_program::state::{SerializableInstruction, Trigger};
+use antegen_thread_program::state::Trigger;
 use clap::{value_parser, Arg, ArgAction, ArgGroup, Command};
 use solana_sdk::{pubkey::Pubkey, signature::Keypair};
 
@@ -12,11 +12,6 @@ pub enum CliCommand {
         schedule: String,
     },
     NetworkInitialize {},
-    NetworkConfigSet {
-        admin: Option<Pubkey>,
-        output_format: Option<String>,
-    },
-    NetworkConfigGet,
     Localnet {
         force_init: bool,
         clone_addresses: Vec<Pubkey>,
@@ -26,13 +21,8 @@ pub enum CliCommand {
         dev: bool,
         trailing_args: Vec<String>,
     },
-    PoolGet {
-        id: u8,
-    },
-    PoolList {},
     ThreadCreate {
         id: String,
-        kickoff_instruction: SerializableInstruction,
         trigger: Trigger,
     },
     ThreadDelete {
@@ -43,18 +33,11 @@ pub enum CliCommand {
         id: Option<String>,
         address: Option<Pubkey>,
     },
-    ThreadPause {
-        id: String,
-    },
-    ThreadResume {
-        id: String,
-    },
-    ThreadReset {
+    ThreadToggle {
         id: String,
     },
     ThreadUpdate {
         id: String,
-        rate_limit: Option<u64>,
         schedule: Option<String>,
     },
 
@@ -63,17 +46,23 @@ pub enum CliCommand {
     RegistryReset,
     RegistryUnlock,
 
-    // Worker commands
-    WorkerCreate {
+    // Builder commands
+    BuilderCreate {
         signatory: Keypair,
     },
-    WorkerGet {
+    BuilderGet {
         id: u32,
     },
-    WorkerUpdate {
+    BuilderUpdate {
         id: u32,
         commission_rate: Option<u64>,
         signatory: Option<Keypair>,
+    },
+    BuilderActivate {
+        id: u32,
+    },
+    BuilderDeactivate {
+        id: u32,
     },
 }
 
@@ -99,51 +88,6 @@ pub fn app() -> Command {
         .subcommand(
             Command::new("network")
                 .about("Manage the Antegen Network Program")
-                .subcommand(
-                    Command::new("config")
-                    .about("Antegen Network Configuration")
-                    .arg_required_else_help(true)
-                    .subcommand(Command::new("get")
-                        .about("Get current config settings")
-                    )
-                    .subcommand(
-                        Command::new("set")
-                            .about("Set a config setting")
-                            .arg(
-                                Arg::new("admin")
-                                    .long("admin")
-                                    .value_name("ADMIN")
-                                    .num_args(1)
-                            )
-                            .arg(
-                                Arg::new("epoch_thread")
-                                    .long("epoch-thread")
-                                    .short('e')
-                                    .value_name("EPOCH_THREAD")
-                                    .num_args(1)
-                            )
-                            .arg(
-                                Arg::new("hasher_thread")
-                                    .long("hasher-thread")
-                                    .short('h')
-                                    .value_name("HASHER_THREAD")
-                                    .num_args(1)
-                            )
-                            .arg(
-                                Arg::new("output")
-                                    .long("output")
-                                    .short('o')
-                                    .value_name("FORMAT")
-                                    .value_parser(["base58"])
-                                    .help("Output format instead of submitting transaction"),
-                            )
-                            .group(
-                                ArgGroup::new("config_settings")
-                                    .args(&["admin", "epoch_thread", "hasher_thread"])
-                                    .multiple(true),
-                            ),
-                    )
-                )
                 .subcommand(
                     Command::new("initialize")
                         .about("Initialize the Network Program")
@@ -242,59 +186,6 @@ pub fn app() -> Command {
                 )
         )
         .subcommand(
-            Command::new("pool")
-                .about("Manage the Antegen network worker pools")
-                .subcommand(
-                    Command::new("get")
-                        .about("Get a pool")
-                        .arg_required_else_help(true)
-                        .arg(
-                            Arg::new("id")
-                                .index(1)
-                                .value_name("ID")
-                                .num_args(1)
-                                .required(false)
-                                .help("The ID of the pool to lookup"),
-                        ),
-                )
-                .subcommand(Command::new("list").about("List the pools"))
-                .subcommand(
-                    Command::new("update")
-                        .about("Update a pool")
-                        .arg_required_else_help(true)
-                        .arg(
-                            Arg::new("id")
-                                .index(1)
-                                .value_name("ID")
-                                .num_args(1)
-                                .required(false)
-                                .help("The ID of the pool to update"),
-                        )
-                        .arg(
-                            Arg::new("size")
-                                .long("size")
-                                .short('s')
-                                .value_name("SIZE")
-                                .num_args(1)
-                                .required(false)
-                                .help("The size of the pool"),
-                        ),
-                )
-                .subcommand(
-                    Command::new("rotate")
-                        .about("Rotate worker into pool if space is available")
-                        .arg_required_else_help(true)
-                        .arg(
-                            Arg::new("id")
-                                .index(1)
-                                .value_name("ID")
-                                .num_args(1)
-                                .required(false)
-                                .help("The ID of the worker to rotate in"),
-                        )
-                ),
-        )
-        .subcommand(
             Command::new("thread")
                 .about("Manage your transaction threads")
                 .arg_required_else_help(true)
@@ -314,15 +205,6 @@ pub fn app() -> Command {
                                 .num_args(1)
                                 .required(true)
                                 .help("The ID of the thread to be created"),
-                        )
-                        .arg(
-                            Arg::new("kickoff_instruction")
-                                .long("kickoff_instruction")
-                                .short('k')
-                                .value_name("FILEPATH")
-                                .num_args(1)
-                                .required(true)
-                                .help("Filepath to a description of the kickoff instruction"),
                         )
                         .arg(
                             Arg::new("account")
@@ -396,37 +278,17 @@ pub fn app() -> Command {
                         )
                 )
                 .subcommand(
-                    Command::new("pause")
-                        .about("Pause a thread")
+                    Command::new("toggle")
+                        .about("Toggle a thread's pause state")
                         .arg_required_else_help(true)
                         .arg(
                             Arg::new("id")
                                 .index(1)
                                 .value_name("ID")
                                 .num_args(1)
-                                .required(false)
-                                .help("The id of the thread to pause"),
+                                .required(true)
+                                .help("The id of the thread to toggle"),
                         ),
-                )
-                .subcommand(
-                    Command::new("resume").about("Resume a thread").arg(
-                        Arg::new("id")
-                            .index(1)
-                            .value_name("ID")
-                            .num_args(1)
-                            .required(false)
-                            .help("The id of the thread to resume"),
-                    ),
-                )
-                .subcommand(
-                    Command::new("reset").about("Reset a thread").arg(
-                        Arg::new("id")
-                            .index(1)
-                            .required(false)
-                            .value_name("ID")
-                            .num_args(1)
-                            .help("The id of the thread to stop"),
-                    ),
                 )
                 .subcommand(
                     Command::new("update")
@@ -439,17 +301,6 @@ pub fn app() -> Command {
                                 .num_args(1)
                                 .required(false)
                                 .help("The id of the thread to lookup"),
-                        )
-                        .arg(
-                            Arg::new("rate_limit")
-                                .long("rate_limit")
-                                .short('r')
-                                .value_name("RATE_LIMIT")
-                                .num_args(1)
-                                .required(false)
-                                .help(
-                                    "The maximum number of instructions this thread can execute per slot",
-                                ),
                         )
                         .arg(
                             Arg::new("schedule")
@@ -475,43 +326,43 @@ pub fn app() -> Command {
                 .about("Lookup the current Antegen network registry")
         )
         .subcommand(
-            Command::new("worker")
-                .about("Manage your workers")
+            Command::new("builder")
+                .about("Manage your builders")
                 .arg_required_else_help(true)
                 .subcommand(
                     Command::new("create")
-                        .about("Register a new worker with the Antegen network")
+                        .about("Register a new builder with the Antegen network")
                         .arg(
                             Arg::new("signatory_keypair")
                                 .index(1)
                                 .value_name("SIGNATORY_KEYPAIR")
                                 .num_args(1)
                                 .required(true)
-                                .help("Filepath to the worker's signatory keypair"),
+                                .help("Filepath to the builder's signatory keypair"),
                         ),
                 )
                 .subcommand(
                     Command::new("get")
-                        .about("Lookup a worker on the Antegen network")
+                        .about("Lookup a builder on the Antegen network")
                         .arg(
                             Arg::new("id")
                                 .index(1)
                                 .value_name("ID")
                                 .num_args(1)
                                 .required(true)
-                                .help("The ID of the worker to lookup"),
+                                .help("The ID of the builder to lookup"),
                         ),
                 )
                 .subcommand(
                     Command::new("update")
-                        .about("Update a worker")
+                        .about("Update a builder")
                         .arg(
                             Arg::new("id")
                                 .index(1)
                                 .value_name("ID")
                                 .num_args(1)
                                 .required(true)
-                                .help("The ID of the worker to edit"),
+                                .help("The ID of the builder to edit"),
                         )
                         .arg(
                             Arg::new("commission_rate")
@@ -529,7 +380,31 @@ pub fn app() -> Command {
                                 .value_name("SIGNATORY_KEYPAIR")
                                 .num_args(1)
                                 .required(false)
-                                .help("Filepath to the worker's new signatory keypair"),
+                                .help("Filepath to the builder's new signatory keypair"),
+                        ),
+                )
+                .subcommand(
+                    Command::new("activate")
+                        .about("Activate a builder for rotation")
+                        .arg(
+                            Arg::new("id")
+                                .index(1)
+                                .value_name("ID")
+                                .num_args(1)
+                                .required(true)
+                                .help("The ID of the builder to activate"),
+                        ),
+                )
+                .subcommand(
+                    Command::new("deactivate")
+                        .about("Deactivate a builder from rotation")
+                        .arg(
+                            Arg::new("id")
+                                .index(1)
+                                .value_name("ID")
+                                .num_args(1)
+                                .required(true)
+                                .help("The ID of the builder to deactivate"),
                         ),
                 ),
         )

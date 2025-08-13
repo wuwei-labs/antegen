@@ -57,7 +57,7 @@ pub fn start(
     // Initialize Antegen
     super::network::initialize(client)?;
     register_worker(client, config)?;
-    super::network::create_threads(client, LAMPORTS_PER_SOL)?;
+    // Test thread creation has been moved to test suite
 
     Ok(())
 }
@@ -76,8 +76,8 @@ fn register_worker(client: &Client, config: &CliConfig) -> Result<()> {
     client
         .airdrop(&signatory.pubkey(), LAMPORTS_PER_SOL)
         .context("airdrop to signatory failed")?;
-    super::worker::create(client, signatory, true).context("worker::create failed")?;
-    let builder_info = super::worker::_get(client, 1);
+    super::builder::create(client, signatory, true).context("builder::create failed")?;
+    let builder_info = super::builder::_get(client, 1);
     print_status!("Builder   👷", "{}", explorer.account(builder_info?.pubkey));
     Ok(())
 }
@@ -131,7 +131,7 @@ fn start_test_validator(
         .arg("--log") // Enable logging
         .bpf_program(config, antegen_network_program::ID, "network")
         .bpf_program(config, antegen_thread_program::ID, "thread")
-        .bpf_program(config, antegen_test_program::ID, "test")
+        // .bpf_program(config, antegen_test_program::ID, "test")
         .clone_addresses(clone_addresses)
         .add_programs_with_path(program_infos)
         .geyser_plugin_config(config)

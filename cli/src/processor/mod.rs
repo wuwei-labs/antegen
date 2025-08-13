@@ -1,12 +1,10 @@
-mod config;
 mod crontab;
 mod localnet;
 mod network;
-mod pool;
 mod registry;
 // mod snapshot;
+mod builder;
 mod thread;
-mod worker;
 
 use {
     crate::{
@@ -42,11 +40,6 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
     match command {
         CliCommand::Crontab { schedule } => crontab::get(&client, schedule),
         CliCommand::NetworkInitialize {} => network::initialize(&client),
-        CliCommand::NetworkConfigGet => config::get(&client),
-        CliCommand::NetworkConfigSet {
-            admin,
-            output_format,
-        } => config::set(&client, admin, output_format),
         CliCommand::Localnet {
             clone_addresses,
             program_infos,
@@ -66,39 +59,29 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             dev,
             trailing_args,
         ),
-        CliCommand::PoolGet { id } => pool::get(&client, id),
-        CliCommand::PoolList {} => pool::list(&client),
-        CliCommand::ThreadCreate {
-            id,
-            kickoff_instruction,
-            trigger,
-        } => thread::create(&client, id, vec![kickoff_instruction], trigger),
+        CliCommand::ThreadCreate { id, trigger } => thread::create(&client, id, trigger),
         CliCommand::ThreadDelete { id, address } => {
             let pubkey = parse_pubkey_from_id_or_address(client.payer_pubkey(), id, address)?;
             thread::delete(&client, pubkey)
         }
-        CliCommand::ThreadPause { id } => thread::pause(&client, id),
-        CliCommand::ThreadResume { id } => thread::resume(&client, id),
-        CliCommand::ThreadReset { id } => thread::reset(&client, id),
+        CliCommand::ThreadToggle { id } => thread::toggle(&client, id),
         CliCommand::ThreadGet { id, address } => {
             let pubkey = parse_pubkey_from_id_or_address(client.payer_pubkey(), id, address)?;
             thread::get(&client, pubkey)
         }
-        CliCommand::ThreadUpdate {
-            id,
-            rate_limit,
-            schedule,
-        } => thread::update(&client, id, rate_limit, schedule),
+        CliCommand::ThreadUpdate { id, schedule } => thread::update(&client, id, schedule),
         CliCommand::RegistryGet => registry::get(&client),
         CliCommand::RegistryReset => registry::reset(&client),
         CliCommand::RegistryUnlock => registry::unlock(&client),
-        CliCommand::WorkerCreate { signatory } => worker::create(&client, signatory, false),
-        CliCommand::WorkerGet { id } => worker::get(&client, id),
-        CliCommand::WorkerUpdate {
+        CliCommand::BuilderCreate { signatory } => builder::create(&client, signatory, false),
+        CliCommand::BuilderGet { id } => builder::get(&client, id),
+        CliCommand::BuilderUpdate {
             id,
             commission_rate,
             signatory,
-        } => worker::update(&client, id, commission_rate, signatory),
+        } => builder::update(&client, id, commission_rate, signatory),
+        CliCommand::BuilderActivate { id } => builder::activate(&client, id),
+        CliCommand::BuilderDeactivate { id } => builder::deactivate(&client, id),
     }
 }
 

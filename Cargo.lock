@@ -398,7 +398,6 @@ dependencies = [
  "anchor-spl",
  "antegen-network-program",
  "antegen-plugin-utils",
- "antegen-test-program",
  "antegen-thread-program",
  "antegen-utils",
  "anyhow",
@@ -506,15 +505,6 @@ dependencies = [
  "chrono",
  "nom",
  "once_cell",
-]
-
-[[package]]
-name = "antegen-test-program"
-version = "2.2.7"
-dependencies = [
- "anchor-lang",
- "anchor-spl",
- "antegen-utils",
 ]
 
 [[package]]

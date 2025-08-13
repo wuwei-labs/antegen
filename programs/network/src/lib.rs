@@ -16,40 +16,34 @@ pub const ANTEGEN_SQUADS: Pubkey = pubkey!("14b1BKm2md7GgP6ccZd2u4cAvBsqsmFjxokz
 pub const TOTAL_BASIS_POINTS: u64 = 10_000;
 
 pub const CURRENT_BUILDER_VERSION: u64 = 1;
-pub const CURRENT_CONFIG_VERSION: u64 = 1;
-pub const CURRENT_POOL_VERSION: u64 = 1;
 pub const CURRENT_REGISTRY_VERSION: u64 = 1;
 
 #[program]
 pub mod network_program {
     pub use super::*;
 
-    pub fn builder_add(ctx: Context<BuilderAdd>) -> Result<()> {
-        builder_add::handler(ctx)
+    pub fn builder_activate(ctx: Context<BuilderActivate>) -> Result<()> {
+        builder_activate::handler(ctx)
     }
 
     pub fn builder_create(ctx: Context<BuilderCreate>) -> Result<()> {
         builder_create::handler(ctx)
     }
 
-    pub fn builder_remove(ctx: Context<BuilderRemove>) -> Result<()> {
-        builder_remove::handler(ctx)
+    pub fn builder_deactivate(ctx: Context<BuilderDeactivate>) -> Result<()> {
+        builder_deactivate::handler(ctx)
     }
 
     pub fn builder_update(ctx: Context<BuilderUpdate>, settings: BuilderSettings) -> Result<()> {
         builder_update::handler(ctx, settings)
     }
 
-    pub fn config_update(ctx: Context<ConfigUpdate>, settings: ConfigSettings) -> Result<()> {
-        config_update::handler(ctx, settings)
+    pub fn registry_update(ctx: Context<RegistryUpdate>, new_admin: Pubkey) -> Result<()> {
+        registry_update::handler(ctx, new_admin)
     }
 
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
         initialize::handler(ctx)
-    }
-
-    pub fn pool_create(ctx: Context<PoolCreate>) -> Result<()> {
-        pool_create::handler(ctx)
     }
 
     pub fn registry_reset(ctx: Context<RegistryReset>) -> Result<()> {

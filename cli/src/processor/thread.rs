@@ -3,8 +3,7 @@ use anchor_lang::{
     solana_program::{instruction::Instruction, system_program},
     InstructionData, ToAccountMetas,
 };
-use antegen_network_program::state::Config;
-use antegen_thread_program::state::{SerializableInstruction, Thread, ThreadSettings, Trigger};
+use antegen_thread_program::state::{Thread, Trigger};
 use solana_sdk::{
     native_token::LAMPORTS_PER_SOL,
     pubkey::Pubkey,
@@ -16,7 +15,6 @@ use solana_sdk::{
 pub fn create(
     client: &Client,
     id: String,
-    instructions: Vec<SerializableInstruction>,
     trigger: Trigger,
 ) -> Result<(), CliError> {
     let thread_pubkey = Thread::pubkey(client.payer_pubkey(), id.clone().into_bytes());
@@ -28,16 +26,15 @@ pub fn create(
             authority: client.payer_pubkey(),
             payer: client.payer_pubkey(),
             thread: thread_pubkey,
-            nonce_account: nonce_keypair.pubkey(),
-            recent_blockhashes: recent_blockhashes::ID,
-            rent: rent::ID,
+            nonce_account: Some(nonce_keypair.pubkey()),
+            recent_blockhashes: Some(recent_blockhashes::ID),
+            rent: Some(rent::ID),
             system_program: system_program::ID,
         }
         .to_account_metas(Some(false)),
         data: antegen_thread_program::instruction::ThreadCreate {
             amount: LAMPORTS_PER_SOL,
             id: id.into(),
-            instructions,
             trigger,
         }
         .data(),
@@ -71,48 +68,16 @@ pub fn get(client: &Client, address: Pubkey) -> Result<(), CliError> {
     Ok(())
 }
 
-pub fn pause(client: &Client, id: String) -> Result<(), CliError> {
+pub fn toggle(client: &Client, id: String) -> Result<(), CliError> {
     let thread_pubkey = Thread::pubkey(client.payer_pubkey(), id.into_bytes());
     let ix = Instruction {
         program_id: antegen_thread_program::ID,
-        accounts: antegen_thread_program::accounts::ThreadPause {
+        accounts: antegen_thread_program::accounts::ThreadToggle {
             authority: client.payer_pubkey(),
             thread: thread_pubkey,
         }
         .to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::ThreadPause {}.data(),
-    };
-    client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
-    get(client, thread_pubkey)?;
-    Ok(())
-}
-
-pub fn resume(client: &Client, id: String) -> Result<(), CliError> {
-    let thread_pubkey = Thread::pubkey(client.payer_pubkey(), id.into_bytes());
-    let ix = Instruction {
-        program_id: antegen_thread_program::ID,
-        accounts: antegen_thread_program::accounts::ThreadResume {
-            authority: client.payer_pubkey(),
-            thread: thread_pubkey,
-        }
-        .to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::ThreadResume {}.data(),
-    };
-    client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
-    get(client, thread_pubkey)?;
-    Ok(())
-}
-
-pub fn reset(client: &Client, id: String) -> Result<(), CliError> {
-    let thread_pubkey = Thread::pubkey(client.payer_pubkey(), id.into_bytes());
-    let ix = Instruction {
-        program_id: antegen_thread_program::ID,
-        accounts: antegen_thread_program::accounts::ThreadReset {
-            authority: client.payer_pubkey(),
-            thread: thread_pubkey,
-        }
-        .to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::ThreadReset {}.data(),
+        data: antegen_thread_program::instruction::ThreadToggle {}.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
     get(client, thread_pubkey)?;
@@ -122,11 +87,10 @@ pub fn reset(client: &Client, id: String) -> Result<(), CliError> {
 pub fn update(
     client: &Client,
     id: String,
-    rate_limit: Option<u64>,
     schedule: Option<String>,
 ) -> Result<(), CliError> {
     let thread_pubkey = Thread::pubkey(client.payer_pubkey(), id.into_bytes());
-    let trigger = if let Some(schedule) = schedule {
+    let new_trigger = if let Some(schedule) = schedule {
         Some(Trigger::Cron {
             schedule,
             skippable: true,
@@ -134,21 +98,14 @@ pub fn update(
     } else {
         None
     };
-    let settings = ThreadSettings {
-        fee: None,
-        name: None,
-        rate_limit,
-        trigger,
-    };
     let ix = Instruction {
         program_id: antegen_thread_program::ID,
         accounts: antegen_thread_program::accounts::ThreadUpdate {
             authority: client.payer_pubkey(),
-            config: Config::pubkey(),
             thread: thread_pubkey,
         }
         .to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::ThreadUpdate { settings }.data(),
+        data: antegen_thread_program::instruction::ThreadUpdate { new_trigger }.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
     get(client, thread_pubkey)?;

@@ -36,7 +36,6 @@ pub fn reset(client: &Client) -> Result<(), CliError> {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::RegistryReset {
             admin: payer,
-            config: Config::pubkey(),
             registry,
             system_program: system_program::ID,
         }
@@ -54,7 +53,6 @@ pub fn unlock(client: &Client) -> Result<(), CliError> {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::RegistryUnlock {
             admin: client.payer_pubkey(),
-            config: Config::pubkey(),
             registry: Registry::pubkey(),
         }
         .to_account_metas(Some(false)),

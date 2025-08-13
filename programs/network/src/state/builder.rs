@@ -16,8 +16,8 @@ pub struct Builder {
     pub commission_rate: u64,
     /// The builder's id.
     pub id: u32,
-    /// The assigned pool
-    pub pool: u8,
+    /// Whether the builder is active in rotation.
+    pub is_active: bool,
     /// The builder's signatory address (used to sign txs).
     pub signatory: Pubkey,
 }
@@ -29,20 +29,21 @@ pub struct MigrateBuilder<'info> {
 
     #[account(
         mut,
-        seeds = [SEED_BUILDER],
-        constraint = config.admin == authority.key(),
+        seeds = [SEED_BUILDER, builder.id.to_be_bytes().as_ref()],
+        constraint = registry.admin == authority.key(),
         realloc = 8 + Builder::INIT_SPACE,
         realloc::payer = authority,
         realloc::zero = false,
-        bump = config.bump,
+        bump = builder.bump,
     )]
     pub builder: Account<'info, Builder>,
 
     #[account(
-        seeds = [SEED_CONFIG],
-        bump = config.bump,
-      )]
-    pub config: Account<'info, Config>,
+        seeds = [SEED_REGISTRY],
+        bump = registry.bump,
+    )]
+    pub registry: Account<'info, Registry>,
+    
     pub system_program: Program<'info, System>,
 }
 
@@ -83,7 +84,7 @@ impl BuilderAcount for Account<'_, Builder> {
         self.authority = authority.key();
         self.commission_rate = MAX_COMMISSION_RATE;
         self.id = id;
-        self.pool = 0;
+        self.is_active = false;
         self.signatory = signatory.key();
         Ok(())
     }

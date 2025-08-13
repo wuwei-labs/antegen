@@ -10,15 +10,6 @@ pub struct Initialize<'info> {
 
     #[account(
         init,
-        seeds = [SEED_CONFIG],
-        payer = payer,
-        space = 8 + Config::INIT_SPACE,
-        bump,
-    )]
-    pub config: Account<'info, Config>,
-
-    #[account(
-        init,
         seeds = [SEED_REGISTRY],
         payer = payer,
         space = 8 + Registry::INIT_SPACE,
@@ -32,14 +23,11 @@ pub struct Initialize<'info> {
 
 pub fn handler(ctx: Context<Initialize>) -> Result<()> {
     let payer: &Signer = &ctx.accounts.payer;
-    let config: &mut Account<Config> = &mut ctx.accounts.config;
     let registry: &mut Account<Registry> = &mut ctx.accounts.registry;
 
-    // Initialize accounts.
-    config.init(payer.key())?;
-    config.bump = ctx.bumps.config;
-
-    registry.init()?;
+    // Initialize registry with admin set to payer
+    registry.init(payer.key())?;
     registry.bump = ctx.bumps.registry;
+    
     Ok(())
 }

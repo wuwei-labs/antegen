@@ -1,19 +1,17 @@
-pub mod builder_add;
+pub mod builder_activate;
 pub mod builder_create;
-pub mod builder_remove;
+pub mod builder_deactivate;
 pub mod builder_update;
-pub mod config_update;
 pub mod initialize;
-pub mod pool_create;
 pub mod registry_reset;
 pub mod registry_unlock;
+pub mod registry_update;
 
-pub use builder_add::*;
+pub use builder_activate::*;
 pub use builder_create::*;
-pub use builder_remove::*;
+pub use builder_deactivate::*;
 pub use builder_update::*;
-pub use config_update::*;
 pub use initialize::*;
-pub use pool_create::*;
 pub use registry_reset::*;
 pub use registry_unlock::*;
+pub use registry_update::*;
