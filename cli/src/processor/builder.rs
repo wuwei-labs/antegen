@@ -86,7 +86,7 @@ pub fn create(client: &Client, signatory: Keypair, silent: bool) -> Result<(), C
 pub fn update(
     client: &Client,
     id: u32,
-    commission_rate: Option<u64>,
+    commission_bps: Option<u64>,
     signatory: Option<Keypair>,
 ) -> Result<(), CliError> {
     let builder_pubkey: Pubkey = Builder::pubkey(id);
@@ -96,7 +96,7 @@ pub fn update(
 
     // Build and submit tx.
     let settings: BuilderSettings = BuilderSettings {
-        commission_rate: commission_rate.unwrap_or(builder.commission_rate),
+        commission_bps: commission_bps.unwrap_or(builder.commission_bps),
         signatory: signatory.map_or(builder.signatory, |v| v.pubkey()),
     };
     let ix: Instruction = Instruction {
@@ -104,6 +104,7 @@ pub fn update(
         accounts: antegen_network_program::accounts::BuilderUpdate {
             authority: client.payer_pubkey(),
             builder: builder_pubkey,
+            registry: Registry::pubkey(),
         }
         .to_account_metas(Some(false)),
         data: antegen_network_program::instruction::BuilderUpdate { settings }.data(),

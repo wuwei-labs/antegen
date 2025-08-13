@@ -36,6 +36,12 @@ pub struct Thread {
     /// The triggering event to kickoff a thread.
     pub trigger: Trigger,
     pub trigger_context: TriggerContext,
+    
+    /// Builder IDs currently building this thread
+    #[max_len(10)]
+    pub builders: Vec<u32>,
+    /// When the first builder claimed this thread
+    pub claim_window_start: Option<i64>,
 }
 
 impl Thread {
@@ -68,6 +74,44 @@ impl Thread {
             // Current exec_index not found, reset to first fiber
             self.exec_index = self.fibers.first().copied().unwrap_or(0);
         }
+    }
+
+    /// Clear all builders from the thread
+    pub fn clear_builders(&mut self) {
+        self.builders.clear();
+        self.claim_window_start = None;
+    }
+
+    /// Clear expired builders from the thread
+    pub fn clear_expired_builders(&mut self, current_timestamp: i64, claim_window_seconds: i64) {
+        if let Some(start) = self.claim_window_start {
+            if current_timestamp > start + claim_window_seconds {
+                self.clear_builders();
+            }
+        }
+    }
+
+    /// Add a builder to the thread
+    pub fn add_builder(&mut self, builder_id: u32, current_timestamp: i64) -> Result<()> {
+        if self.builders.is_empty() {
+            self.claim_window_start = Some(current_timestamp);
+        }
+        
+        if !self.builders.contains(&builder_id) {
+            self.builders.push(builder_id);
+        }
+        
+        Ok(())
+    }
+
+    /// Check if a builder has claimed this thread
+    pub fn has_builder(&self, builder_id: u32) -> bool {
+        self.builders.contains(&builder_id)
+    }
+
+    /// Check if any builders have claimed this thread
+    pub fn has_builders(&self) -> bool {
+        !self.builders.is_empty()
     }
 }
 

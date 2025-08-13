@@ -9,9 +9,11 @@ pub struct Registry {
     pub version: u64,
     pub bump: u8,
     pub admin: Pubkey,
-    pub locked: bool,
+    pub commission_fee: u64,                  // Base fee in lamports
+    pub builder_commission_bps: u64,          // 8500 (85%)
+    pub submitter_commission_bps: u64,        // 500 (5%)
+    pub core_team_bps: u64,                   // 1000 (10%)
     pub total_builders: u32,
-    pub total_repeaters: u32,
 }
 
 #[derive(Accounts)]
@@ -44,7 +46,6 @@ impl Registry {
  */
 pub trait RegistryAccount {
     fn init(&mut self, admin: Pubkey) -> Result<()>;
-    fn reset(&mut self) -> Result<()>;
     fn update_admin(&mut self, new_admin: Pubkey) -> Result<()>;
 }
 
@@ -52,14 +53,11 @@ impl RegistryAccount for Account<'_, Registry> {
     fn init(&mut self, admin: Pubkey) -> Result<()> {
         self.version = CURRENT_REGISTRY_VERSION;
         self.admin = admin;
-        self.locked = false;
+        self.commission_fee = 1000; // 1000 lamports
+        self.builder_commission_bps = 8500;   // 85%
+        self.submitter_commission_bps = 500;  // 5%
+        self.core_team_bps = 1000;           // 10%
         self.total_builders = 0;
-        self.total_repeaters = 0;
-        Ok(())
-    }
-
-    fn reset(&mut self) -> Result<()> {
-        self.locked = false;
         Ok(())
     }
 

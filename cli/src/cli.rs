@@ -1,4 +1,3 @@
-use antegen_network_program::state::MAX_COMMISSION_RATE;
 use antegen_thread_program::state::Trigger;
 use clap::{value_parser, Arg, ArgAction, ArgGroup, Command};
 use solana_sdk::{pubkey::Pubkey, signature::Keypair};
@@ -43,8 +42,6 @@ pub enum CliCommand {
 
     // Registry
     RegistryGet,
-    RegistryReset,
-    RegistryUnlock,
 
     // Builder commands
     BuilderCreate {
@@ -55,7 +52,7 @@ pub enum CliCommand {
     },
     BuilderUpdate {
         id: u32,
-        commission_rate: Option<u64>,
+        commission_bps: Option<u64>,
         signatory: Option<Keypair>,
     },
     BuilderActivate {
@@ -317,9 +314,7 @@ pub fn app() -> Command {
             Command::new("registry")
                 .about("Manage the Antegen network registry")
                 .arg_required_else_help(true)
-                .subcommand(Command::new("get").about("Lookup the registry"))
-                .subcommand(Command::new("reset").about("Manually reset the registry"))
-                .subcommand(Command::new("unlock").about("Manually unlock the registry")),
+                .subcommand(Command::new("get").about("Lookup the registry")),
         )
         .subcommand(
             Command::new("snapshot")
@@ -365,13 +360,12 @@ pub fn app() -> Command {
                                 .help("The ID of the builder to edit"),
                         )
                         .arg(
-                            Arg::new("commission_rate")
-                                .value_name("COMMISSION_RATE")
+                            Arg::new("commission_bps")
+                                .value_name("COMMISSION_BPS")
                                 .num_args(1)
                                 .required(false)
                                 .value_parser(value_parser!(u64))
-                                .value_parser(value_parser!(u64).range(0..=MAX_COMMISSION_RATE))
-                                .help("The commission rate (0-90)"),
+                                .help("The commission in basis points (0-10000, where 10000 = 100%)"),
                         )
                         .arg(
                             Arg::new("signatory_keypair")

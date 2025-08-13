@@ -1,19 +1,23 @@
 pub mod fiber_create;
 pub mod fiber_delete;
+pub mod thread_claim;
 pub mod thread_create;
 pub mod thread_delete;
 pub mod thread_exec;
 pub mod thread_kickoff;
+pub mod thread_submit;
 pub mod thread_toggle;
 pub mod thread_update;
 pub mod thread_withdraw;
 
 pub use fiber_create::*;
 pub use fiber_delete::*;
+pub use thread_claim::*;
 pub use thread_create::*;
 pub use thread_delete::*;
 pub use thread_exec::*;
 pub use thread_kickoff::*;
+pub use thread_submit::*;
 pub use thread_toggle::*;
 pub use thread_update::*;
 pub use thread_withdraw::*;

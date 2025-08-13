@@ -29,7 +29,6 @@ pub struct BuilderCreate<'info> {
     #[account(
         mut, 
         address = Registry::pubkey(),
-        constraint = !registry.locked @ AntegenNetworkError::RegistryLocked
     )]
     pub registry: Account<'info, Registry>,
 
@@ -45,7 +44,7 @@ pub fn handler(ctx: Context<BuilderCreate>) -> Result<()> {
 
     let builder_id: u32 = registry.total_builders.saturating_add(1);
     // Initialize the builder accounts.
-    builder.init(authority, builder_id, signatory)?;
+    builder.init(authority, builder_id, signatory, registry.builder_commission_bps)?;
     builder.bump = ctx.bumps.builder;
 
     // Update the registry's builder counter.

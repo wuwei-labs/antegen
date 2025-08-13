@@ -131,4 +131,14 @@ pub mod thread_program {
     pub fn thread_withdraw(ctx: Context<ThreadWithdraw>, amount: u64) -> Result<()> {
         thread_withdraw::handler(ctx, amount)
     }
+
+    /// Allows a builder to claim a thread for building.
+    pub fn thread_claim(ctx: Context<ThreadClaim>) -> Result<()> {
+        thread_claim::handler(ctx)
+    }
+
+    /// Submits a thread execution with fee distribution.
+    pub fn thread_submit(ctx: Context<ThreadSubmit>, thread_exec_ix_data: Vec<u8>) -> Result<()> {
+        thread_submit::handler(ctx, thread_exec_ix_data)
+    }
 }

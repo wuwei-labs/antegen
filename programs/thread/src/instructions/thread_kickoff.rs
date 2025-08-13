@@ -55,6 +55,12 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
 
     let clock: Clock = Clock::get().unwrap();
 
+    // Check if thread has any builders claimed - if so, it's being built
+    require!(
+        !thread.has_builders(),
+        AntegenThreadError::ThreadBeingBuilt
+    );
+
     // Advance nonce account if thread has one
     if thread.has_nonce_account() {
         if let Some(nonce_account) = &ctx.accounts.nonce_account {

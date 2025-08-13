@@ -136,8 +136,6 @@ fn parse_thread_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
 fn parse_registry_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     match matches.subcommand() {
         Some(("get", _)) => Ok(CliCommand::RegistryGet {}),
-        Some(("reset", _)) => Ok(CliCommand::RegistryReset {}),
-        Some(("unlock", _)) => Ok(CliCommand::RegistryUnlock {}),
         _ => Err(CliError::CommandNotRecognized(
             matches.subcommand().unwrap().0.into(),
         )),
@@ -154,7 +152,7 @@ fn parse_builder_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
         }),
         Some(("update", matches)) => Ok(CliCommand::BuilderUpdate {
             id: parse_u32("id", matches)?,
-            commission_rate: parse_u64("commission_rate", matches).ok(),
+            commission_bps: parse_u64("commission_bps", matches).ok(),
             signatory: parse_keypair_file("signatory_keypair", matches).ok(),
         }),
         Some(("activate", matches)) => Ok(CliCommand::BuilderActivate {

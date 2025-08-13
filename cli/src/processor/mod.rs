@@ -71,15 +71,13 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
         }
         CliCommand::ThreadUpdate { id, schedule } => thread::update(&client, id, schedule),
         CliCommand::RegistryGet => registry::get(&client),
-        CliCommand::RegistryReset => registry::reset(&client),
-        CliCommand::RegistryUnlock => registry::unlock(&client),
         CliCommand::BuilderCreate { signatory } => builder::create(&client, signatory, false),
         CliCommand::BuilderGet { id } => builder::get(&client, id),
         CliCommand::BuilderUpdate {
             id,
-            commission_rate,
+            commission_bps,
             signatory,
-        } => builder::update(&client, id, commission_rate, signatory),
+        } => builder::update(&client, id, commission_bps, signatory),
         CliCommand::BuilderActivate { id } => builder::activate(&client, id),
         CliCommand::BuilderDeactivate { id } => builder::deactivate(&client, id),
     }

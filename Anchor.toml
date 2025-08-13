@@ -3,9 +3,7 @@ cluster = "mainnet"
 wallet = "~/.config/solana/id.json"
 
 [workspace]
-members = [
-    "programs/*"
-]
+members = ["programs/*"]
 
 [programs.localnet]
 antegen_network_program = "AgNet6qmh75bjFULcS9RQijUoWwkCtSiSwXM1K3Ujn6Z"
@@ -24,3 +22,8 @@ antegen_test_program = "AgTstktpwF7FfmUpLQW6NLdCioiF4nmQqV9oYjZQzHjj"
 
 [registry]
 url = "https://api.apr.dev"
+
+[toolchain]
+anchor_version = "0.31.1" # `anchor-cli` version to use(requires `avm`)
+solana_version = "2.1.0"  # Solana version to use(applies to all Solana tools)
+package_manager = "pnpm"

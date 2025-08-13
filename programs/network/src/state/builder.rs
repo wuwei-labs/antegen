@@ -3,7 +3,6 @@ use anchor_lang::{prelude::*, AnchorDeserialize};
 use crate::{errors::*, state::*};
 
 pub const SEED_BUILDER: &[u8] = b"builder";
-pub const MAX_COMMISSION_RATE: u64 = 90;
 
 #[account]
 #[derive(Debug, InitSpace)]
@@ -12,8 +11,8 @@ pub struct Builder {
     pub bump: u8,
     /// The builder's authority (owner).
     pub authority: Pubkey,
-    /// Integer between 0 and MAX_COMMISSION_RATE determining the percentage of fees builder will keep as commission.
-    pub commission_rate: u64,
+    /// Commission in basis points (0-10000, where 10000 = 100%)
+    pub commission_bps: u64,
     /// The builder's id.
     pub id: u32,
     /// Whether the builder is active in rotation.
@@ -64,15 +63,15 @@ impl TryFrom<&[u8]> for Builder {
 /// WorkerSettings
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct BuilderSettings {
-    pub commission_rate: u64,
+    pub commission_bps: u64,
     pub signatory: Pubkey,
 }
 
 /// WorkerAccount
 pub trait BuilderAcount {
     fn pubkey(&self) -> Pubkey;
-    fn init(&mut self, authority: &mut Signer, id: u32, signatory: &Signer) -> Result<()>;
-    fn update(&mut self, settings: BuilderSettings) -> Result<()>;
+    fn init(&mut self, authority: &mut Signer, id: u32, signatory: &Signer, builder_commission_bps: u64) -> Result<()>;
+    fn update(&mut self, settings: BuilderSettings, builder_commission_bps: u64) -> Result<()>;
 }
 
 impl BuilderAcount for Account<'_, Builder> {
@@ -80,21 +79,21 @@ impl BuilderAcount for Account<'_, Builder> {
         Builder::pubkey(self.id)
     }
 
-    fn init(&mut self, authority: &mut Signer, id: u32, signatory: &Signer) -> Result<()> {
+    fn init(&mut self, authority: &mut Signer, id: u32, signatory: &Signer, builder_commission_bps: u64) -> Result<()> {
         self.authority = authority.key();
-        self.commission_rate = MAX_COMMISSION_RATE;
+        self.commission_bps = builder_commission_bps; // Start at max, builder can lower if desired
         self.id = id;
         self.is_active = false;
         self.signatory = signatory.key();
         Ok(())
     }
 
-    fn update(&mut self, settings: BuilderSettings) -> Result<()> {
+    fn update(&mut self, settings: BuilderSettings, builder_commission_bps: u64) -> Result<()> {
         require!(
-            settings.commission_rate.ge(&0) && settings.commission_rate.le(&MAX_COMMISSION_RATE),
+            settings.commission_bps.le(&builder_commission_bps),
             AntegenNetworkError::InvalidCommissionRate
         );
-        self.commission_rate = settings.commission_rate;
+        self.commission_bps = settings.commission_bps;
 
         require!(
             settings.signatory.ne(&self.authority),

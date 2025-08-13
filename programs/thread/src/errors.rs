@@ -59,4 +59,31 @@ pub enum AntegenThreadError {
 
     #[msg("Thread does not have a nonce account")]
     ThreadHasNoNonceAccount,
+
+    #[msg("Thread is currently being built by builders")]
+    ThreadBeingBuilt,
+
+    #[msg("Builder has not claimed this thread")]
+    BuilderNotClaimed,
+
+    #[msg("Invalid thread authority")]
+    InvalidThreadAuthority,
+
+    #[msg("Invalid builder authority")]
+    InvalidBuilderAuthority,
+
+    #[msg("Invalid registry admin")]
+    InvalidRegistryAdmin,
+
+    #[msg("Invalid instruction provided to thread_submit")]
+    InvalidInstruction,
+
+    #[msg("Invalid signatory for builder")]
+    InvalidSignatory,
+
+    #[msg("Builder is not active")]
+    BuilderNotActive,
 }
+
+/// Alias for AntegenThreadError
+pub use AntegenThreadError as ThreadError;
