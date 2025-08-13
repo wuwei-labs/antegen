@@ -1,5 +1,5 @@
 use {
-    crate::{errors::*, state::*},
+    crate::{errors::*, *},
     anchor_lang::prelude::*,
 };
 
@@ -11,9 +11,9 @@ pub struct ThreadWithdraw<'info> {
     #[account()]
     pub authority: Signer<'info>,
 
-    /// The account to withdraw lamports to.
+    /// CHECK: The account to withdraw lamports to.
     #[account(mut)]
-    pub pay_to: SystemAccount<'info>,
+    pub pay_to: AccountInfo<'info>,
 
     /// The thread to be.
     #[account(

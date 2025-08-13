@@ -1,20 +1,19 @@
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
-    str::FromStr,
 };
 
-use crate::{errors::*, state::*, TRANSACTION_BASE_FEE_REIMBURSEMENT};
+use crate::{errors::*, *};
 use anchor_lang::{
     prelude::*,
     solana_program::{
-        program::invoke, system_instruction::authorize_nonce_account, system_program,
+        program::invoke_signed, system_instruction::advance_nonce_account, system_program,
     },
 };
-use antegen_network_program::state::*;
-use antegen_utils::thread::Trigger;
+use antegen_utils::thread::{Trigger, TriggerContext};
 use chrono::{DateTime, Utc};
 use solana_cron::Schedule;
+use std::str::FromStr;
 
 /// Accounts required by the `thread_kickoff` instruction.
 #[derive(Accounts)]
@@ -31,19 +30,13 @@ pub struct ThreadKickoff<'info> {
         ],
         bump = thread.bump,
         constraint = !thread.paused @ AntegenThreadError::ThreadPaused,
-        constraint = thread.next_instruction.is_none() @ AntegenThreadError::ThreadBusy,
+        constraint = !thread.fibers.is_empty() @ AntegenThreadError::InvalidThreadState,
     )]
     pub thread: Box<Account<'info, Thread>>,
 
-    #[account(address = builder.pubkey())]
-    pub builder: Account<'info, Builder>,
-
-    /// CHECK: For new nonce authority
-    #[account(
-        mut,
-        address = thread.nonce_account,
-    )]
-    pub nonce_account: UncheckedAccount<'info>,
+    /// CHECK: For new nonce authority (optional - only required if thread has nonce account)
+    #[account(mut)]
+    pub nonce_account: Option<UncheckedAccount<'info>>,
 
     #[account(address = system_program::ID)]
     pub system_program: Program<'info, System>,
@@ -58,41 +51,37 @@ fn next_timestamp(after: i64, schedule: String) -> Option<i64> {
 }
 
 pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
-    let signatory: &mut Signer = &mut ctx.accounts.signatory;
     let thread: &mut Box<Account<Thread>> = &mut ctx.accounts.thread;
-    let nonce_account: &UncheckedAccount = &ctx.accounts.nonce_account;
-    let system_program: &Program<System> = &ctx.accounts.system_program;
 
     let clock: Clock = Clock::get().unwrap();
 
-    // Handle thread migration if needed
-    // This will detect and migrate legacy threads with no version field
-    // or threads with old versions to the current version
-    thread.migrate_if_needed()?;
+    // Advance nonce account if thread has one
+    if thread.has_nonce_account() {
+        if let Some(nonce_account) = &ctx.accounts.nonce_account {
+            // Thread PDA signs to advance its own nonce
+            let thread_seeds = &[
+                SEED_THREAD,
+                thread.authority.as_ref(),
+                thread.id.as_slice(),
+                &[thread.bump],
+            ];
 
-    invoke(
-        &authorize_nonce_account(&nonce_account.key(), &signatory.key(), &thread.key()),
-        &[
-            nonce_account.to_account_info(),
-            thread.to_account_info(),
-            system_program.to_account_info(),
-        ],
-    )?;
+            invoke_signed(
+                &advance_nonce_account(&nonce_account.key(), &thread.key()),
+                &[nonce_account.to_account_info(), thread.to_account_info()],
+                &[thread_seeds],
+            )?;
+        } else {
+            return Err(AntegenThreadError::InvalidNonceAccount.into());
+        }
+    }
 
-    // Get the current started at for last started at value
-    let last_started_at = thread
-        .exec_context
-        .as_ref()
-        .map(|ctx| match ctx.trigger_context {
-            TriggerContext::Cron { started_at } => started_at,
-            TriggerContext::Timestamp { started_at } => started_at,
-            TriggerContext::Slot { started_at } => started_at as i64,
-            TriggerContext::Epoch { started_at } => started_at as i64,
-            TriggerContext::Pyth { price } => price,
-            TriggerContext::Account { data_hash } => data_hash as i64,
-            _ => thread.created_at.unix_timestamp,
-        })
-        .unwrap_or(thread.created_at.unix_timestamp);
+    // Get the last started at timestamp
+    let last_started_at = match &thread.trigger_context {
+        TriggerContext::Timestamp { prev, .. } => *prev,
+        TriggerContext::Block { prev, .. } => *prev as i64,
+        TriggerContext::Account { .. } => thread.created_at,
+    };
 
     match thread.trigger.clone() {
         Trigger::Account {
@@ -125,29 +114,20 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                     let data_hash = hasher.finish();
 
                     // Verify the data hash is different than the prior data hash.
-                    if let Some(exec_context) = thread.exec_context {
-                        match exec_context.trigger_context {
-                            TriggerContext::Account {
-                                data_hash: prior_data_hash,
-                            } => {
-                                require!(
-                                    data_hash.ne(&prior_data_hash),
-                                    AntegenThreadError::TriggerConditionFailed
-                                )
-                            }
-                            _ => return Err(AntegenThreadError::InvalidThreadState.into()),
+                    match &thread.trigger_context {
+                        TriggerContext::Account { hash: prior_hash } => {
+                            require!(
+                                data_hash.ne(prior_hash),
+                                AntegenThreadError::TriggerConditionFailed
+                            )
                         }
+                        _ => {}
                     }
 
-                    // Set a new exec context with the new data hash and slot number.
-                    thread.exec_context = Some(ExecContext {
-                        exec_index: 0,
-                        execs_since_reimbursement: 0,
-                        execs_since_slot: 0,
-                        last_exec_at: clock.slot,
-                        last_exec_timestamp: last_started_at,
-                        trigger_context: TriggerContext::Account { data_hash },
-                    })
+                    // Update trigger context with new data hash
+                    thread.trigger_context = TriggerContext::Account { hash: data_hash };
+                    // Set exec_index to first fiber
+                    thread.exec_index = thread.fibers.first().copied().unwrap_or(0);
                 }
             }
         }
@@ -171,86 +151,86 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 threshold_timestamp
             };
 
-            // Set the exec context.
-            thread.exec_context = Some(ExecContext {
-                exec_index: 0,
-                execs_since_reimbursement: 0,
-                execs_since_slot: 0,
-                last_exec_at: clock.slot,
-                last_exec_timestamp: last_started_at,
-                trigger_context: TriggerContext::Cron { started_at },
-            });
+            // Update trigger context
+            thread.trigger_context = TriggerContext::Timestamp {
+                prev: last_started_at,
+                next: started_at,
+            };
+            // Set exec_index to first fiber
+            thread.exec_index = thread.fibers.first().copied().unwrap_or(0);
         }
         Trigger::Now => {
-            // Set the exec context.
-            require!(
-                thread.exec_context.is_none(),
-                AntegenThreadError::InvalidThreadState
-            );
-            thread.exec_context = Some(ExecContext {
-                exec_index: 0,
-                execs_since_reimbursement: 0,
-                execs_since_slot: 0,
-                last_exec_at: clock.slot,
-                last_exec_timestamp: last_started_at,
-                trigger_context: TriggerContext::Now,
-            });
+            // Update trigger context
+            thread.trigger_context = TriggerContext::Timestamp {
+                prev: last_started_at,
+                next: clock.unix_timestamp,
+            };
+            // Set exec_index to first fiber
+            thread.exec_index = thread.fibers.first().copied().unwrap_or(0);
         }
         Trigger::Slot { slot } => {
             require!(
                 clock.slot.ge(&slot),
                 AntegenThreadError::TriggerConditionFailed
             );
-            thread.exec_context = Some(ExecContext {
-                exec_index: 0,
-                execs_since_reimbursement: 0,
-                execs_since_slot: 0,
-                last_exec_at: clock.slot,
-                last_exec_timestamp: last_started_at,
-                trigger_context: TriggerContext::Slot { started_at: slot },
-            });
+            thread.trigger_context = TriggerContext::Block {
+                prev: last_started_at as u64,
+                next: slot,
+            };
+            // Set exec_index to first fiber
+            thread.exec_index = thread.fibers.first().copied().unwrap_or(0);
         }
         Trigger::Epoch { epoch } => {
             require!(
                 clock.epoch.ge(&epoch),
                 AntegenThreadError::TriggerConditionFailed
             );
-            thread.exec_context = Some(ExecContext {
-                exec_index: 0,
-                execs_since_reimbursement: 0,
-                execs_since_slot: 0,
-                last_exec_at: clock.slot,
-                last_exec_timestamp: last_started_at,
-                trigger_context: TriggerContext::Epoch { started_at: epoch },
-            })
+            thread.trigger_context = TriggerContext::Block {
+                prev: last_started_at as u64,
+                next: epoch,
+            };
+            // Set exec_index to first fiber
+            thread.exec_index = thread.fibers.first().copied().unwrap_or(0);
+        }
+        Trigger::Interval { seconds, skippable } => {
+            // Calculate next trigger time
+            let next_timestamp = last_started_at.saturating_add(seconds);
+
+            // Verify current time is past the next trigger time
+            require!(
+                clock.unix_timestamp.ge(&next_timestamp),
+                AntegenThreadError::TriggerConditionFailed
+            );
+
+            // If skippable, set started_at to current time
+            // Otherwise, use the scheduled time to catch up on missed intervals
+            let started_at = if skippable {
+                clock.unix_timestamp
+            } else {
+                next_timestamp
+            };
+
+            // Update trigger context
+            thread.trigger_context = TriggerContext::Timestamp {
+                prev: last_started_at,
+                next: started_at,
+            };
+            // Set exec_index to first fiber
+            thread.exec_index = thread.fibers.first().copied().unwrap_or(0);
         }
         Trigger::Timestamp { unix_ts } => {
             require!(
                 clock.unix_timestamp.ge(&unix_ts),
                 AntegenThreadError::TriggerConditionFailed
             );
-            thread.exec_context = Some(ExecContext {
-                exec_index: 0,
-                execs_since_reimbursement: 0,
-                execs_since_slot: 0,
-                last_exec_at: clock.slot,
-                last_exec_timestamp: last_started_at,
-                trigger_context: TriggerContext::Timestamp {
-                    started_at: unix_ts,
-                },
-            })
+            thread.trigger_context = TriggerContext::Timestamp {
+                prev: last_started_at,
+                next: unix_ts,
+            };
+            // Set exec_index to first fiber
+            thread.exec_index = thread.fibers.first().copied().unwrap_or(0);
         }
     }
 
-    // If we make it here, the trigger is active. Update the next instruction and be done.
-    if let Some(kickoff_instruction) = thread.instructions.first() {
-        thread.next_instruction = Some(kickoff_instruction.clone());
-    }
-
-    // Reimburse signatory for transaction fee.
-    transfer_lamports(
-        &thread.to_account_info(),
-        &signatory.to_account_info(),
-        TRANSACTION_BASE_FEE_REIMBURSEMENT,
-    )
+    Ok(())
 }

@@ -1,50 +1,70 @@
-use std::{convert::TryFrom, fmt::Debug, hash::Hash};
-
 use anchor_lang::{
-    prelude::borsh::BorshSchema,
     prelude::Pubkey,
     prelude::*,
-    solana_program::{self, instruction::Instruction},
+    solana_program,
+    solana_program::instruction::{AccountMeta, Instruction},
     AnchorDeserialize,
 };
-use serde::{Deserialize, Serialize};
 use static_pubkey::static_pubkey;
+use std::collections::HashMap;
+use std::fmt::Debug;
 
 pub static PAYER_PUBKEY: Pubkey = static_pubkey!("AntegenPayer1111111111111111111111111111111");
 
-/// The clock object, representing a specific moment in time recorded by a Solana cluster.
-#[derive(AnchorDeserialize, AnchorSerialize, BorshSchema, Clone, Debug, PartialEq)]
-pub struct ClockData {
-    /// The current slot.
-    pub slot: u64,
-    /// The bank epoch.
-    pub epoch: u64,
-    /// The current unix timestamp.
-    pub unix_timestamp: i64,
+/// Serializable version of Solana's Instruction for easier handling
+#[derive(AnchorDeserialize, AnchorSerialize, Clone, Debug)]
+pub struct SerializableInstruction {
+    pub program_id: Pubkey,
+    pub accounts: Vec<SerializableAccountMeta>,
+    pub data: Vec<u8>,
 }
 
-impl From<Clock> for ClockData {
-    fn from(clock: Clock) -> Self {
-        ClockData {
-            slot: clock.slot,
-            epoch: clock.epoch,
-            unix_timestamp: clock.unix_timestamp,
+/// Serializable version of AccountMeta
+#[derive(AnchorDeserialize, AnchorSerialize, Clone, Debug)]
+pub struct SerializableAccountMeta {
+    pub pubkey: Pubkey,
+    pub is_signer: bool,
+    pub is_writable: bool,
+}
+
+impl From<Instruction> for SerializableInstruction {
+    fn from(ix: Instruction) -> Self {
+        SerializableInstruction {
+            program_id: ix.program_id,
+            accounts: ix
+                .accounts
+                .into_iter()
+                .map(|acc| SerializableAccountMeta {
+                    pubkey: acc.pubkey,
+                    is_signer: acc.is_signer,
+                    is_writable: acc.is_writable,
+                })
+                .collect(),
+            data: ix.data,
         }
     }
 }
 
-impl TryFrom<Vec<u8>> for ClockData {
-    type Error = Error;
-    fn try_from(data: Vec<u8>) -> std::result::Result<Self, Self::Error> {
-        Ok(
-            borsh::try_from_slice_with_schema::<ClockData>(data.as_slice())
-                .map_err(|_err| ErrorCode::AccountDidNotDeserialize)?,
-        )
+impl From<SerializableInstruction> for Instruction {
+    fn from(ix: SerializableInstruction) -> Self {
+        Instruction {
+            program_id: ix.program_id,
+            accounts: ix
+                .accounts
+                .into_iter()
+                .map(|acc| AccountMeta {
+                    pubkey: acc.pubkey,
+                    is_signer: acc.is_signer,
+                    is_writable: acc.is_writable,
+                })
+                .collect(),
+            data: ix.data,
+        }
     }
 }
 
 /// The triggering conditions of a thread.
-#[derive(AnchorDeserialize, AnchorSerialize, Debug, Clone, PartialEq)]
+#[derive(AnchorDeserialize, AnchorSerialize, Clone, InitSpace, PartialEq, Debug)]
 pub enum Trigger {
     /// Allows a thread to be kicked off whenever the data of an account changes.
     Account {
@@ -56,9 +76,24 @@ pub enum Trigger {
         size: u64,
     },
 
+    /// Allows a thread to be kicked off as soon as it's created.
+    Now,
+
+    /// Allows a thread to be kicked off according to a unix timestamp.
+    Timestamp { unix_ts: i64 },
+
+    /// Allows a thread to be kicked off at regular intervals.
+    Interval {
+        /// Interval in seconds between executions
+        seconds: i64,
+        /// Boolean value indicating whether triggering moments may be skipped
+        skippable: bool,
+    },
+
     /// Allows a thread to be kicked off according to a one-time or recurring schedule.
     Cron {
         /// The schedule in cron syntax. Value must be parsable by the `solana_cron` package.
+        #[max_len(255)]
         schedule: String,
 
         /// Boolean value indicating whether triggering moments may be skipped if they are missed (e.g. due to network downtime).
@@ -66,37 +101,31 @@ pub enum Trigger {
         skippable: bool,
     },
 
-    /// Allows a thread to be kicked off as soon as it's created.
-    Now,
-
     /// Allows a thread to be kicked off according to a slot.
     Slot { slot: u64 },
 
     /// Allows a thread to be kicked off according to an epoch number.
     Epoch { epoch: u64 },
-
-    /// Allows a thread to be kicked off according to a unix timestamp.
-    Timestamp { unix_ts: i64 },
 }
 
-/// Operators for describing how to compare two values to one another.  
-#[repr(u8)]
-#[derive(AnchorDeserialize, AnchorSerialize, Clone, Debug, Eq, PartialEq, Hash)]
-pub enum Equality {
-    GreaterThanOrEqual,
-    LessThanOrEqual,
+/// The event which allowed a particular transaction thread to be triggered.
+#[derive(AnchorDeserialize, AnchorSerialize, Clone, InitSpace, Debug)]
+pub enum TriggerContext {
+    /// A running hash of the observed account data.
+    Account { hash: u64 },
+
+    /// The trigger context for Now, Timestamp, Cron, and Interval
+    Timestamp { prev: i64, next: i64 },
+
+    /// The trigger context for Slot and Epoch
+    Block { prev: u64, next: u64 },
 }
 
 /// A response value target programs can return to update the thread.
 #[derive(AnchorDeserialize, AnchorSerialize, Clone, Debug)]
 pub struct ThreadResponse {
-    /// If set, the thread will automatically close and return lamports to the provided address.
-    /// If dynamic_instruction is also set, close_to will take precedence and the dynamic instruction will not be executed.
     pub close_to: Option<Pubkey>,
-    /// A dynamic instruction to execute next.
-    /// If close_to is also set, it will take precedence and the dynamic instruction will not be executed.
-    pub dynamic_instruction: Option<SerializableInstruction>,
-    /// Value to update the thread trigger to.
+    pub next_instruction: Option<u8>,
     pub trigger: Option<Trigger>,
 }
 
@@ -104,118 +133,162 @@ impl Default for ThreadResponse {
     fn default() -> Self {
         return Self {
             close_to: None,
-            dynamic_instruction: None,
+            next_instruction: None,
             trigger: None,
         };
     }
 }
 
-/// The data needed execute an instruction on Solana.
-#[derive(
-    AnchorDeserialize,
-    AnchorSerialize,
-    Serialize,
-    Deserialize,
-    BorshSchema,
-    Clone,
-    Debug,
-    Hash,
-    PartialEq,
-)]
-pub struct SerializableInstruction {
-    /// Pubkey of the instruction processor that executes this instruction
-    pub program_id: Pubkey,
-    /// Metadata for what accounts should be passed to the instruction processor
-    pub accounts: Vec<SerializableAccount>,
-    /// Opaque data passed to the instruction processor
+/// Compiled instruction format for space-efficient storage
+#[derive(AnchorDeserialize, AnchorSerialize, Clone, Debug)]
+pub struct CompiledInstructionV0 {
+    pub program_id_index: u8,
+    pub accounts: Vec<u8>,
     pub data: Vec<u8>,
 }
 
-impl From<Instruction> for SerializableInstruction {
-    fn from(instruction: Instruction) -> Self {
-        SerializableInstruction {
-            program_id: instruction.program_id,
-            accounts: instruction
-                .accounts
-                .iter()
-                .map(|a| SerializableAccount {
-                    pubkey: a.pubkey,
-                    is_signer: a.is_signer,
-                    is_writable: a.is_writable,
-                })
-                .collect(),
-            data: instruction.data,
-        }
-    }
+/// Compiled transaction containing deduplicated accounts
+#[derive(AnchorDeserialize, AnchorSerialize, Clone, Debug)]
+pub struct CompiledTransactionV0 {
+    pub num_ro_signers: u8,
+    pub num_rw_signers: u8,
+    pub num_rw: u8,
+    pub instructions: Vec<CompiledInstructionV0>,
+    pub signer_seeds: Vec<Vec<Vec<u8>>>,
+    pub accounts: Vec<Pubkey>,
 }
 
-impl From<&SerializableInstruction> for Instruction {
-    fn from(instruction: &SerializableInstruction) -> Self {
-        Instruction {
-            program_id: instruction.program_id,
-            accounts: instruction
-                .accounts
-                .iter()
-                .map(|a| AccountMeta {
-                    pubkey: a.pubkey,
-                    is_signer: a.is_signer,
-                    is_writable: a.is_writable,
-                })
-                .collect(),
-            data: instruction.data.clone(),
-        }
-    }
-}
+/// Compile an instruction into a space-efficient format
+pub fn compile_instruction(
+    instruction: Instruction,
+    signer_seeds: Vec<Vec<Vec<u8>>>,
+) -> Result<CompiledTransactionV0> {
+    let mut pubkeys_to_metadata: HashMap<Pubkey, AccountMeta> = HashMap::new();
 
-impl TryFrom<Vec<u8>> for SerializableInstruction {
-    type Error = Error;
-    fn try_from(data: Vec<u8>) -> std::result::Result<Self, Self::Error> {
-        Ok(
-            borsh::try_from_slice_with_schema::<SerializableInstruction>(data.as_slice())
-                .map_err(|_err| ErrorCode::AccountDidNotDeserialize)?,
-        )
-    }
-}
-
-/// Account metadata needed to execute an instruction on Solana.
-#[derive(
-    AnchorDeserialize,
-    AnchorSerialize,
-    Serialize,
-    Deserialize,
-    BorshSchema,
-    Clone,
-    Debug,
-    Hash,
-    PartialEq,
-)]
-pub struct SerializableAccount {
-    /// An account's public key
-    pub pubkey: Pubkey,
-    /// True if an Instruction requires a Transaction signature matching `pubkey`.
-    pub is_signer: bool,
-    /// True if the `pubkey` can be loaded as a read-write account.
-    pub is_writable: bool,
-}
-
-impl SerializableAccount {
-    /// Construct metadata for a writable account.
-    pub fn mutable(pubkey: Pubkey, signer: bool) -> Self {
-        Self {
-            pubkey,
-            is_signer: signer,
-            is_writable: true,
-        }
-    }
-
-    /// Construct metadata for a read-only account.
-    pub fn readonly(pubkey: Pubkey, signer: bool) -> Self {
-        Self {
-            pubkey,
-            is_signer: signer,
+    // Add program ID
+    pubkeys_to_metadata.insert(
+        instruction.program_id,
+        AccountMeta {
+            pubkey: instruction.program_id,
+            is_signer: false,
             is_writable: false,
+        },
+    );
+
+    // Process accounts
+    for acc in &instruction.accounts {
+        let entry = pubkeys_to_metadata
+            .entry(acc.pubkey)
+            .or_insert(AccountMeta {
+                pubkey: acc.pubkey,
+                is_signer: false,
+                is_writable: false,
+            });
+        entry.is_signer |= acc.is_signer;
+        entry.is_writable |= acc.is_writable;
+    }
+
+    // Sort accounts by priority
+    let mut sorted_accounts: Vec<Pubkey> = pubkeys_to_metadata.keys().cloned().collect();
+    sorted_accounts.sort_by(|a, b| {
+        let a_meta = &pubkeys_to_metadata[a];
+        let b_meta = &pubkeys_to_metadata[b];
+
+        fn get_priority(meta: &AccountMeta) -> u8 {
+            match (meta.is_signer, meta.is_writable) {
+                (true, true) => 0,
+                (true, false) => 1,
+                (false, true) => 2,
+                (false, false) => 3,
+            }
+        }
+
+        get_priority(a_meta).cmp(&get_priority(b_meta))
+    });
+
+    // Count account types
+    let mut num_rw_signers = 0u8;
+    let mut num_ro_signers = 0u8;
+    let mut num_rw = 0u8;
+
+    for pubkey in &sorted_accounts {
+        let meta = &pubkeys_to_metadata[pubkey];
+        if meta.is_signer && meta.is_writable {
+            num_rw_signers += 1;
+        } else if meta.is_signer && !meta.is_writable {
+            num_ro_signers += 1;
+        } else if meta.is_writable {
+            num_rw += 1;
         }
     }
+
+    // Create index mapping
+    let accounts_to_index: HashMap<Pubkey, u8> = sorted_accounts
+        .iter()
+        .enumerate()
+        .map(|(i, k)| (*k, i as u8))
+        .collect();
+
+    // Create compiled instruction
+    let compiled_instruction = CompiledInstructionV0 {
+        program_id_index: *accounts_to_index.get(&instruction.program_id).unwrap(),
+        accounts: instruction
+            .accounts
+            .iter()
+            .map(|acc| *accounts_to_index.get(&acc.pubkey).unwrap())
+            .collect(),
+        data: instruction.data,
+    };
+
+    Ok(CompiledTransactionV0 {
+        num_ro_signers,
+        num_rw_signers,
+        num_rw,
+        instructions: vec![compiled_instruction],
+        signer_seeds,
+        accounts: sorted_accounts,
+    })
+}
+
+/// Decompile a compiled instruction back to a regular instruction
+pub fn decompile_instruction(compiled: &CompiledTransactionV0) -> Result<Instruction> {
+    if compiled.instructions.is_empty() {
+        return Err(ProgramError::InvalidInstructionData.into());
+    }
+
+    let ix = &compiled.instructions[0];
+    let program_id = compiled.accounts[ix.program_id_index as usize];
+
+    let accounts: Vec<AccountMeta> = ix
+        .accounts
+        .iter()
+        .enumerate()
+        .map(|(_i, &idx)| {
+            let pubkey = compiled.accounts[idx as usize];
+            let is_writable = if idx < compiled.num_rw_signers {
+                true
+            } else if idx < compiled.num_rw_signers + compiled.num_ro_signers {
+                false
+            } else if idx < compiled.num_rw_signers + compiled.num_ro_signers + compiled.num_rw {
+                true
+            } else {
+                false
+            };
+            let is_signer = idx < compiled.num_rw_signers + compiled.num_ro_signers;
+
+            AccountMeta {
+                pubkey,
+                is_signer,
+                is_writable,
+            }
+        })
+        .collect();
+
+    Ok(Instruction {
+        program_id,
+        accounts,
+        data: ix.data.clone(),
+    })
 }
 
 pub fn transfer_lamports<'info>(

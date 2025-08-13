@@ -502,6 +502,7 @@ version = "2.2.7"
 dependencies = [
  "anchor-lang",
  "antegen-thread-program",
+ "antegen-utils",
  "chrono",
  "nom",
  "once_cell",

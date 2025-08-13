@@ -1,19 +1,17 @@
-//! This program allows users to create transaction threads on Solana. Threads are dynamic, long-running
-//! transaction threads that can persist across blocks and even run indefinitely. Developers can use threads
-//! to schedule transactions and automate smart-contracts without relying on centralized infrastructure.
+pub mod constants;
 pub mod errors;
 mod instructions;
 pub mod state;
 
-use anchor_lang::prelude::*;
-use antegen_utils::thread::{SerializableInstruction, Trigger};
+pub use constants::*;
 use instructions::*;
 use state::*;
 
-declare_id!("AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1");
+use anchor_lang::prelude::*;
+use anchor_lang::solana_program::instruction::Instruction;
+use antegen_utils::thread::{SerializableInstruction, Trigger};
 
-pub const TRANSACTION_BASE_FEE_REIMBURSEMENT: u64 = 5_000;
-pub const THREAD_MINIMUM_FEE: u64 = 1_000;
+declare_id!("AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1");
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub enum ThreadId {
@@ -37,6 +35,13 @@ impl ThreadId {
             ThreadId::Pubkey(_) => 32,
         }
     }
+
+    pub fn to_name(&self) -> String {
+        match self {
+            ThreadId::Bytes(bytes) => String::from_utf8_lossy(bytes).to_string(),
+            ThreadId::Pubkey(pubkey) => pubkey.to_string(),
+        }
+    }
 }
 
 impl From<String> for ThreadId {
@@ -57,13 +62,34 @@ impl From<Pubkey> for ThreadId {
     }
 }
 
+impl From<ThreadId> for Vec<u8> {
+    fn from(id: ThreadId) -> Vec<u8> {
+        match id {
+            ThreadId::Bytes(bytes) => bytes,
+            ThreadId::Pubkey(pubkey) => pubkey.to_bytes().to_vec(),
+        }
+    }
+}
+
 #[program]
 pub mod thread_program {
     use super::*;
 
-    /// Advance nonce account for thread.
-    pub fn thread_claim(ctx: Context<ThreadClaim>, hash: String) -> Result<()> {
-        thread_claim::handler(ctx, hash)
+    /// Creates a fiber (instruction) for a thread.
+    pub fn fiber_create(
+        ctx: Context<FiberCreate>,
+        index: u8,
+        instruction: SerializableInstruction,
+        signer_seeds: Vec<Vec<Vec<u8>>>,
+    ) -> Result<()> {
+        // Convert to regular Instruction
+        let instruction: Instruction = instruction.into();
+        fiber_create::handler(ctx, index, instruction, signer_seeds)
+    }
+
+    /// Deletes a fiber from a thread.
+    pub fn fiber_delete(ctx: Context<FiberDelete>, index: u8) -> Result<()> {
+        fiber_delete::handler(ctx, index)
     }
 
     /// Executes the next instruction on thread.
@@ -76,10 +102,9 @@ pub mod thread_program {
         ctx: Context<ThreadCreate>,
         amount: u64,
         id: ThreadId,
-        instructions: Vec<SerializableInstruction>,
         trigger: Trigger,
     ) -> Result<()> {
-        thread_create::handler(ctx, amount, id, instructions, trigger)
+        thread_create::handler(ctx, amount, id, trigger)
     }
 
     /// Closes an existing thread account and returns the lamports to the owner.
@@ -92,24 +117,14 @@ pub mod thread_program {
         thread_kickoff::handler(ctx)
     }
 
-    /// Pauses an active thread.
-    pub fn thread_pause(ctx: Context<ThreadPause>) -> Result<()> {
-        thread_pause::handler(ctx)
+    /// Toggles a thread's pause state.
+    pub fn thread_toggle(ctx: Context<ThreadToggle>) -> Result<()> {
+        thread_toggle::handler(ctx)
     }
 
-    /// Resumes a paused thread.
-    pub fn thread_resume(ctx: Context<ThreadResume>) -> Result<()> {
-        thread_resume::handler(ctx)
-    }
-
-    /// Resets a thread's next instruction.
-    pub fn thread_reset(ctx: Context<ThreadReset>) -> Result<()> {
-        thread_reset::handler(ctx)
-    }
-
-    /// Allows an owner to update the mutable properties of a thread.
-    pub fn thread_update(ctx: Context<ThreadUpdate>, settings: ThreadSettings) -> Result<()> {
-        thread_update::handler(ctx, settings)
+    /// Allows an owner to update the thread's trigger.
+    pub fn thread_update(ctx: Context<ThreadUpdate>, new_trigger: Option<Trigger>) -> Result<()> {
+        thread_update::handler(ctx, new_trigger)
     }
 
     /// Allows an owner to withdraw from a thread's lamport balance.

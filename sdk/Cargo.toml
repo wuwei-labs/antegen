@@ -17,6 +17,7 @@ name = "antegen_sdk"
 
 [dependencies]
 antegen-thread-program = { workspace = true, features = ["cpi"] }
+antegen-utils = { workspace = true }
 
 anchor-lang = { workspace = true }
 

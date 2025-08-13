@@ -56,4 +56,7 @@ pub enum AntegenThreadError {
 
     #[msg("MathOverflow")]
     MathOverflow,
+
+    #[msg("Thread does not have a nonce account")]
+    ThreadHasNoNonceAccount,
 }

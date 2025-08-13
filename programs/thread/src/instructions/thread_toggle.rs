@@ -1,13 +1,13 @@
-use {crate::state::*, anchor_lang::prelude::*};
+use {crate::*, anchor_lang::prelude::*};
 
-/// Accounts required by the `thread_delete` instruction.
+/// Accounts required by the `thread_toggle` instruction.
 #[derive(Accounts)]
-pub struct ThreadPause<'info> {
+pub struct ThreadToggle<'info> {
     /// The authority (owner) of the thread.
     #[account()]
     pub authority: Signer<'info>,
 
-    /// The thread to be paused.
+    /// The thread to toggle pause state.
     #[account(
         mut,
         has_one = authority,
@@ -21,11 +21,11 @@ pub struct ThreadPause<'info> {
     pub thread: Account<'info, Thread>,
 }
 
-pub fn handler(ctx: Context<ThreadPause>) -> Result<()> {
+pub fn handler(ctx: Context<ThreadToggle>) -> Result<()> {
     let thread = &mut ctx.accounts.thread;
 
-    // Pause the thread
-    thread.paused = true;
+    // Toggle the pause state
+    thread.paused = !thread.paused;
 
     Ok(())
 }
