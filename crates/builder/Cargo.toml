@@ -1,0 +1,38 @@
+[package]
+name = "antegen-builder"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+documentation = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+readme = { workspace = true }
+keywords = { workspace = true }
+description = "Antegen transaction builder for thread execution"
+
+[dependencies]
+antegen-thread-program = { workspace = true, features = ["cpi"] }
+antegen-network-program = { workspace = true, features = ["cpi"] }
+antegen-utils = { workspace = true }
+
+anchor-lang = { workspace = true }
+solana-sdk = { workspace = true }
+solana-client = { workspace = true }
+solana-program = { workspace = true }
+solana-account-decoder = { workspace = true }
+solana-rpc-client-nonce-utils = { workspace = true }
+
+log = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+async-nats = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+hex = { workspace = true }
+bincode = { workspace = true }
+
+# Import types from submitter
+antegen-submitter = { workspace = true }

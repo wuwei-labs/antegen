@@ -1,12 +1,7 @@
-use std::sync::Arc;
-
-use agave_geyser_plugin_interface::geyser_plugin_interface::{
-    GeyserPluginError, Result as PluginResult,
-};
-use anchor_lang::{system_program, InstructionData, ToAccountMetas};
-use antegen_network_program::{state::Builder, ANTEGEN_SQUADS};
+use anchor_lang::{system_program, InstructionData};
+use antegen_network_program::state::Builder;
 use antegen_thread_program::state::{Thread, Trigger};
-use antegen_utils::thread::PAYER_PUBKEY;
+use anyhow::{anyhow, Result};
 use log::info;
 use solana_account_decoder::UiAccountEncoding;
 use solana_client::{
@@ -29,6 +24,7 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use std::cmp::min;
+use std::sync::Arc;
 
 /// Max byte size of a serialized transaction.
 static TRANSACTION_MESSAGE_SIZE_LIMIT: usize = 1_232;
@@ -46,7 +42,7 @@ pub async fn build_thread_exec_tx(
     thread: Thread,
     thread_pubkey: Pubkey,
     builder_id: u32,
-) -> PluginResult<Option<VersionedTransaction>> {
+) -> Result<Option<VersionedTransaction>> {
     let now = std::time::Instant::now();
     let signatory_pubkey = payer.pubkey();
     let builder_pubkey = Builder::pubkey(builder_id);
@@ -102,15 +98,8 @@ pub async fn build_thread_exec_tx(
     }
 
     // Build the first instruction
-    let first_instruction = if thread.next_instruction.is_some() {
-        build_exec_ix(
-            thread.clone(),
-            thread_pubkey,
-            signatory_pubkey,
-            builder_pubkey,
-            builder.authority,
-        )
-    } else {
+    // Since we don't have next_instruction anymore, always start with kickoff
+    let first_instruction = {
         match client.get_balance(&signatory_pubkey).await {
             Ok(balance) => {
                 info!("Signatory balance: {}", balance);
@@ -120,12 +109,7 @@ pub async fn build_thread_exec_tx(
             }
         }
 
-        build_kickoff_ix(
-            thread.clone(),
-            thread_pubkey,
-            signatory_pubkey,
-            builder_pubkey,
-        )
+        build_kickoff_ix(thread.clone(), thread_pubkey, signatory_pubkey)
     };
 
     // Initialize instructions vector
@@ -144,15 +128,12 @@ pub async fn build_thread_exec_tx(
             &[], // address table lookups
             nonce_blockhash,
         )
-        .map_err(|e| {
-            GeyserPluginError::Custom(format!("Failed to compile message: {}", e).into())
-        })?;
+        .map_err(|e| anyhow!("Failed to compile message: {}", e))?;
 
         let versioned_message = VersionedMessage::V0(message);
         // Create versioned transaction
-        let sim_tx = VersionedTransaction::try_new(versioned_message, &[payer]).map_err(|e| {
-            GeyserPluginError::Custom(format!("Failed to create transaction: {}", e).into())
-        })?;
+        let sim_tx = VersionedTransaction::try_new(versioned_message, &[payer])
+            .map_err(|e| anyhow!("Failed to create transaction: {}", e))?;
 
         // Check transaction size limit
         let tx_size = sim_tx.message.serialize().len();
@@ -185,9 +166,7 @@ pub async fn build_thread_exec_tx(
                     solana_client::client_error::ClientErrorKind::RpcError(
                         solana_client::rpc_request::RpcError::RpcResponseError { code, .. },
                     ) if code == JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED => {
-                        return Err(GeyserPluginError::Custom(
-                            "RPC client has not reached min context slot".into(),
-                        ));
+                        return Err(anyhow!("RPC client has not reached min context slot"));
                     }
                     _ => break,
                 }
@@ -244,28 +223,13 @@ pub async fn build_thread_exec_tx(
                     }
                 };
 
-                // Check if next instruction exists
-                match sim_thread.next_instruction {
-                    Some(_) => (),
-                    None => {
-                        break;
-                    }
-                };
-
-                // Check execution context and rate limit
-                let exec_context = match sim_thread.exec_context {
-                    Some(context) => context,
-                    None => {
-                        info!("No exec context found, breaking");
-                        break;
-                    }
-                };
-
-                if !exec_context.execs_since_slot.lt(&sim_thread.rate_limit) {
-                    info!("Rate limit reached, breaking");
+                // Check if thread has more fibers to execute
+                if sim_thread.exec_index >= sim_thread.fibers.len() as u8 {
+                    info!("No more fibers to execute");
                     break;
                 }
 
+                // Add the next exec instruction
                 ixs.push(build_exec_ix(
                     sim_thread,
                     thread_pubkey,
@@ -296,16 +260,12 @@ pub async fn build_thread_exec_tx(
 
     let message =
         v0::Message::try_compile(&signatory_pubkey, &successful_ixs, &[], nonce_blockhash)
-            .map_err(|e| {
-                GeyserPluginError::Custom(format!("Failed to compile final message: {}", e).into())
-            })?;
+            .map_err(|e| anyhow!("Failed to compile final message: {}", e))?;
 
     let versioned_message = VersionedMessage::V0(message);
-    let signed_tx = VersionedTransaction::try_new(versioned_message, &[payer]).map_err(|e| {
-        GeyserPluginError::Custom(format!("Failed to create final transaction: {}", e).into())
-    })?;
+    let signed_tx = VersionedTransaction::try_new(versioned_message, &[payer])
+        .map_err(|e| anyhow!("Failed to create final transaction: {}", e))?;
 
-    // @todo - this will be submitted to NATs to be submitted via executors.
     info!(
         "Successfully built transaction - slot: {:?} thread: {:?} sim_duration: {:?} instruction_count: {:?} compute_units: {:?} tx_sig: {:?}",
         slot,
@@ -316,74 +276,52 @@ pub async fn build_thread_exec_tx(
         signed_tx.signatures[0]
     );
 
-    let thread_builder_claim_ix: Instruction = build_thread_claim(
-        signatory_pubkey,
-        nonce_blockhash.to_string(),
-        thread.nonce_account,
-        thread_pubkey,
-    );
-    let blockhash = client.get_latest_blockhash().await.unwrap();
-    let claim: v0::Message = v0::Message::try_compile(
-        &signatory_pubkey,
-        &[thread_builder_claim_ix],
-        &[],
-        blockhash,
-    )
-    .map_err(|e| {
-        GeyserPluginError::Custom(format!("Failed to compile claim message: {}", e).into())
-    })?;
-
-    let versioned_claim = VersionedMessage::V0(claim);
-    let tx = VersionedTransaction::try_new(versioned_claim, &[payer]).map_err(|e| {
-        GeyserPluginError::Custom(format!("Failed to create claim transaction: {}", e).into())
-    })?;
-
-    Ok(Some(tx))
+    Ok(Some(signed_tx))
 }
 
-fn build_thread_claim(
+pub fn build_thread_claim(
     signatory: Pubkey,
-    hash: String,
-    nonce_account: Pubkey,
     thread: Pubkey,
+    builder: Pubkey,
+    registry: Pubkey,
 ) -> Instruction {
-    return Instruction {
+    Instruction {
         program_id: antegen_thread_program::ID,
-        accounts: antegen_thread_program::accounts::ThreadClaim {
-            authority: signatory,
-            signatory,
-            nonce_account,
-            thread,
-            system_program: system_program::ID,
-        }
-        .to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::ThreadClaim { hash }.data(),
-    };
+        accounts: vec![
+            AccountMeta::new(signatory, true),
+            AccountMeta::new(thread, false),
+            AccountMeta::new_readonly(builder, false),
+            AccountMeta::new_readonly(registry, false),
+        ],
+        data: antegen_thread_program::instruction::ThreadClaim {}.data(),
+    }
 }
 
 fn build_kickoff_ix(
     thread: Thread,
     thread_pubkey: Pubkey,
     signatory_pubkey: Pubkey,
-    builder_pubkey: Pubkey,
 ) -> Instruction {
     info!("--- build_kickoff_ix input parameters ---");
     info!("thread: {:?}", thread);
     info!("thread_pubkey: {}", thread_pubkey);
     info!("signatory_pubkey: {}", signatory_pubkey);
-    info!("builder_pubkey: {}", builder_pubkey);
     info!("--------------------------------------");
+
+    let mut account_metas = vec![
+        AccountMeta::new(signatory_pubkey, true),
+        AccountMeta::new(thread_pubkey, false),
+    ];
+
+    if thread.has_nonce_account() {
+        account_metas.push(AccountMeta::new(thread.nonce_account, false));
+    }
+
+    account_metas.push(AccountMeta::new_readonly(system_program::ID, false));
 
     let mut kickoff_ix = Instruction {
         program_id: antegen_thread_program::ID,
-        accounts: antegen_thread_program::accounts::ThreadKickoff {
-            signatory: signatory_pubkey,
-            thread: thread_pubkey,
-            builder: builder_pubkey,
-            nonce_account: thread.nonce_account,
-            system_program: system_program::ID,
-        }
-        .to_account_metas(Some(false)),
+        accounts: account_metas,
         data: antegen_thread_program::instruction::ThreadKickoff {}.data(),
     };
 
@@ -408,43 +346,31 @@ fn build_exec_ix(
     thread: Thread,
     thread_pubkey: Pubkey,
     signatory_pubkey: Pubkey,
-    builder_pubkey: Pubkey,
-    authority_pubkey: Pubkey,
+    _builder_pubkey: Pubkey,
+    _authority_pubkey: Pubkey,
 ) -> Instruction {
-    // Build the instruction.
-    let mut exec_ix = Instruction {
+    // Build the instruction for thread execution
+    // We need to get the fiber PDA based on thread and exec_index
+    let fiber_pubkey = Pubkey::find_program_address(
+        &[
+            b"thread_fiber",
+            thread_pubkey.as_ref(),
+            &[thread.exec_index],
+        ],
+        &antegen_thread_program::ID,
+    )
+    .0;
+
+    let exec_ix = Instruction {
         program_id: antegen_thread_program::ID,
-        accounts: antegen_thread_program::accounts::ThreadExec {
-            authority: authority_pubkey,
-            signatory: signatory_pubkey,
-            thread: thread_pubkey,
-            builder: builder_pubkey,
-            network_fee: ANTEGEN_SQUADS,
-        }
-        .to_account_metas(Some(true)),
+        accounts: vec![
+            AccountMeta::new(signatory_pubkey, true),
+            AccountMeta::new(thread_pubkey, false),
+            AccountMeta::new_readonly(fiber_pubkey, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ],
         data: antegen_thread_program::instruction::ThreadExec {}.data(),
     };
-
-    if let Some(next_instruction) = thread.next_instruction {
-        // Inject the target program account.
-        exec_ix.accounts.push(AccountMeta::new_readonly(
-            next_instruction.program_id,
-            false,
-        ));
-
-        // Inject the worker pubkey as the dynamic "payer" account.
-        for acc in next_instruction.clone().accounts {
-            let acc_pubkey = if acc.pubkey == PAYER_PUBKEY {
-                signatory_pubkey
-            } else {
-                acc.pubkey
-            };
-            exec_ix.accounts.push(match acc.is_writable {
-                true => AccountMeta::new(acc_pubkey, false),
-                false => AccountMeta::new_readonly(acc_pubkey, false),
-            })
-        }
-    }
 
     exec_ix
 }

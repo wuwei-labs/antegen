@@ -15,8 +15,6 @@ pub struct Builder {
     pub commission_bps: u64,
     /// The builder's id.
     pub id: u32,
-    /// Whether the builder is active in rotation.
-    pub is_active: bool,
     /// The builder's signatory address (used to sign txs).
     pub signatory: Pubkey,
 }
@@ -83,7 +81,6 @@ impl BuilderAcount for Account<'_, Builder> {
         self.authority = authority.key();
         self.commission_bps = builder_commission_bps; // Start at max, builder can lower if desired
         self.id = id;
-        self.is_active = false;
         self.signatory = signatory.key();
         Ok(())
     }

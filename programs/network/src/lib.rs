@@ -22,16 +22,8 @@ pub const CURRENT_REGISTRY_VERSION: u64 = 1;
 pub mod network_program {
     pub use super::*;
 
-    pub fn builder_activate(ctx: Context<BuilderActivate>) -> Result<()> {
-        builder_activate::handler(ctx)
-    }
-
     pub fn builder_create(ctx: Context<BuilderCreate>) -> Result<()> {
         builder_create::handler(ctx)
-    }
-
-    pub fn builder_deactivate(ctx: Context<BuilderDeactivate>) -> Result<()> {
-        builder_deactivate::handler(ctx)
     }
 
     pub fn builder_update(ctx: Context<BuilderUpdate>, settings: BuilderSettings) -> Result<()> {

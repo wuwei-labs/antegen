@@ -22,12 +22,15 @@ name = "antegen_plugin"
 solana-cron = { workspace = true }
 antegen-utils = { workspace = true }
 antegen-plugin-utils = { workspace = true }
+antegen-builder = { workspace = true }
+antegen-submitter = { workspace = true }
 antegen-thread-program = { workspace = true }
 antegen-network-program = { workspace = true }
 
 anchor-lang = { workspace = true }
 
 agave-geyser-plugin-interface = { workspace = true }
+anyhow = { workspace = true }
 async-nats = { workspace = true }
 async_once = { workspace = true }
 async-trait = { workspace = true }

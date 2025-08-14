@@ -4,13 +4,9 @@ pub mod config {
 
 use agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin;
 
-//mod builders;
-// mod executors;
 mod events;
-mod observers;
 mod plugin;
-// mod pool_position;
-// mod utils;
+mod worker;
 
 pub use plugin::AntegenPlugin;
 

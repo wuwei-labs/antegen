@@ -1,0 +1,9 @@
+{
+  "keypath": "/home/solana/.config/solana/id.json",
+  "libpath": null,
+  "thread_count": 10,
+  "transaction_timeout_threshold": 150,
+  "builder_id": 1,
+  "rpc_url": "http://localhost:8899",
+  "ws_url": "ws://localhost:8900"
+}

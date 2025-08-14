@@ -17,6 +17,8 @@ pub struct PluginConfig {
     pub thread_count: usize,
     pub transaction_timeout_threshold: u64,
     pub builder_id: u32,
+    pub rpc_url: Option<String>,
+    pub ws_url: Option<String>,
 }
 
 impl Default for PluginConfig {
@@ -27,6 +29,8 @@ impl Default for PluginConfig {
             transaction_timeout_threshold: DEFAULT_TRANSACTION_TIMEOUT_THRESHOLD,
             thread_count: DEFAULT_THREAD_COUNT,
             builder_id: 1,
+            rpc_url: None,
+            ws_url: None,
         }
     }
 }

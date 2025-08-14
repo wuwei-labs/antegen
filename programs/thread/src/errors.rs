@@ -80,9 +80,6 @@ pub enum AntegenThreadError {
 
     #[msg("Invalid signatory for builder")]
     InvalidSignatory,
-
-    #[msg("Builder is not active")]
-    BuilderNotActive,
 }
 
 /// Alias for AntegenThreadError

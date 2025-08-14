@@ -27,7 +27,6 @@ pub struct ThreadClaim<'info> {
         ],
         bump = builder.bump,
         constraint = builder.signatory == signatory.key() @ ThreadError::InvalidSignatory,
-        constraint = builder.is_active @ ThreadError::BuilderNotActive,
     )]
     pub builder: Account<'info, Builder>,
 

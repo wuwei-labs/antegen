@@ -391,6 +391,32 @@ name = "antegen"
 version = "2.2.7"
 
 [[package]]
+name = "antegen-builder"
+version = "2.2.7"
+dependencies = [
+ "anchor-lang",
+ "antegen-network-program",
+ "antegen-submitter",
+ "antegen-thread-program",
+ "antegen-utils",
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "bincode",
+ "chrono",
+ "hex",
+ "log 0.4.25",
+ "serde",
+ "serde_json",
+ "solana-account-decoder",
+ "solana-client",
+ "solana-program",
+ "solana-rpc-client-nonce-utils",
+ "solana-sdk",
+ "tokio",
+]
+
+[[package]]
 name = "antegen-cli"
 version = "2.2.7"
 dependencies = [
@@ -444,10 +470,13 @@ version = "2.2.7"
 dependencies = [
  "agave-geyser-plugin-interface",
  "anchor-lang",
+ "antegen-builder",
  "antegen-network-program",
  "antegen-plugin-utils",
+ "antegen-submitter",
  "antegen-thread-program",
  "antegen-utils",
+ "anyhow",
  "async-nats",
  "async-trait",
  "async_once",
@@ -503,6 +532,27 @@ dependencies = [
  "chrono",
  "nom",
  "once_cell",
+]
+
+[[package]]
+name = "antegen-submitter"
+version = "2.2.7"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "bincode",
+ "chrono",
+ "futures",
+ "log 0.4.25",
+ "serde",
+ "serde_json",
+ "solana-client",
+ "solana-program",
+ "solana-quic-client",
+ "solana-sdk",
+ "solana-tpu-client",
+ "tokio",
 ]
 
 [[package]]

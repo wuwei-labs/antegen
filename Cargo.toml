@@ -28,7 +28,9 @@ codegen-units = 1
 resolver = "2"
 members = [
     "cli",
-    "cron",
+    "crates/builder",
+    "crates/cron",
+    "crates/submitter",
     "plugin",
     "programs/network",
     "programs/thread",
@@ -48,9 +50,11 @@ readme = "./README.md"
 keywords = ["solana"]
 
 [workspace.dependencies]
-solana-cron = { path = "cron" }
+solana-cron = { path = "crates/cron" }
 antegen-utils = { path = "utils" }
 antegen-plugin-utils = { path = "plugin/utils" }
+antegen-builder = { path = "crates/builder" }
+antegen-submitter = { path = "crates/submitter" }
 antegen-thread-program = { path = "programs/thread", features = [
     "no-entrypoint",
 ] }
@@ -78,6 +82,7 @@ chrono = { version = "0.4.39", default-features = false, features = ["alloc"] }
 clap = { version = "4.5.23", features = ["derive"] }
 dirs-next = { version = "2.0.0" }
 futures = { version = "0.3.31" }
+hex = { version = "0.4.3" }
 getrandom = { version = "0.2.2", features = ["custom"] }
 indicatif = { version = "0.17" }
 lazy_static = { version = "1.5.0" }
@@ -101,8 +106,9 @@ solana-cli-config = { version = "=2.1.21" }
 solana-client = { version = "=2.1.21" }
 solana-logger = { version = "=2.1.21" }
 solana-program = { version = "=2.1.21" }
-solana-rpc-client-nonce-utils = { version = "=2.1.21" }
 solana-quic-client = { version = "=2.1.21" }
+solana-rpc-client-nonce-utils = { version = "=2.1.21" }
+solana-tpu-client = { version = "=2.1.21" }
 solana-sdk = { version = "=2.1.21" }
 solana-transaction-status = { version = "=2.1.21" }
 solana-zk-token-sdk = { version = "=2.1.21" }

@@ -1,5 +1,5 @@
 use {
-    crate::{config::PluginConfig, events::AccountUpdateEvent, observers::Observers},
+    crate::{config::PluginConfig, events::AccountUpdateEvent, worker::PluginWorker},
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         GeyserPlugin, GeyserPluginError, ReplicaAccountInfo, ReplicaAccountInfoVersions,
         Result as PluginResult, SlotStatus,
@@ -26,8 +26,7 @@ impl Debug for AntegenPlugin {
 #[derive(Debug)]
 pub struct Inner {
     pub config: PluginConfig,
-    // pub executors: Arc<Executors>,
-    pub observers: Arc<Observers>,
+    pub worker: Arc<PluginWorker>,
     pub runtime: Arc<Runtime>,
 }
 
@@ -52,25 +51,36 @@ impl GeyserPlugin for AntegenPlugin {
         // Create runtime here
         let runtime = build_runtime(config.clone());
 
-        // Initialize observers asynchronously
-        let observers_result = runtime.block_on(async {
-            match Observers::new().await {
-                // Note the .await here
-                Ok(observers) => Ok(observers),
+        // Initialize worker mode (builder + submitter)
+        let worker = runtime.block_on(async {
+            let rpc_url = config
+                .rpc_url
+                .clone()
+                .unwrap_or_else(|| "http://localhost:8899".to_string());
+            let ws_url = config
+                .ws_url
+                .clone()
+                .unwrap_or_else(|| "ws://localhost:8900".to_string());
+            let keypair_path = config.keypath.clone().unwrap_or_else(|| {
+                format!("{}/.config/solana/id.json", std::env::var("HOME").unwrap())
+            });
+
+            match PluginWorker::new(config.builder_id, rpc_url, ws_url, keypair_path).await {
+                Ok(worker) => Ok(worker),
                 Err(e) => {
-                    let error_msg = format!("Failed to create observers: {}", e);
+                    let error_msg = format!("Failed to create worker: {}", e);
                     error!("{}", error_msg);
                     Err(GeyserPluginError::Custom(error_msg.into()))
                 }
             }
         })?;
 
-        // let executors = Arc::new(Executors::new(config.clone()));
+        // Worker will be started with its run method
+        let worker = Arc::new(worker);
 
         self.inner = Some(Arc::new(Inner {
             config,
-            // executors,
-            observers: Arc::new(observers_result),
+            worker,
             runtime,
         }));
 
@@ -128,35 +138,24 @@ impl GeyserPlugin for AntegenPlugin {
 
         // Process event on tokio task.
         inner.clone().spawn(|inner| async move {
-            // Send all account updates to the thread observer for account listeners.
             // Only process account updates if we're past the startup phase.
             if !is_startup {
-                inner
-                    .observers
-                    .plugin
-                    .clone()
-                    .observe_account(account_pubkey, slot)
-                    .await?;
+                // Account updates could be sent to worker if needed
+                // For now, we only care about specific events below
             }
 
             // Parse and process specific update events.
             if let Ok(event) = event {
                 match event {
                     AccountUpdateEvent::Clock { clock } => {
-                        inner
-                            .observers
-                            .plugin
-                            .clone()
-                            .observe_clock(clock)
-                            .await
-                            .ok();
+                        // Send to worker for processing
+                        inner.worker.send_clock_event(clock, slot).await.ok();
                     }
                     AccountUpdateEvent::Thread { thread } => {
+                        // Send to worker for processing
                         inner
-                            .observers
-                            .plugin
-                            .clone()
-                            .observe_thread(thread, account_pubkey, slot)
+                            .worker
+                            .send_thread_event(thread, account_pubkey, slot)
                             .await
                             .ok();
                     }
@@ -184,10 +183,11 @@ impl GeyserPlugin for AntegenPlugin {
         };
 
         let status = status.clone();
-        inner.clone().spawn(|inner| async move {
+        inner.clone().spawn(|_inner| async move {
             match status {
                 SlotStatus::Processed => {
-                    inner.observers.plugin.clone().process_slot(slot).await?;
+                    // Slot processing could be sent to worker if needed
+                    info!("Slot {} processed", slot);
                 }
                 _ => (),
             }
