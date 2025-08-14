@@ -1,6 +1,6 @@
 {
-  "keypath": "/home/solana/.config/solana/id.json",
-  "libpath": null,
+  "libpath": "../target/debug/libantegen_plugin.dylib",
+  "keypath": "~/.config/solana/id.json",
   "thread_count": 10,
   "transaction_timeout_threshold": 150,
   "builder_id": 1,

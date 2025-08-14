@@ -1,0 +1,30 @@
+################################################################
+# Manage antegen deployment through Crypto Infrastructure as Code
+################################################################
+
+addon "svm" {
+    rpc_api_url = input.rpc_api_url
+    network_id = input.network_id
+}
+
+variable "antegen_network_program" {
+  value = svm::get_program_from_anchor_project("antegen_network_program")
+}
+
+variable "antegen_thread_program" {
+  value = svm::get_program_from_anchor_project("antegen_thread_program")
+}
+
+action "deploy_antegen_network_program" "svm::deploy_program" {
+    description = "Deploy antegen_network_program program"
+    program = variable.antegen_network_program
+    authority = signer.authority
+    payer = signer.payer
+}
+
+action "deploy_antegen_thread_program" "svm::deploy_program" {
+    description = "Deploy antegen_thread_program program"
+    program = variable.antegen_thread_program
+    authority = signer.authority
+    payer = signer.payer
+}

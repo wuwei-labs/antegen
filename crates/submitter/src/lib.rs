@@ -21,4 +21,4 @@ pub use nats_consumer::*;
 pub use hybrid_source::*;
 pub use service::*;
 // SubmitterMode is already exported from service
-pub use modes::submitter_mode;
+pub use modes::submitter;

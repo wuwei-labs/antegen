@@ -1,3 +1,3 @@
-pub mod submitter_mode;
+pub mod submitter;
 
-pub use submitter_mode::SubmitterMode;
+pub use submitter::SubmitterMode;

@@ -17,7 +17,6 @@ keywords = { workspace = true }
 name = "antegen_network_program"
 crate-type = ["cdylib", "lib"]
 
-
 [features]
 default = []
 anchor-debug = []

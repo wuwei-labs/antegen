@@ -1,5 +1,5 @@
-pub mod builder_mode;
-pub mod worker_mode;
+pub mod builder;
+pub mod worker;
 
-pub use builder_mode::BuilderMode;
-pub use worker_mode::WorkerMode;
+pub use builder::BuilderMode;
+pub use worker::WorkerMode;

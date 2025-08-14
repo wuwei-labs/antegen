@@ -1,0 +1,22 @@
+signer "payer" "svm::secret_key" {
+    description = "Pays fees for program deployments and operations"
+    keypair_json = "~/.config/solana/id.json"
+    // See documentation for other options (mnemonic, etc): https://docs.surfpool.run/iac/svm/signers
+}
+
+signer "authority" "svm::secret_key" {
+    description = "Can upgrade programs and manage critical ops"
+    keypair_json = "~/.config/solana/id.json"
+}
+
+action "setup" "svm::setup_surfnet" {
+    set_program_authority {
+        program_id = variable.antegen_network_program.program_id
+        authority = signer.authority.public_key
+    }
+
+    set_program_authority {
+        program_id = variable.antegen_thread_program.program_id
+        authority = signer.authority.public_key
+    }
+}
