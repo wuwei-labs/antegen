@@ -12,6 +12,7 @@ static DEFAULT_THREAD_COUNT: usize = 10;
 /// Plugin config.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PluginConfig {
+    pub name: String,
     pub keypath: Option<String>,
     pub libpath: Option<String>,
     pub thread_count: usize,
@@ -24,13 +25,14 @@ pub struct PluginConfig {
 impl Default for PluginConfig {
     fn default() -> Self {
         Self {
+            name: "antegen".to_string(),
             keypath: None,
             libpath: None,
             transaction_timeout_threshold: DEFAULT_TRANSACTION_TIMEOUT_THRESHOLD,
             thread_count: DEFAULT_THREAD_COUNT,
             builder_id: 1,
-            rpc_url: None,
-            ws_url: None,
+            rpc_url: Some("http://localhost:8899".to_string()),
+            ws_url: Some("ws://localhost:8900".to_string()),
         }
     }
 }

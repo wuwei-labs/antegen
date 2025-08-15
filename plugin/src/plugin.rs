@@ -4,7 +4,7 @@ use {
         GeyserPlugin, GeyserPluginError, ReplicaAccountInfo, ReplicaAccountInfoVersions,
         Result as PluginResult, SlotStatus,
     },
-    log::{error, info},
+    log::{debug, error, info},
     solana_program::pubkey::Pubkey,
     std::{fmt::Debug, sync::Arc},
     tokio::runtime::{Builder, Runtime},
@@ -28,6 +28,7 @@ pub struct Inner {
     pub config: PluginConfig,
     pub worker: Arc<PluginWorker>,
     pub runtime: Arc<Runtime>,
+    pub block_height: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl GeyserPlugin for AntegenPlugin {
@@ -52,7 +53,7 @@ impl GeyserPlugin for AntegenPlugin {
         let runtime = build_runtime(config.clone());
 
         // Initialize worker mode (builder + submitter)
-        let worker = runtime.block_on(async {
+        let mut worker = runtime.block_on(async {
             let rpc_url = config
                 .rpc_url
                 .clone()
@@ -75,13 +76,17 @@ impl GeyserPlugin for AntegenPlugin {
             }
         })?;
 
-        // Worker will be started with its run method
+        // Start the worker services (spawns builder and submitter)
+        worker.start(runtime.handle().clone())
+            .map_err(|e| GeyserPluginError::Custom(format!("Failed to start worker services: {}", e).into()))?;
+        
         let worker = Arc::new(worker);
 
         self.inner = Some(Arc::new(Inner {
             config,
             worker,
             runtime,
+            block_height: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }));
 
         Ok(())
@@ -148,8 +153,10 @@ impl GeyserPlugin for AntegenPlugin {
             if let Ok(event) = event {
                 match event {
                     AccountUpdateEvent::Clock { clock } => {
-                        // Send to worker for processing
-                        inner.worker.send_clock_event(clock, slot).await.ok();
+                        // Get current block height
+                        let block_height = inner.block_height.load(std::sync::atomic::Ordering::SeqCst);
+                        // Send to worker for processing with block height
+                        inner.worker.send_clock_event(clock, slot, block_height).await.ok();
                     }
                     AccountUpdateEvent::Thread { thread } => {
                         // Send to worker for processing
@@ -183,11 +190,18 @@ impl GeyserPlugin for AntegenPlugin {
         };
 
         let status = status.clone();
-        inner.clone().spawn(|_inner| async move {
+        inner.clone().spawn(|inner| async move {
             match status {
+                SlotStatus::Confirmed | SlotStatus::Rooted => {
+                    // Increment block height for confirmed/finalized slots
+                    let new_height = inner.block_height.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    info!("Block {} confirmed (slot {})", new_height, slot);
+                    
+                    // Send block height update to worker
+                    // This will be included with the next clock event
+                }
                 SlotStatus::Processed => {
-                    // Slot processing could be sent to worker if needed
-                    info!("Slot {} processed", slot);
+                    debug!("Slot {} processed", slot);
                 }
                 _ => (),
             }

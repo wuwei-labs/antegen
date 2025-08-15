@@ -43,6 +43,7 @@ pub async fn build_thread_exec_tx(
     thread_pubkey: Pubkey,
     builder_id: u32,
 ) -> Result<Option<VersionedTransaction>> {
+    println!("DEBUG exec.rs: build_thread_exec_tx called for thread {}", thread_pubkey);
     let now = std::time::Instant::now();
     let signatory_pubkey = payer.pubkey();
     let builder_pubkey = Builder::pubkey(builder_id);
@@ -50,6 +51,7 @@ pub async fn build_thread_exec_tx(
     let builder_account = match client.get_account(&builder_pubkey).await {
         Ok(account) => account,
         Err(err) => {
+            println!("DEBUG exec.rs: Failed to get builder account {}: {:?}", builder_pubkey, err);
             info!(
                 "Failed to get builder account {}: {:?}",
                 builder_pubkey, err
@@ -230,13 +232,20 @@ pub async fn build_thread_exec_tx(
                 }
 
                 // Add the next exec instruction
-                ixs.push(build_exec_ix(
+                match build_exec_ix(
+                    client.clone(),
                     sim_thread,
                     thread_pubkey,
                     signatory_pubkey,
                     builder_pubkey,
                     builder.authority,
-                ));
+                ).await {
+                    Ok(exec_ix) => ixs.push(exec_ix),
+                    Err(e) => {
+                        info!("Failed to build exec instruction: {:?}", e);
+                        break;
+                    }
+                }
             }
         }
     }
@@ -342,13 +351,14 @@ fn build_kickoff_ix(
     kickoff_ix
 }
 
-fn build_exec_ix(
+async fn build_exec_ix(
+    client: Arc<RpcClient>,
     thread: Thread,
     thread_pubkey: Pubkey,
     signatory_pubkey: Pubkey,
     _builder_pubkey: Pubkey,
     _authority_pubkey: Pubkey,
-) -> Instruction {
+) -> Result<Instruction> {
     // Build the instruction for thread execution
     // We need to get the fiber PDA based on thread and exec_index
     let fiber_pubkey = Pubkey::find_program_address(
@@ -361,6 +371,18 @@ fn build_exec_ix(
     )
     .0;
 
+    // Fetch the fiber account to verify it exists
+    match client.get_account(&fiber_pubkey).await {
+        Ok(_fiber_account) => {
+            info!("Fetched fiber account {} for thread {} at index {}", 
+                  fiber_pubkey, thread_pubkey, thread.exec_index);
+        }
+        Err(err) => {
+            info!("Failed to fetch fiber account {}: {:?}", fiber_pubkey, err);
+            return Err(anyhow!("Fiber account not found: {}", fiber_pubkey));
+        }
+    }
+
     let exec_ix = Instruction {
         program_id: antegen_thread_program::ID,
         accounts: vec![
@@ -372,5 +394,5 @@ fn build_exec_ix(
         data: antegen_thread_program::instruction::ThreadExec {}.data(),
     };
 
-    exec_ix
+    Ok(exec_ix)
 }

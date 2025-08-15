@@ -2,8 +2,9 @@ use anyhow::Result;
 use log::info;
 use std::sync::Arc;
 use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::signature::{Keypair, read_keypair_file};
 
-use crate::data_source::DataSource;
+use crate::events::EventSource;
 use crate::service::{BuilderService, BuilderConfig};
 
 /// Builder mode: Observes blockchain events and builds transactions, publishes to NATS
@@ -14,7 +15,7 @@ pub struct BuilderMode {
 impl BuilderMode {
     pub async fn new(
         config: BuilderConfig,
-        data_source: Box<dyn DataSource>,
+        event_source: Box<dyn EventSource>,
     ) -> Result<Self> {
         info!(
             "Initializing Builder mode - builder_id: {}, NATS: {:?}",
@@ -24,11 +25,17 @@ impl BuilderMode {
         
         let rpc_client = Arc::new(RpcClient::new(config.rpc_url));
         
+        // Load keypair
+        let keypair = read_keypair_file(&config.keypair_path)
+            .map_err(|e| anyhow::anyhow!("Failed to load keypair: {}", e))?;
+        let keypair = Arc::new(keypair);
+        
         // Create builder service with NATS publisher
         let service = BuilderService::new_builder(
-            data_source,
+            event_source,
             config.builder_id,
             rpc_client,
+            keypair,
             config.nats_url.as_ref().unwrap_or(&"nats://localhost:4222".to_string()),
         ).await?;
         

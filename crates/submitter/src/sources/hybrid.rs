@@ -2,10 +2,8 @@ use async_trait::async_trait;
 use anyhow::Result;
 use log::debug;
 
-use crate::source::TransactionSource;
+use crate::sources::{TransactionSource, LocalQueue, NatsConsumer};
 use crate::types::BuiltTransaction;
-use crate::local_queue::LocalQueue;
-use crate::nats_consumer::NatsConsumer;
 
 /// Hybrid transaction source that prioritizes local queue over NATS
 pub struct HybridSource {

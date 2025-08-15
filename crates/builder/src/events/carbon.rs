@@ -5,11 +5,11 @@ use tokio::sync::mpsc::Receiver;
 use std::collections::HashSet;
 use log::{debug, info};
 
-use crate::data_source::{DataSource, ObservedEvent};
+use crate::events::{EventSource, ObservedEvent};
 
-/// Data source that receives events from Carbon indexer
+/// Event source that receives events from Carbon indexer
 /// Carbon handles the complexity of different sources (RPC, Geyser, etc.)
-pub struct CarbonDataSource {
+pub struct CarbonEventSource {
     /// Receiver for events from Carbon pipeline
     receiver: Receiver<ObservedEvent>,
     /// Threads we're interested in
@@ -20,7 +20,7 @@ pub struct CarbonDataSource {
     running: bool,
 }
 
-impl CarbonDataSource {
+impl CarbonEventSource {
     pub fn new(receiver: Receiver<ObservedEvent>) -> Self {
         Self {
             receiver,
@@ -38,7 +38,7 @@ impl CarbonDataSource {
     /// - Account decoders
     /// - Update filtering
     pub async fn from_carbon_config(config: CarbonConfig) -> Result<Self> {
-        info!("Initializing Carbon data source with config: {:?}", config);
+        info!("Initializing Carbon event source with config: {:?}", config);
         
         // In a real implementation, this would:
         // 1. Initialize Carbon pipeline with the config
@@ -58,16 +58,16 @@ impl CarbonDataSource {
 }
 
 #[async_trait]
-impl DataSource for CarbonDataSource {
+impl EventSource for CarbonEventSource {
     async fn start(&mut self) -> Result<()> {
-        info!("Starting Carbon data source");
+        info!("Starting Carbon event source");
         self.running = true;
         // Carbon pipeline would be started here
         Ok(())
     }
     
     async fn stop(&mut self) -> Result<()> {
-        info!("Stopping Carbon data source");
+        info!("Stopping Carbon event source");
         self.running = false;
         // Carbon pipeline would be stopped here
         Ok(())
@@ -127,7 +127,7 @@ impl DataSource for CarbonDataSource {
     }
     
     fn name(&self) -> &str {
-        "CarbonDataSource"
+        "CarbonEventSource"
     }
 }
 

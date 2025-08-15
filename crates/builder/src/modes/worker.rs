@@ -4,7 +4,7 @@ use std::sync::Arc;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::signer::keypair::Keypair;
 
-use crate::data_source::DataSource;
+use crate::events::EventSource;
 use crate::service::{BuilderService, BuilderConfig};
 use antegen_submitter::SubmitterService;
 
@@ -17,7 +17,7 @@ pub struct WorkerMode {
 impl WorkerMode {
     pub async fn new(
         builder_config: BuilderConfig,
-        data_source: Box<dyn DataSource>,
+        event_source: Box<dyn EventSource>,
         submitter_keypair: Arc<Keypair>,
         rpc_url: String,
         ws_url: String,
@@ -31,9 +31,10 @@ impl WorkerMode {
         
         // Create channel for builder -> submitter communication
         let (builder_service, _tx_sender) = BuilderService::new_worker(
-            data_source,
+            event_source,
             builder_config.builder_id,
             rpc_client,
+            submitter_keypair.clone(),
         );
         
         // Create submitter with local queue

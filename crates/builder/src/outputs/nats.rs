@@ -3,6 +3,7 @@ use async_nats::jetstream::stream::{Config as StreamConfig, RetentionPolicy};
 use async_nats::jetstream::{self, Context as JetStreamContext};
 use log::{debug, info};
 use std::time::Duration;
+use anchor_lang::AnchorSerialize;
 
 use antegen_submitter::BuiltTransaction;
 
@@ -61,8 +62,8 @@ impl NatsPublisher {
             tx.builder_id
         );
 
-        // Serialize transaction
-        let payload = serde_json::to_vec(&tx)?;
+        // Serialize transaction using Anchor serialization
+        let payload = tx.try_to_vec()?;
 
         // Publish to JetStream
         let ack = self
@@ -82,7 +83,7 @@ impl NatsPublisher {
     /// Publish with custom subject
     pub async fn publish_with_subject(&self, subject: &str, tx: &BuiltTransaction) -> Result<()> {
         let full_subject = format!("{}.{}", self.subject_prefix, subject);
-        let payload = serde_json::to_vec(&tx)?;
+        let payload = tx.try_to_vec()?;
 
         let ack = self
             .jetstream

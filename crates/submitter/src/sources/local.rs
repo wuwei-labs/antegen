@@ -3,7 +3,7 @@ use anyhow::Result;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use log::debug;
 
-use crate::source::TransactionSource;
+use crate::sources::TransactionSource;
 use crate::types::BuiltTransaction;
 
 /// Local in-memory queue for transactions
@@ -15,6 +15,13 @@ pub struct LocalQueue {
 impl LocalQueue {
     pub fn new(buffer_size: usize) -> Self {
         let (sender, receiver) = channel(buffer_size);
+        Self {
+            receiver,
+            sender,
+        }
+    }
+    
+    pub fn from_receiver(receiver: Receiver<BuiltTransaction>, sender: Sender<BuiltTransaction>) -> Self {
         Self {
             receiver,
             sender,

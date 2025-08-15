@@ -4,13 +4,16 @@ use {
         client::Client, config::CliConfig, deps, errors::CliError, parser::ProgramInfo,
         print::print_style, print_status,
     },
+    antegen_thread_program::state::Trigger,
     antegen_utils::explorer::Explorer,
+    antegen_utils::thread::{SerializableAccountMeta, SerializableInstruction},
     anyhow::{Context, Result},
     solana_sdk::{
         commitment_config::CommitmentConfig,
         native_token::LAMPORTS_PER_SOL,
         pubkey::Pubkey,
         signature::{read_keypair_file, Signer},
+        system_instruction, system_program,
     },
     std::fs,
     std::process::{Command, Stdio},
@@ -30,7 +33,10 @@ pub fn start(
     config.dev = dev;
 
     if dev {
-        std::env::set_var("RUST_LOG", "antegen_plugin=debug,solana_validator=debug,solana_runtime=debug,solana_transaction_status=debug,solana_ledger=debug");
+        std::env::set_var(
+            "RUST_LOG",
+            "antegen_plugin=debug,antegen_builder=debug,antegen_submitter=debug",
+        );
     }
 
     deps::download_deps(
@@ -57,7 +63,7 @@ pub fn start(
     // Initialize Antegen
     super::network::initialize(client)?;
     register_worker(client, config)?;
-    // Test thread creation has been moved to test suite
+    create_test_thread(client)?;
 
     Ok(())
 }
@@ -82,11 +88,59 @@ fn register_worker(client: &Client, config: &CliConfig) -> Result<()> {
     Ok(())
 }
 
+fn create_test_thread(client: &Client) -> Result<()> {
+    // Create a simple transfer instruction (1 lamport to self)
+    let test_instruction = SerializableInstruction {
+        program_id: system_program::ID,
+        accounts: vec![
+            SerializableAccountMeta {
+                pubkey: client.payer_pubkey(),
+                is_signer: true,
+                is_writable: true,
+            },
+            SerializableAccountMeta {
+                pubkey: client.payer_pubkey(),
+                is_signer: false,
+                is_writable: true,
+            },
+        ],
+        data: system_instruction::transfer(
+            &client.payer_pubkey(),
+            &client.payer_pubkey(),
+            1, // 1 lamport
+        )
+        .data,
+    };
+
+    let thread_id = "test-thread".to_string();
+    // Use an interval trigger that fires every 30 seconds
+    // This will let us see the submitter waiting and then submitting
+    let trigger = Trigger::Interval {
+        seconds: 30,
+        skippable: true,
+    };
+
+    // Create thread with initial instruction
+    super::thread::create(client, thread_id, trigger, Some(test_instruction))
+        .context("Failed to create test thread")?;
+
+    print_status!(
+        "Test Thread 🧵",
+        "Created test thread with transfer instruction (runs every 30 seconds)"
+    );
+    Ok(())
+}
+
 fn create_geyser_plugin_config(config: &CliConfig) -> Result<()> {
     let geyser_config = antegen_plugin_utils::PluginConfig {
+        name: "antegen".to_string(),
         keypath: Some(config.signatory().to_owned()),
         libpath: Some(config.geyser_lib().to_owned()),
-        ..Default::default()
+        builder_id: 1,
+        rpc_url: Some("http://localhost:8899".to_string()),
+        ws_url: Some("ws://localhost:8900".to_string()),
+        thread_count: 10,
+        transaction_timeout_threshold: 150,
     };
 
     let content = serde_json::to_string_pretty(&geyser_config)

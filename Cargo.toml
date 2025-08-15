@@ -64,6 +64,7 @@ antegen-network-program = { path = "programs/network", features = [
 
 anchor-lang = { version = "0.31.1" }
 anchor-spl = { features = ["mint", "token"], version = "0.31.1" }
+borsh = { version = "0.10.3" }
 
 actix-cors = { version = "0.6.4" }
 actix-web = { version = "4.3.1" }
@@ -93,6 +94,7 @@ once_cell = { version = "1.20.2" }
 proc-macro2 = { version = "1.0.95" }
 prost = { version = "0.12.3" }
 pyth-sdk-solana = { version = "0.10" }
+rand = { version = "0.8" }
 rayon = { version = "1.7.0" }
 regex = { version = "1.7.1" }
 reqwest = { version = "0.11.20", features = ["blocking", "json"] }

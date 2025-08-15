@@ -1,8 +1,9 @@
-use serde::{Deserialize, Serialize};
+use anchor_lang::{AnchorSerialize, AnchorDeserialize};
 use solana_program::pubkey::Pubkey;
-use solana_sdk::instruction::AccountMeta;
+use antegen_thread_program::state::Trigger;
+use antegen_utils::thread::SerializableAccountMeta;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct BuiltTransaction {
     /// Unique transaction ID
     pub id: String,
@@ -29,7 +30,13 @@ pub struct BuiltTransaction {
     pub compute_units: u32,
     
     /// Remaining accounts needed for execution
-    pub remaining_accounts: Vec<AccountMeta>,
+    pub remaining_accounts: Vec<SerializableAccountMeta>,
+    
+    /// Thread trigger type for scheduling
+    pub trigger: Trigger,
+    
+    /// Last time the thread was started (from trigger_context)
+    pub last_started_at: i64,
 }
 
 impl BuiltTransaction {
@@ -37,7 +44,7 @@ impl BuiltTransaction {
         thread_pubkey: Pubkey,
         builder_id: u32,
         partial_tx: Vec<u8>,
-        remaining_accounts: Vec<AccountMeta>,
+        remaining_accounts: Vec<SerializableAccountMeta>,
     ) -> Self {
         let timestamp = chrono::Utc::now().timestamp();
         let id = format!("{}_{}_{}", thread_pubkey, builder_id, timestamp);
@@ -52,6 +59,8 @@ impl BuiltTransaction {
             builder_signature: Vec::new(),
             compute_units: 200_000, // Default
             remaining_accounts,
+            trigger: Trigger::Now, // Default, should be overridden by builder
+            last_started_at: 0, // Default, should be overridden by builder
         }
     }
 }

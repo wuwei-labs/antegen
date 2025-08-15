@@ -46,8 +46,9 @@ pub mod cpi {
         amount: u64,
         id: ThreadId,
         trigger: Trigger,
+        initial_instruction: Option<SerializableInstruction>,
     ) -> Result<()> {
-        antegen_thread_program::cpi::thread_create(ctx, amount, id, trigger)
+        antegen_thread_program::cpi::thread_create(ctx, amount, id, trigger, initial_instruction)
     }
 
     pub fn thread_delete<'info>(

@@ -12,8 +12,8 @@ use solana_sdk::{
 use anyhow::{Result, anyhow};
 use log::{info, warn};
 use bincode::serialize;
-use crate::tpu_client::TpuClientManager;
-use crate::transaction_monitor::{TransactionMonitor, TransactionStatus};
+use crate::clients::TpuClientManager;
+use crate::transaction::{TransactionMonitor, TransactionStatus};
 
 /// Handles transaction submission and monitoring
 pub struct TransactionSubmitter {

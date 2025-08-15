@@ -538,16 +538,22 @@ dependencies = [
 name = "antegen-submitter"
 version = "3.0.0"
 dependencies = [
+ "anchor-lang",
+ "antegen-thread-program",
+ "antegen-utils",
  "anyhow",
  "async-nats",
  "async-trait",
  "bincode",
+ "borsh 0.10.4",
  "chrono",
  "futures",
  "log 0.4.25",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "solana-client",
+ "solana-cron",
  "solana-program",
  "solana-quic-client",
  "solana-sdk",

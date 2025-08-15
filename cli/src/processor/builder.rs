@@ -24,7 +24,7 @@ impl BuilderInfo {
         println!(
             "Address: {}\nStatus: {}\n{:#?}",
             self.explorer.account(&self.pubkey),
-            if self.builder.is_active { "Active" } else { "Inactive" },
+            "Active",
             self.builder
         );
     }
@@ -114,34 +114,6 @@ pub fn update(
     Ok(())
 }
 
-pub fn activate(client: &Client, id: u32) -> Result<(), CliError> {
-    let builder_pubkey: Pubkey = Builder::pubkey(id);
-    let ix: Instruction = Instruction {
-        program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::BuilderActivate {
-            signatory: client.payer_pubkey(),
-            builder: builder_pubkey,
-        }
-        .to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::BuilderActivate {}.data(),
-    };
-    client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
-    get(client, id)?;
-    Ok(())
-}
+// Builder activation removed - builders are always active if they exist
 
-pub fn deactivate(client: &Client, id: u32) -> Result<(), CliError> {
-    let builder_pubkey: Pubkey = Builder::pubkey(id);
-    let ix: Instruction = Instruction {
-        program_id: antegen_network_program::ID,
-        accounts: antegen_network_program::accounts::BuilderDeactivate {
-            signatory: client.payer_pubkey(),
-            builder: builder_pubkey,
-        }
-        .to_account_metas(Some(false)),
-        data: antegen_network_program::instruction::BuilderDeactivate {}.data(),
-    };
-    client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
-    get(client, id)?;
-    Ok(())
-}
+// Builder deactivation removed - builders are always active if they exist

@@ -4,6 +4,7 @@ use anchor_lang::{
     InstructionData, ToAccountMetas,
 };
 use antegen_thread_program::state::{Thread, Trigger};
+use antegen_utils::thread::SerializableInstruction;
 use solana_sdk::{
     native_token::LAMPORTS_PER_SOL,
     pubkey::Pubkey,
@@ -16,9 +17,20 @@ pub fn create(
     client: &Client,
     id: String,
     trigger: Trigger,
+    initial_instruction: Option<SerializableInstruction>,
 ) -> Result<(), CliError> {
     let thread_pubkey = Thread::pubkey(client.payer_pubkey(), id.clone().into_bytes());
     let nonce_keypair = Keypair::new();
+    
+    // Calculate fiber PDA if instruction provided
+    let fiber_pubkey = if initial_instruction.is_some() {
+        Some(Pubkey::find_program_address(
+            &[b"thread_fiber", thread_pubkey.as_ref(), &[0u8]],
+            &antegen_thread_program::ID,
+        ).0)
+    } else {
+        None
+    };
 
     let ix = Instruction {
         program_id: antegen_thread_program::ID,
@@ -26,6 +38,7 @@ pub fn create(
             authority: client.payer_pubkey(),
             payer: client.payer_pubkey(),
             thread: thread_pubkey,
+            fiber: fiber_pubkey,
             nonce_account: Some(nonce_keypair.pubkey()),
             recent_blockhashes: Some(recent_blockhashes::ID),
             rent: Some(rent::ID),
@@ -36,6 +49,7 @@ pub fn create(
             amount: LAMPORTS_PER_SOL,
             id: id.into(),
             trigger,
+            initial_instruction,
         }
         .data(),
     };

@@ -103,8 +103,9 @@ pub mod thread_program {
         amount: u64,
         id: ThreadId,
         trigger: Trigger,
+        initial_instruction: Option<SerializableInstruction>,
     ) -> Result<()> {
-        thread_create::handler(ctx, amount, id, trigger)
+        thread_create::handler(ctx, amount, id, trigger, initial_instruction)
     }
 
     /// Closes an existing thread account and returns the lamports to the owner.

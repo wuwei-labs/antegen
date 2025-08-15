@@ -1,4 +1,5 @@
 {
+  "name": "antegen",
   "libpath": "../target/debug/libantegen_plugin.dylib",
   "keypath": "~/.config/solana/id.json",
   "thread_count": 10,

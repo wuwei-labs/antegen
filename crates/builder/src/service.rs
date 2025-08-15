@@ -2,19 +2,21 @@ use anyhow::Result;
 use log::{debug, error, info, warn};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_program::pubkey::Pubkey;
+use solana_sdk::signer::keypair::Keypair;
 use std::sync::Arc;
 use tokio::sync::mpsc::{channel, Sender};
 
-use crate::data_source::{DataSource, ObservedEvent};
-use crate::data_sources::{CarbonDataSource, GeyserDataSource};
-use crate::nats_publisher::NatsPublisher;
+use crate::events::{EventSource, ObservedEvent, CarbonEventSource, GeyserEventSource};
+use crate::outputs::NatsPublisher;
+use crate::transaction::exec::build_thread_exec_tx;
 use antegen_submitter::BuiltTransaction;
-use antegen_thread_program::state::{Thread, Trigger};
+use antegen_thread_program::state::Thread;
+use antegen_network_program::state::Builder;
 
 /// Builder service that observes events and builds transactions
 pub struct BuilderService {
-    /// Data source for blockchain events
-    data_source: Box<dyn DataSource>,
+    /// Event source for blockchain events
+    event_source: Box<dyn EventSource>,
     /// Builder ID
     builder_id: u32,
     /// RPC client for additional queries
@@ -23,75 +25,167 @@ pub struct BuilderService {
     tx_sender: Option<Sender<BuiltTransaction>>,
     /// NATS publisher (Builder mode)
     nats_publisher: Option<NatsPublisher>,
+    /// Builder keypair for signing transactions
+    keypair: Arc<Keypair>,
 }
 
 impl BuilderService {
-    /// Create a Carbon data source
+    /// Create a Carbon event source
     pub fn create_carbon_source(
         receiver: tokio::sync::mpsc::Receiver<ObservedEvent>,
-    ) -> Box<dyn DataSource> {
-        Box::new(CarbonDataSource::new(receiver))
+    ) -> Box<dyn EventSource> {
+        Box::new(CarbonEventSource::new(receiver))
     }
     
-    /// Create a Geyser data source
+    /// Create a Geyser event source
     pub fn create_geyser_source(
         receiver: tokio::sync::mpsc::Receiver<ObservedEvent>,
-    ) -> Box<dyn DataSource> {
-        Box::new(GeyserDataSource::new(receiver))
+    ) -> Box<dyn EventSource> {
+        Box::new(GeyserEventSource::new(receiver))
     }
     
     /// Create builder for Worker mode (outputs to channel)
     pub fn new_worker(
-        data_source: Box<dyn DataSource>,
+        event_source: Box<dyn EventSource>,
         builder_id: u32,
         rpc_client: Arc<RpcClient>,
+        keypair: Arc<Keypair>,
     ) -> (Self, Sender<BuiltTransaction>) {
         let (tx, _rx) = channel(100);
         let sender = tx.clone();
 
         (
             Self {
-                data_source,
+                event_source,
                 builder_id,
                 rpc_client,
                 tx_sender: Some(tx),
                 nats_publisher: None,
+                keypair,
             },
             sender,
         )
     }
+    
+    /// Create builder with explicit output channels
+    pub async fn new_with_outputs(
+        event_source: Box<dyn EventSource>,
+        builder_id: u32,
+        rpc_client: Arc<RpcClient>,
+        keypair: Arc<Keypair>,
+        local_sender: Option<Sender<BuiltTransaction>>,
+        nats_url: Option<String>,
+    ) -> Result<Self> {
+        let nats_publisher = if let Some(url) = nats_url {
+            Some(NatsPublisher::new(&url, None, None).await?)
+        } else {
+            None
+        };
+        
+        Ok(Self {
+            event_source,
+            builder_id,
+            rpc_client,
+            tx_sender: local_sender,
+            nats_publisher,
+            keypair,
+        })
+    }
 
     /// Create builder for Builder mode (publishes to NATS)
     pub async fn new_builder(
-        data_source: Box<dyn DataSource>,
+        event_source: Box<dyn EventSource>,
         builder_id: u32,
         rpc_client: Arc<RpcClient>,
+        keypair: Arc<Keypair>,
         nats_url: &str,
     ) -> Result<Self> {
         let nats_publisher = Some(NatsPublisher::new(nats_url, None, None).await?);
 
         Ok(Self {
-            data_source,
+            event_source,
             builder_id,
             rpc_client,
             tx_sender: None,
             nats_publisher,
+            keypair,
         })
+    }
+
+    /// Wait for builder account to exist with exponential backoff
+    async fn wait_for_builder_account(&self) -> Result<()> {
+        use antegen_network_program::state::Builder;
+        
+        let builder_pubkey = Builder::pubkey(self.builder_id);
+        info!("BUILDER: Waiting for builder account {} to be created...", builder_pubkey);
+        
+        let mut attempts = 0;
+        let mut delay_ms: u64 = 100; // Start with 100ms
+        const MAX_DELAY_MS: u64 = 600_000; // Max 10 minutes between checks
+        const BACKOFF_MULTIPLIER: f64 = 1.5; // Exponential backoff factor
+        
+        loop {
+            match self.rpc_client.get_account(&builder_pubkey).await {
+                Ok(account) => {
+                    // Try to deserialize to ensure it's a valid Builder account
+                    match Builder::try_from(account.data.as_slice()) {
+                        Ok(builder) => {
+                            info!("BUILDER: Builder account found and verified after {} attempts (id={}, authority={}, signatory={})", 
+                                  attempts, builder.id, builder.authority, builder.signatory);
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            warn!("BUILDER: Account exists but failed to deserialize as Builder: {:?}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    if attempts == 0 {
+                        info!("BUILDER: Builder account not found yet, will keep checking...");
+                    } else if attempts % 10 == 0 {
+                        info!("BUILDER: Still waiting for builder account (attempt {}, next check in {}s)", 
+                              attempts, delay_ms / 1000);
+                    } else {
+                        debug!("BUILDER: Builder account check #{} failed: {:?}", attempts, e);
+                    }
+                }
+            }
+            
+            attempts += 1;
+            tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+            
+            // Exponential backoff with cap
+            delay_ms = ((delay_ms as f64 * BACKOFF_MULTIPLIER) as u64).min(MAX_DELAY_MS);
+        }
     }
 
     /// Main service loop
     pub async fn run(&mut self) -> Result<()> {
-        info!("Starting builder service (builder_id: {})", self.builder_id);
+        info!("BUILDER: Service starting (builder_id={}, source={})", 
+              self.builder_id, self.event_source.name());
 
-        // Start data source
-        self.data_source.start().await?;
+        // Wait for builder account to exist before processing events
+        self.wait_for_builder_account().await?;
 
+        // Start event source
+        self.event_source.start().await?;
+        info!("BUILDER: Event source started, entering main loop");
+
+        let mut event_count = 0;
         loop {
-            // Get next event from data source
-            match self.data_source.next_event().await? {
+            // Get next event from event source
+            match self.event_source.next_event().await? {
                 Some(event) => {
-                    if let Err(e) = self.process_event(event).await {
-                        error!("Error processing event: {}", e);
+                    event_count += 1;
+                    info!("BUILDER: Received event #{}", event_count);
+                    
+                    match self.process_event(event).await {
+                        Ok(()) => {
+                            info!("BUILDER: Event #{} processed successfully", event_count);
+                        }
+                        Err(e) => {
+                            error!("BUILDER: Event #{} processing failed: {}", event_count, e);
+                        }
                     }
                 }
                 None => {
@@ -110,16 +204,11 @@ impl BuilderService {
                 thread,
                 slot,
             } => {
-                debug!("Thread executable: {} at slot {}", thread_pubkey, slot);
-                self.handle_executable_thread(thread_pubkey, thread, slot)
-                    .await?;
-            }
-            ObservedEvent::ClockUpdate { slot, .. } => {
-                debug!("Clock update: slot {}", slot);
-                // Could trigger time-based threads here
+                info!("BUILDER: Processing ThreadExecutable for thread {}", thread_pubkey);
+                self.handle_executable_thread(thread_pubkey, thread, slot).await?;
             }
             _ => {
-                // Other events we might not care about for building
+                debug!("BUILDER: Ignoring non-thread event");
             }
         }
         Ok(())
@@ -132,79 +221,55 @@ impl BuilderService {
         thread: Thread,
         slot: u64,
     ) -> Result<()> {
-        // Check if thread is truly executable
-        if !self.is_thread_executable(&thread, slot).await? {
-            return Ok(());
-        }
-
-        // Check if we should claim this thread
-        if thread.builders.contains(&self.builder_id) {
-            debug!("Already claimed thread: {}", thread_pubkey);
-            return Ok(());
-        }
-
-        // Try to claim the thread
-        match self.claim_thread(thread_pubkey).await {
-            Ok(()) => {
-                info!("Claimed thread: {}", thread_pubkey);
-            }
-            Err(e) => {
-                warn!("Failed to claim thread {}: {}", thread_pubkey, e);
-                return Ok(());
-            }
-        }
-
-        // Build the transaction
-        match crate::thread_exec::build_thread_exec_tx(
+        info!("BUILDER: Building real transaction for thread {}", thread_pubkey);
+        
+        // Build the actual thread execution transaction
+        match build_thread_exec_tx(
             self.rpc_client.clone(),
-            &self.get_builder_keypair()?,
+            &*self.keypair,
             slot,
             thread.clone(),
             thread_pubkey,
             self.builder_id,
-        )
-        .await?
-        {
-            Some(tx) => {
-                info!("Built transaction for thread: {}", thread_pubkey);
-
-                // Create BuiltTransaction
-                let built_tx = BuiltTransaction::new(
+        ).await? {
+            Some(versioned_tx) => {
+                info!("BUILDER: Successfully built transaction for thread {}", thread_pubkey);
+                
+                // Serialize the transaction
+                let tx_bytes = bincode::serialize(&versioned_tx)?;
+                
+                // Extract timing info
+                let last_started_at = match &thread.trigger_context {
+                    antegen_thread_program::state::TriggerContext::Timestamp { prev, .. } => *prev,
+                    antegen_thread_program::state::TriggerContext::Block { prev, .. } => *prev as i64,
+                    antegen_thread_program::state::TriggerContext::Account { .. } => 0,
+                };
+                
+                // Create BuiltTransaction with real transaction bytes
+                let mut built_tx = BuiltTransaction::new(
                     thread_pubkey,
                     self.builder_id,
-                    bincode::serialize(&tx)?,
-                    vec![], // remaining_accounts would be populated from thread_exec
+                    tx_bytes,
+                    vec![],
                 );
-
-                // Output transaction
+                
+                built_tx.trigger = thread.trigger.clone();
+                built_tx.last_started_at = last_started_at;
+                built_tx.slot = slot;
+                
+                info!("BUILDER: Sending real tx {} to outputs (signature: {:?})", 
+                      built_tx.id, versioned_tx.signatures[0]);
                 self.output_transaction(built_tx).await?;
+                info!("BUILDER: Transaction sent successfully");
             }
             None => {
-                debug!("No transaction built for thread: {}", thread_pubkey);
+                warn!("BUILDER: Could not build transaction for thread {} (may be pending or invalid)", thread_pubkey);
             }
         }
-
+        
         Ok(())
     }
 
-    /// Check if thread is executable
-    async fn is_thread_executable(&self, thread: &Thread, slot: u64) -> Result<bool> {
-        if thread.paused {
-            return Ok(false);
-        }
-
-        if !thread.builders.is_empty() {
-            // Someone is already building
-            return Ok(false);
-        }
-
-        // Check trigger
-        match &thread.trigger {
-            Trigger::Now => Ok(true),
-            Trigger::Slot { slot: trigger_slot } => Ok(slot >= *trigger_slot),
-            _ => Ok(false), // Other triggers need more complex logic
-        }
-    }
 
     /// Claim a thread for building
     async fn claim_thread(&self, thread_pubkey: Pubkey) -> Result<()> {
@@ -214,17 +279,34 @@ impl BuilderService {
         Ok(())
     }
 
-    /// Output built transaction based on mode
+    /// Output built transaction to all configured outputs
     async fn output_transaction(&mut self, tx: BuiltTransaction) -> Result<()> {
+        let tx_id = tx.id.clone();
+        
+        // Send to local channel if configured
         if let Some(sender) = &self.tx_sender {
-            // Worker mode: send to channel
-            sender.send(tx).await?;
-        } else if let Some(publisher) = &self.nats_publisher {
-            // Builder mode: publish to NATS
-            publisher.publish(&tx).await?;
+            info!("BUILDER->SUBMITTER: Sending tx {} via channel", tx_id);
+            
+            match sender.send(tx.clone()).await {
+                Ok(()) => {
+                    info!("BUILDER->SUBMITTER: Successfully sent tx {}", tx_id);
+                }
+                Err(e) => {
+                    error!("BUILDER->SUBMITTER: Channel send failed: {}", e);
+                    return Err(anyhow::anyhow!("Channel send failed: {}", e));
+                }
+            }
         } else {
-            return Err(anyhow::anyhow!("No output configured"));
+            error!("BUILDER: No channel configured!");
+            return Err(anyhow::anyhow!("No output channel configured"));
         }
+        
+        // NATS publishing would go here if configured
+        if let Some(publisher) = &self.nats_publisher {
+            debug!("BUILDER->NATS: Publishing tx {}", tx_id);
+            publisher.publish(&tx).await?;
+        }
+        
         Ok(())
     }
 

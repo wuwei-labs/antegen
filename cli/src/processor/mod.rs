@@ -59,7 +59,7 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             dev,
             trailing_args,
         ),
-        CliCommand::ThreadCreate { id, trigger } => thread::create(&client, id, trigger),
+        CliCommand::ThreadCreate { id, trigger } => thread::create(&client, id, trigger, None),
         CliCommand::ThreadDelete { id, address } => {
             let pubkey = parse_pubkey_from_id_or_address(client.payer_pubkey(), id, address)?;
             thread::delete(&client, pubkey)
@@ -78,8 +78,6 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             commission_bps,
             signatory,
         } => builder::update(&client, id, commission_bps, signatory),
-        CliCommand::BuilderActivate { id } => builder::activate(&client, id),
-        CliCommand::BuilderDeactivate { id } => builder::deactivate(&client, id),
     }
 }
 

@@ -105,7 +105,6 @@ fn parse_network_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     }
 }
 
-
 fn parse_thread_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     match matches.subcommand() {
         Some(("create", matches)) => Ok(CliCommand::ThreadCreate {
@@ -154,12 +153,6 @@ fn parse_builder_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
             id: parse_u32("id", matches)?,
             commission_bps: parse_u64("commission_bps", matches).ok(),
             signatory: parse_keypair_file("signatory_keypair", matches).ok(),
-        }),
-        Some(("activate", matches)) => Ok(CliCommand::BuilderActivate {
-            id: parse_u32("id", matches)?,
-        }),
-        Some(("deactivate", matches)) => Ok(CliCommand::BuilderDeactivate {
-            id: parse_u32("id", matches)?,
         }),
         _ => Err(CliError::CommandNotRecognized(
             matches.subcommand().unwrap().0.into(),
@@ -223,7 +216,6 @@ pub fn _parse_i64(arg: &str, matches: &ArgMatches) -> Result<i64, CliError> {
         .map_err(|_err| CliError::BadParameter(arg.into()))
         .unwrap())
 }
-
 
 pub fn parse_u32(arg: &str, matches: &ArgMatches) -> Result<u32, CliError> {
     Ok(parse_string(arg, matches)?

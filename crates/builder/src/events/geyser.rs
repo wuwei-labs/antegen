@@ -5,17 +5,17 @@ use solana_program::pubkey::Pubkey;
 use std::collections::HashSet;
 use tokio::sync::mpsc::Receiver;
 
-use crate::data_source::{DataSource, ObservedEvent};
+use crate::events::{EventSource, ObservedEvent};
 
-/// Data source that receives events from Geyser plugin
-pub struct GeyserDataSource {
+/// Event source that receives events from Geyser plugin
+pub struct GeyserEventSource {
     receiver: Receiver<ObservedEvent>,
     subscribed_threads: HashSet<Pubkey>,
     current_slot: u64,
     running: bool,
 }
 
-impl GeyserDataSource {
+impl GeyserEventSource {
     pub fn new(receiver: Receiver<ObservedEvent>) -> Self {
         Self {
             receiver,
@@ -27,15 +27,15 @@ impl GeyserDataSource {
 }
 
 #[async_trait]
-impl DataSource for GeyserDataSource {
+impl EventSource for GeyserEventSource {
     async fn start(&mut self) -> Result<()> {
-        info!("Starting Geyser data source");
+        info!("Starting Geyser event source");
         self.running = true;
         Ok(())
     }
 
     async fn stop(&mut self) -> Result<()> {
-        info!("Stopping Geyser data source");
+        info!("Stopping Geyser event source");
         self.running = false;
         Ok(())
     }
@@ -48,9 +48,24 @@ impl DataSource for GeyserDataSource {
         // Try to receive event from channel (non-blocking)
         match self.receiver.try_recv() {
             Ok(event) => {
-                // Update current slot if this is a clock update
-                if let ObservedEvent::ClockUpdate { slot, .. } = &event {
-                    self.current_slot = *slot;
+                // Log the received event
+                match &event {
+                    ObservedEvent::ThreadExecutable { thread_pubkey, slot, .. } => {
+                        debug!("Received ThreadExecutable event from Geyser: thread={}, slot={}", thread_pubkey, slot);
+                    }
+                    ObservedEvent::ThreadUpdate { thread_pubkey, slot, .. } => {
+                        debug!("Received ThreadUpdate event from Geyser: thread={}, slot={}", thread_pubkey, slot);
+                    }
+                    ObservedEvent::BuilderUpdate { builder_pubkey, slot, .. } => {
+                        debug!("Received BuilderUpdate event from Geyser: builder={}, slot={}", builder_pubkey, slot);
+                    }
+                    ObservedEvent::ClockUpdate { slot, epoch, unix_timestamp } => {
+                        debug!("Received ClockUpdate event from Geyser: slot={}, epoch={}, timestamp={}", slot, epoch, unix_timestamp);
+                        self.current_slot = *slot;
+                    }
+                    ObservedEvent::AccountUpdate { pubkey, slot, .. } => {
+                        debug!("Received AccountUpdate event from Geyser: account={}, slot={}", pubkey, slot);
+                    }
                 }
 
                 // Filter thread events based on subscriptions
@@ -93,6 +108,6 @@ impl DataSource for GeyserDataSource {
     }
 
     fn name(&self) -> &str {
-        "GeyserDataSource"
+        "GeyserEventSource"
     }
 }

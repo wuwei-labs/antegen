@@ -28,3 +28,9 @@ serde_json = { workspace = true }
 async-nats = { workspace = true }
 futures = { workspace = true }
 chrono = { workspace = true }
+solana-cron = { workspace = true }
+antegen-thread-program = { workspace = true }
+antegen-utils = { workspace = true }
+anchor-lang = { workspace = true }
+borsh = { workspace = true }
+rand = { workspace = true }

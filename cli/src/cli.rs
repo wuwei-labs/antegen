@@ -55,12 +55,6 @@ pub enum CliCommand {
         commission_bps: Option<u64>,
         signatory: Option<Keypair>,
     },
-    BuilderActivate {
-        id: u32,
-    },
-    BuilderDeactivate {
-        id: u32,
-    },
 }
 
 pub fn app() -> Command {
@@ -377,29 +371,6 @@ pub fn app() -> Command {
                                 .help("Filepath to the builder's new signatory keypair"),
                         ),
                 )
-                .subcommand(
-                    Command::new("activate")
-                        .about("Activate a builder for rotation")
-                        .arg(
-                            Arg::new("id")
-                                .index(1)
-                                .value_name("ID")
-                                .num_args(1)
-                                .required(true)
-                                .help("The ID of the builder to activate"),
-                        ),
-                )
-                .subcommand(
-                    Command::new("deactivate")
-                        .about("Deactivate a builder from rotation")
-                        .arg(
-                            Arg::new("id")
-                                .index(1)
-                                .value_name("ID")
-                                .num_args(1)
-                                .required(true)
-                                .help("The ID of the builder to deactivate"),
-                        ),
-                ),
+,
         )
 }

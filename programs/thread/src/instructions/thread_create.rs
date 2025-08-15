@@ -8,7 +8,8 @@ use anchor_lang::{
     },
     system_program::{create_nonce_account, transfer, CreateNonceAccount, Transfer},
 };
-use antegen_utils::thread::Trigger;
+use antegen_utils::thread::{compile_instruction, SerializableInstruction, Trigger};
+use crate::state::FiberState;
 
 /// Accounts required by the `thread_create` instruction.
 #[derive(Accounts)]
@@ -37,6 +38,20 @@ pub struct ThreadCreate<'info> {
     )]
     pub thread: Account<'info, Thread>,
 
+    /// Optional: The fiber account for initial instruction
+    #[account(
+        init_if_needed,
+        seeds = [
+            SEED_THREAD_FIBER,
+            thread.key().as_ref(),
+            &[0u8], // Always use index 0 for initial instruction
+        ],
+        bump,
+        payer = payer,
+        space = 8 + FiberState::INIT_SPACE
+    )]
+    pub fiber: Option<Account<'info, FiberState>>,
+
     /// CHECK: Nonce account that must be passed in as a signer
     #[account(mut)]
     pub nonce_account: Option<Signer<'info>>,
@@ -58,6 +73,7 @@ pub fn handler(
     amount: u64,
     id: ThreadId,
     trigger: Trigger,
+    initial_instruction: Option<SerializableInstruction>,
 ) -> Result<()> {
     let authority: &Signer = &ctx.accounts.authority;
     let payer: &Signer = &ctx.accounts.payer;
@@ -108,7 +124,30 @@ pub fn handler(
     thread.id = id.into();
     thread.paused = false;
     thread.trigger = trigger;
-    thread.fibers = Vec::new();
+    
+    // Handle optional initial instruction
+    thread.fibers = if let Some(instruction) = initial_instruction {
+        // Check if fiber account was provided
+        if let Some(fiber_account) = &mut ctx.accounts.fiber {
+            // Compile the instruction
+            let compiled = compile_instruction(instruction.into(), vec![])?;
+            let compiled_bytes = compiled.try_to_vec()?;
+            
+            // Initialize the fiber
+            fiber_account.thread = thread.key();
+            fiber_account.index = 0;
+            fiber_account.compiled_instruction = compiled_bytes;
+            
+            // Mark thread as having one fiber at index 0
+            vec![0]
+        } else {
+            msg!("Initial instruction provided but fiber account missing");
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+    
     thread.exec_index = 0;
 
     // Transfer SOL from payer to the thread.

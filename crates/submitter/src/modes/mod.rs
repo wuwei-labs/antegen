@@ -1,3 +1,3 @@
-pub mod submitter;
+pub mod standalone;
 
-pub use submitter::SubmitterMode;
+pub use standalone::*;
