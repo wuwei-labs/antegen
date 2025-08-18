@@ -1,6 +1,6 @@
 use {
     crate::config::CliConfig,
-    antegen_utils::explorer::Explorer,
+    crate::utils::Explorer,
 };
 
 fn explorer(config: CliConfig) -> Explorer {

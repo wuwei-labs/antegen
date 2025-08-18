@@ -1,9 +1,8 @@
-use crate::*;
+use crate::{state::compile_instruction, *};
 use anchor_lang::{
     prelude::*,
     solana_program::{instruction::Instruction, system_program},
 };
-use antegen_utils::thread::compile_instruction;
 
 /// Accounts required by the `fiber_create` instruction.
 #[derive(Accounts)]

@@ -1,1 +1,1 @@
-// Antegen - Root library crate
+// Workspace root library - no exports needed

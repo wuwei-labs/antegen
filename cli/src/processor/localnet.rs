@@ -4,15 +4,12 @@ use {
         client::Client, config::CliConfig, deps, errors::CliError, parser::ProgramInfo,
         print::print_style, print_status,
     },
-    antegen_thread_program::state::Trigger,
-    antegen_utils::explorer::Explorer,
-    antegen_utils::thread::{SerializableAccountMeta, SerializableInstruction},
+    antegen_sdk::state::{Trigger, SerializableAccountMeta, SerializableInstruction},
+    crate::utils::Explorer,
     anyhow::{Context, Result},
     solana_sdk::{
         commitment_config::CommitmentConfig,
-        native_token::LAMPORTS_PER_SOL,
         pubkey::Pubkey,
-        signature::{read_keypair_file, Signer},
         system_instruction, system_program,
     },
     std::fs,
@@ -61,36 +58,14 @@ pub fn start(
     wait_for_validator(client, 120)?;
 
     // Initialize Antegen
-    super::network::initialize(client)?;
-    register_worker(client, config)?;
     create_test_thread(client)?;
 
     Ok(())
 }
 
-fn register_worker(client: &Client, config: &CliConfig) -> Result<()> {
-    let explorer = Explorer::from(client.client.url());
-    // Create the worker
-    let signatory = read_keypair_file(&config.signatory()).map_err(|err| {
-        CliError::FailedLocalnet(format!(
-            "Unable to read keypair {}: {}",
-            &config.signatory(),
-            err
-        ))
-    })?;
-
-    client
-        .airdrop(&signatory.pubkey(), LAMPORTS_PER_SOL)
-        .context("airdrop to signatory failed")?;
-    super::builder::create(client, signatory, true).context("builder::create failed")?;
-    let builder_info = super::builder::_get(client, 1);
-    print_status!("Builder   👷", "{}", explorer.account(builder_info?.pubkey));
-    Ok(())
-}
-
 fn create_test_thread(client: &Client) -> Result<()> {
     // Create a simple transfer instruction (1 lamport to self)
-    let test_instruction = SerializableInstruction {
+    let _test_instruction = SerializableInstruction {
         program_id: system_program::ID,
         accounts: vec![
             SerializableAccountMeta {
@@ -120,8 +95,8 @@ fn create_test_thread(client: &Client) -> Result<()> {
         skippable: true,
     };
 
-    // Create thread with initial instruction
-    super::thread::create(client, thread_id, trigger, Some(test_instruction))
+    // Create thread (without initial instruction since thread_create was simplified)
+    super::thread::create(client, thread_id, trigger)
         .context("Failed to create test thread")?;
 
     print_status!(
@@ -132,7 +107,20 @@ fn create_test_thread(client: &Client) -> Result<()> {
 }
 
 fn create_geyser_plugin_config(config: &CliConfig) -> Result<()> {
-    let geyser_config = antegen_plugin_utils::PluginConfig {
+    // Create a simple plugin config without using external crate
+    #[derive(serde::Serialize)]
+    struct PluginConfig {
+        name: String,
+        keypath: Option<String>,
+        libpath: Option<String>,
+        builder_id: u32,
+        rpc_url: Option<String>,
+        ws_url: Option<String>,
+        thread_count: usize,
+        transaction_timeout_threshold: u64,
+    }
+    
+    let geyser_config = PluginConfig {
         name: "antegen".to_string(),
         keypath: Some(config.signatory().to_owned()),
         libpath: Some(config.geyser_lib().to_owned()),
@@ -183,8 +171,7 @@ fn start_test_validator(
         .arg(&path)
         .arg("--reset")
         .arg("--log") // Enable logging
-        .bpf_program(config, antegen_network_program::ID, "network")
-        .bpf_program(config, antegen_thread_program::ID, "thread")
+        .bpf_program(config, antegen_sdk::ID, "thread")
         // .bpf_program(config, antegen_test_program::ID, "test")
         .clone_addresses(clone_addresses)
         .add_programs_with_path(program_infos)

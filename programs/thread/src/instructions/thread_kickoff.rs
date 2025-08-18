@@ -7,10 +7,11 @@ use crate::{errors::*, *};
 use anchor_lang::{
     prelude::*,
     solana_program::{
-        program::invoke_signed, system_instruction::advance_nonce_account, system_program,
+        instruction, program::invoke_signed, system_instruction::advance_nonce_account,
+        system_program, sysvar::recent_blockhashes,
     },
 };
-use antegen_utils::thread::{Trigger, TriggerContext};
+use crate::state::{Trigger, TriggerContext};
 use chrono::{DateTime, Utc};
 use solana_cron::Schedule;
 use std::str::FromStr;
@@ -38,6 +39,10 @@ pub struct ThreadKickoff<'info> {
     #[account(mut)]
     pub nonce_account: Option<UncheckedAccount<'info>>,
 
+    /// CHECK: Recent blockhashes sysvar (optional - only required if thread has nonce account)
+    #[account(address = recent_blockhashes::ID)]
+    pub recent_blockhashes: Option<UncheckedAccount<'info>>,
+
     #[account(address = system_program::ID)]
     pub system_program: Program<'info, System>,
 }
@@ -51,34 +56,42 @@ fn next_timestamp(after: i64, schedule: String) -> Option<i64> {
 }
 
 pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
+    // Check if called via CPI (must be from thread program)
+    let stack_height = instruction::get_stack_height();
+    require!(stack_height > 1, AntegenThreadError::MustBeCalledViaCPI);
+
     let thread: &mut Box<Account<Thread>> = &mut ctx.accounts.thread;
 
     let clock: Clock = Clock::get().unwrap();
 
-    // Check if thread has any builders claimed - if so, it's being built
-    require!(
-        !thread.has_builders(),
-        AntegenThreadError::ThreadBeingBuilt
-    );
-
     // Advance nonce account if thread has one
     if thread.has_nonce_account() {
-        if let Some(nonce_account) = &ctx.accounts.nonce_account {
-            // Thread PDA signs to advance its own nonce
-            let thread_seeds = &[
-                SEED_THREAD,
-                thread.authority.as_ref(),
-                thread.id.as_slice(),
-                &[thread.bump],
-            ];
+        match (
+            &ctx.accounts.nonce_account,
+            &ctx.accounts.recent_blockhashes,
+        ) {
+            (Some(nonce_account), Some(recent_blockhashes)) => {
+                // Thread PDA signs to advance its own nonce
+                let thread_seeds = &[
+                    SEED_THREAD,
+                    thread.authority.as_ref(),
+                    thread.id.as_slice(),
+                    &[thread.bump],
+                ];
 
-            invoke_signed(
-                &advance_nonce_account(&nonce_account.key(), &thread.key()),
-                &[nonce_account.to_account_info(), thread.to_account_info()],
-                &[thread_seeds],
-            )?;
-        } else {
-            return Err(AntegenThreadError::InvalidNonceAccount.into());
+                invoke_signed(
+                    &advance_nonce_account(&nonce_account.key(), &thread.key()),
+                    &[
+                        nonce_account.to_account_info(),
+                        recent_blockhashes.to_account_info(),
+                        thread.to_account_info(),
+                    ],
+                    &[thread_seeds],
+                )?;
+            }
+            _ => {
+                return Err(AntegenThreadError::InvalidNonceAccount.into());
+            }
         }
     }
 
@@ -141,13 +154,9 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
             schedule,
             skippable,
         } => {
-            // Verify the current timestamp is greater than or equal to the threshold timestamp.
+            // Calculate the next scheduled timestamp (validation happens in thread_submit)
             let threshold_timestamp = next_timestamp(last_started_at, schedule.clone())
                 .ok_or(AntegenThreadError::TriggerConditionFailed)?;
-            require!(
-                clock.unix_timestamp.ge(&threshold_timestamp),
-                AntegenThreadError::TriggerConditionFailed
-            );
 
             // If the schedule is marked as skippable, set the started_at of the exec context to be the current timestamp.
             // Otherwise, the exec context must iterate through each scheduled kickoff moment.
@@ -175,10 +184,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
             thread.exec_index = thread.fibers.first().copied().unwrap_or(0);
         }
         Trigger::Slot { slot } => {
-            require!(
-                clock.slot.ge(&slot),
-                AntegenThreadError::TriggerConditionFailed
-            );
+            // Validation happens in thread_submit
             thread.trigger_context = TriggerContext::Block {
                 prev: last_started_at as u64,
                 next: slot,
@@ -187,10 +193,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
             thread.exec_index = thread.fibers.first().copied().unwrap_or(0);
         }
         Trigger::Epoch { epoch } => {
-            require!(
-                clock.epoch.ge(&epoch),
-                AntegenThreadError::TriggerConditionFailed
-            );
+            // Validation happens in thread_submit
             thread.trigger_context = TriggerContext::Block {
                 prev: last_started_at as u64,
                 next: epoch,
@@ -199,14 +202,8 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
             thread.exec_index = thread.fibers.first().copied().unwrap_or(0);
         }
         Trigger::Interval { seconds, skippable } => {
-            // Calculate next trigger time
+            // Calculate next trigger time (validation happens in thread_submit)
             let next_timestamp = last_started_at.saturating_add(seconds);
-
-            // Verify current time is past the next trigger time
-            require!(
-                clock.unix_timestamp.ge(&next_timestamp),
-                AntegenThreadError::TriggerConditionFailed
-            );
 
             // If skippable, set started_at to current time
             // Otherwise, use the scheduled time to catch up on missed intervals
@@ -225,10 +222,7 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
             thread.exec_index = thread.fibers.first().copied().unwrap_or(0);
         }
         Trigger::Timestamp { unix_ts } => {
-            require!(
-                clock.unix_timestamp.ge(&unix_ts),
-                AntegenThreadError::TriggerConditionFailed
-            );
+            // Validation happens in thread_submit
             thread.trigger_context = TriggerContext::Timestamp {
                 prev: last_started_at,
                 next: unix_ts,

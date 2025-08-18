@@ -1,6 +1,6 @@
-use antegen_thread_program::state::Trigger;
-use clap::{value_parser, Arg, ArgAction, ArgGroup, Command};
-use solana_sdk::{pubkey::Pubkey, signature::Keypair};
+use antegen_sdk::state::Trigger;
+use clap::{Arg, ArgAction, ArgGroup, Command};
+use solana_sdk::pubkey::Pubkey;
 
 use crate::parser::ProgramInfo;
 
@@ -10,7 +10,6 @@ pub enum CliCommand {
     Crontab {
         schedule: String,
     },
-    NetworkInitialize {},
     Localnet {
         force_init: bool,
         clone_addresses: Vec<Pubkey>,
@@ -40,21 +39,6 @@ pub enum CliCommand {
         schedule: Option<String>,
     },
 
-    // Registry
-    RegistryGet,
-
-    // Builder commands
-    BuilderCreate {
-        signatory: Keypair,
-    },
-    BuilderGet {
-        id: u32,
-    },
-    BuilderUpdate {
-        id: u32,
-        commission_bps: Option<u64>,
-        signatory: Option<Keypair>,
-    },
 }
 
 pub fn app() -> Command {
@@ -75,29 +59,6 @@ pub fn app() -> Command {
                         .required(true)
                         .help("The schedule to generate a cron table for"),
                 ),
-        )
-        .subcommand(
-            Command::new("network")
-                .about("Manage the Antegen Network Program")
-                .subcommand(
-                    Command::new("initialize")
-                        .about("Initialize the Network Program")
-                )
-                .subcommand(
-                    Command::new("threads")
-                        .about("Manage Network threads")
-                        .subcommand(
-                            Command::new("create")
-                                .about("Create Epoch and Hasher threads")
-                                .arg(
-                                    Arg::new("amount")
-                                        .long("amount")
-                                        .help("Amount in SOL to deposit")
-                                        .value_parser(value_parser!(f64))
-                                        .default_value("1.0")
-                                )
-                        )
-                )
         )
         .subcommand(
             Command::new("localnet")
@@ -303,74 +264,5 @@ pub fn app() -> Command {
                                 .help("The cron schedule of the thread"),
                         ),
                 ),
-        )
-        .subcommand(
-            Command::new("registry")
-                .about("Manage the Antegen network registry")
-                .arg_required_else_help(true)
-                .subcommand(Command::new("get").about("Lookup the registry")),
-        )
-        .subcommand(
-            Command::new("snapshot")
-                .about("Lookup the current Antegen network registry")
-        )
-        .subcommand(
-            Command::new("builder")
-                .about("Manage your builders")
-                .arg_required_else_help(true)
-                .subcommand(
-                    Command::new("create")
-                        .about("Register a new builder with the Antegen network")
-                        .arg(
-                            Arg::new("signatory_keypair")
-                                .index(1)
-                                .value_name("SIGNATORY_KEYPAIR")
-                                .num_args(1)
-                                .required(true)
-                                .help("Filepath to the builder's signatory keypair"),
-                        ),
-                )
-                .subcommand(
-                    Command::new("get")
-                        .about("Lookup a builder on the Antegen network")
-                        .arg(
-                            Arg::new("id")
-                                .index(1)
-                                .value_name("ID")
-                                .num_args(1)
-                                .required(true)
-                                .help("The ID of the builder to lookup"),
-                        ),
-                )
-                .subcommand(
-                    Command::new("update")
-                        .about("Update a builder")
-                        .arg(
-                            Arg::new("id")
-                                .index(1)
-                                .value_name("ID")
-                                .num_args(1)
-                                .required(true)
-                                .help("The ID of the builder to edit"),
-                        )
-                        .arg(
-                            Arg::new("commission_bps")
-                                .value_name("COMMISSION_BPS")
-                                .num_args(1)
-                                .required(false)
-                                .value_parser(value_parser!(u64))
-                                .help("The commission in basis points (0-10000, where 10000 = 100%)"),
-                        )
-                        .arg(
-                            Arg::new("signatory_keypair")
-                                .long("signatory_keypair")
-                                .short('k')
-                                .value_name("SIGNATORY_KEYPAIR")
-                                .num_args(1)
-                                .required(false)
-                                .help("Filepath to the builder's new signatory keypair"),
-                        ),
-                )
-,
         )
 }

@@ -3,26 +3,36 @@ pub use antegen_thread_program::program::ThreadProgram;
 pub use antegen_thread_program::ThreadId;
 pub use antegen_thread_program::ID;
 
+// Re-export instruction builders and data
+pub mod instruction {
+    pub use antegen_thread_program::instruction::*;
+}
+
+// Re-export account structs
+pub mod accounts {
+    pub use antegen_thread_program::accounts::*;
+}
+
 pub mod seeds {
-    pub use antegen_thread_program::{SEED_THREAD, SEED_THREAD_FIBER};
+    pub use antegen_thread_program::{SEED_CONFIG, SEED_NONCE, SEED_THREAD, SEED_THREAD_FIBER};
 }
 
 pub mod state {
-    pub use antegen_thread_program::state::{FiberState, Thread};
-    pub use antegen_utils::thread::{
-        CompiledInstructionV0, CompiledTransactionV0, SerializableAccountMeta,
-        SerializableInstruction, ThreadResponse, Trigger, TriggerContext, PAYER_PUBKEY,
+    pub use antegen_thread_program::state::{
+        compile_instruction, decompile_instruction, CompiledInstructionData, CompiledInstructionV0,
+        FiberState, SerializableAccountMeta, SerializableInstruction, Thread, ThreadConfig,
+        ThreadResponse, Trigger, TriggerContext, PAYER_PUBKEY,
     };
+    // ConfigUpdateParams is in the instructions module, not state
+    pub use antegen_thread_program::instructions::ConfigUpdateParams;
 }
 
 pub mod cpi {
     use anchor_lang::prelude::{CpiContext, Result};
-    use antegen_utils::thread::{SerializableInstruction, Trigger};
+    use antegen_thread_program::instructions::ConfigUpdateParams;
+    use antegen_thread_program::state::{SerializableInstruction, Trigger};
 
-    pub use antegen_thread_program::cpi::accounts::{
-        FiberCreate, FiberDelete, ThreadCreate, ThreadDelete, ThreadToggle, ThreadUpdate,
-        ThreadWithdraw,
-    };
+    pub use antegen_thread_program::cpi::accounts::*;
     use antegen_thread_program::ThreadId;
 
     pub fn fiber_create<'info>(
@@ -46,9 +56,8 @@ pub mod cpi {
         amount: u64,
         id: ThreadId,
         trigger: Trigger,
-        initial_instruction: Option<SerializableInstruction>,
     ) -> Result<()> {
-        antegen_thread_program::cpi::thread_create(ctx, amount, id, trigger, initial_instruction)
+        antegen_thread_program::cpi::thread_create(ctx, amount, id, trigger)
     }
 
     pub fn thread_delete<'info>(
@@ -75,5 +84,32 @@ pub mod cpi {
         amount: u64,
     ) -> Result<()> {
         antegen_thread_program::cpi::thread_withdraw(ctx, amount)
+    }
+
+    pub fn config_init<'info>(ctx: CpiContext<'_, '_, '_, 'info, ConfigInit<'info>>) -> Result<()> {
+        antegen_thread_program::cpi::config_init(ctx)
+    }
+
+    pub fn config_update<'info>(
+        ctx: CpiContext<'_, '_, '_, 'info, ConfigUpdate<'info>>,
+        params: ConfigUpdateParams,
+    ) -> Result<()> {
+        antegen_thread_program::cpi::config_update(ctx, params)
+    }
+
+    pub fn thread_claim<'info>(
+        ctx: CpiContext<'_, '_, '_, 'info, ThreadClaim<'info>>,
+    ) -> Result<()> {
+        antegen_thread_program::cpi::thread_claim(ctx)
+    }
+
+    pub fn thread_exec<'info>(ctx: CpiContext<'_, '_, '_, 'info, ThreadExec<'info>>) -> Result<()> {
+        antegen_thread_program::cpi::thread_exec(ctx)
+    }
+
+    pub fn thread_kickoff<'info>(
+        ctx: CpiContext<'_, '_, '_, 'info, ThreadKickoff<'info>>,
+    ) -> Result<()> {
+        antegen_thread_program::cpi::thread_kickoff(ctx)
     }
 }

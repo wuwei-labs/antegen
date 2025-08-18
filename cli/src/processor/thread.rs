@@ -3,8 +3,7 @@ use anchor_lang::{
     solana_program::{instruction::Instruction, system_program},
     InstructionData, ToAccountMetas,
 };
-use antegen_thread_program::state::{Thread, Trigger};
-use antegen_utils::thread::SerializableInstruction;
+use antegen_sdk::state::{Thread, Trigger};
 use solana_sdk::{
     native_token::LAMPORTS_PER_SOL,
     pubkey::Pubkey,
@@ -17,39 +16,26 @@ pub fn create(
     client: &Client,
     id: String,
     trigger: Trigger,
-    initial_instruction: Option<SerializableInstruction>,
 ) -> Result<(), CliError> {
     let thread_pubkey = Thread::pubkey(client.payer_pubkey(), id.clone().into_bytes());
     let nonce_keypair = Keypair::new();
-    
-    // Calculate fiber PDA if instruction provided
-    let fiber_pubkey = if initial_instruction.is_some() {
-        Some(Pubkey::find_program_address(
-            &[b"thread_fiber", thread_pubkey.as_ref(), &[0u8]],
-            &antegen_thread_program::ID,
-        ).0)
-    } else {
-        None
-    };
 
     let ix = Instruction {
-        program_id: antegen_thread_program::ID,
-        accounts: antegen_thread_program::accounts::ThreadCreate {
+        program_id: antegen_sdk::ID,
+        accounts: antegen_sdk::accounts::ThreadCreate {
             authority: client.payer_pubkey(),
             payer: client.payer_pubkey(),
             thread: thread_pubkey,
-            fiber: fiber_pubkey,
             nonce_account: Some(nonce_keypair.pubkey()),
             recent_blockhashes: Some(recent_blockhashes::ID),
             rent: Some(rent::ID),
             system_program: system_program::ID,
         }
         .to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::ThreadCreate {
+        data: antegen_sdk::instruction::ThreadCreate {
             amount: LAMPORTS_PER_SOL,
             id: id.into(),
             trigger,
-            initial_instruction,
         }
         .data(),
     };
@@ -62,14 +48,14 @@ pub fn create(
 
 pub fn delete(client: &Client, address: Pubkey) -> Result<(), CliError> {
     let ix = Instruction {
-        program_id: antegen_thread_program::ID,
-        accounts: antegen_thread_program::accounts::ThreadDelete {
+        program_id: antegen_sdk::ID,
+        accounts: antegen_sdk::accounts::ThreadDelete {
             authority: client.payer_pubkey(),
             close_to: client.payer_pubkey(),
             thread: address,
         }
         .to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::ThreadDelete {}.data(),
+        data: antegen_sdk::instruction::ThreadDelete {}.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
     Ok(())
@@ -85,13 +71,13 @@ pub fn get(client: &Client, address: Pubkey) -> Result<(), CliError> {
 pub fn toggle(client: &Client, id: String) -> Result<(), CliError> {
     let thread_pubkey = Thread::pubkey(client.payer_pubkey(), id.into_bytes());
     let ix = Instruction {
-        program_id: antegen_thread_program::ID,
-        accounts: antegen_thread_program::accounts::ThreadToggle {
+        program_id: antegen_sdk::ID,
+        accounts: antegen_sdk::accounts::ThreadToggle {
             authority: client.payer_pubkey(),
             thread: thread_pubkey,
         }
         .to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::ThreadToggle {}.data(),
+        data: antegen_sdk::instruction::ThreadToggle {}.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
     get(client, thread_pubkey)?;
@@ -113,13 +99,13 @@ pub fn update(
         None
     };
     let ix = Instruction {
-        program_id: antegen_thread_program::ID,
-        accounts: antegen_thread_program::accounts::ThreadUpdate {
+        program_id: antegen_sdk::ID,
+        accounts: antegen_sdk::accounts::ThreadUpdate {
             authority: client.payer_pubkey(),
             thread: thread_pubkey,
         }
         .to_account_metas(Some(false)),
-        data: antegen_thread_program::instruction::ThreadUpdate { new_trigger }.data(),
+        data: antegen_sdk::instruction::ThreadUpdate { new_trigger }.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
     get(client, thread_pubkey)?;

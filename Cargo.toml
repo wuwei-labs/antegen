@@ -10,10 +10,6 @@ readme = { workspace = true }
 keywords = { workspace = true }
 publish = false
 
-[lib]
-name = "antegen"
-path = "src/lib.rs"
-
 [profile.release]
 overflow-checks = true
 lto = "fat"
@@ -28,14 +24,12 @@ codegen-units = 1
 resolver = "2"
 members = [
     "cli",
-    "crates/builder",
+    "crates/observer",
     "crates/cron",
-    "crates/submitter",
+    "crates/executor",
     "plugin",
-    "programs/network",
     "programs/thread",
     "sdk",
-    "utils",
 ]
 
 [workspace.package]
@@ -51,14 +45,10 @@ keywords = ["solana"]
 
 [workspace.dependencies]
 solana-cron = { path = "crates/cron" }
-antegen-utils = { path = "utils" }
-antegen-plugin-utils = { path = "plugin/utils" }
-antegen-builder = { path = "crates/builder" }
-antegen-submitter = { path = "crates/submitter" }
+antegen-observer = { path = "crates/observer" }
+antegen-executor = { path = "crates/executor" }
+antegen-sdk = { path = "sdk" }
 antegen-thread-program = { path = "programs/thread", features = [
-    "no-entrypoint",
-] }
-antegen-network-program = { path = "programs/network", features = [
     "no-entrypoint",
 ] }
 

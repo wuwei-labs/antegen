@@ -12,6 +12,16 @@ pub struct FiberState {
     /// The compiled instruction data
     #[max_len(1024)]
     pub compiled_instruction: Vec<u8>,
+    /// Observer who claimed this fiber for execution
+    pub observer: Option<Pubkey>,
+    /// Observer's signature for claiming
+    pub observer_signature: Option<[u8; 64]>,
+    /// When the observer claimed this fiber
+    pub claimed_at: i64,
+    /// When this fiber was last executed
+    pub last_executed: i64,
+    /// Total number of executions
+    pub execution_count: u64,
 }
 
 impl FiberState {

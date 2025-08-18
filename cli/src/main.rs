@@ -6,6 +6,7 @@ mod errors;
 mod parser;
 mod print;
 mod processor;
+mod utils;
 
 use {
     crate::{

@@ -1,9 +1,6 @@
 mod crontab;
 mod localnet;
-mod network;
-mod registry;
 // mod snapshot;
-mod builder;
 mod thread;
 
 use {
@@ -39,7 +36,6 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
     // Process the command
     match command {
         CliCommand::Crontab { schedule } => crontab::get(&client, schedule),
-        CliCommand::NetworkInitialize {} => network::initialize(&client),
         CliCommand::Localnet {
             clone_addresses,
             program_infos,
@@ -59,7 +55,7 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             dev,
             trailing_args,
         ),
-        CliCommand::ThreadCreate { id, trigger } => thread::create(&client, id, trigger, None),
+        CliCommand::ThreadCreate { id, trigger } => thread::create(&client, id, trigger),
         CliCommand::ThreadDelete { id, address } => {
             let pubkey = parse_pubkey_from_id_or_address(client.payer_pubkey(), id, address)?;
             thread::delete(&client, pubkey)
@@ -70,14 +66,6 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             thread::get(&client, pubkey)
         }
         CliCommand::ThreadUpdate { id, schedule } => thread::update(&client, id, schedule),
-        CliCommand::RegistryGet => registry::get(&client),
-        CliCommand::BuilderCreate { signatory } => builder::create(&client, signatory, false),
-        CliCommand::BuilderGet { id } => builder::get(&client, id),
-        CliCommand::BuilderUpdate {
-            id,
-            commission_bps,
-            signatory,
-        } => builder::update(&client, id, commission_bps, signatory),
     }
 }
 

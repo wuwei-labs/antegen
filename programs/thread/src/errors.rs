@@ -60,17 +60,17 @@ pub enum AntegenThreadError {
     #[msg("Thread does not have a nonce account")]
     ThreadHasNoNonceAccount,
 
-    #[msg("Thread is currently being built by builders")]
-    ThreadBeingBuilt,
+    #[msg("Thread is currently being observed by observers")]
+    ThreadBeingObserved,
 
-    #[msg("Builder has not claimed this thread")]
-    BuilderNotClaimed,
+    #[msg("Observer has not claimed this thread")]
+    ObserverNotClaimed,
 
     #[msg("Invalid thread authority")]
     InvalidThreadAuthority,
 
-    #[msg("Invalid builder authority")]
-    InvalidBuilderAuthority,
+    #[msg("Invalid observer authority")]
+    InvalidObserverAuthority,
 
     #[msg("Invalid registry admin")]
     InvalidRegistryAdmin,
@@ -78,8 +78,44 @@ pub enum AntegenThreadError {
     #[msg("Invalid instruction provided to thread_submit")]
     InvalidInstruction,
 
-    #[msg("Invalid signatory for builder")]
+    #[msg("Invalid signatory for observer")]
     InvalidSignatory,
+
+    #[msg("This instruction must be called via CPI")]
+    MustBeCalledViaCPI,
+    
+    #[msg("Fiber already claimed by another observer")]
+    AlreadyClaimed,
+    
+    #[msg("Wrong fiber index for current execution")]
+    WrongFiberIndex,
+    
+    #[msg("Observer priority window is still active")]
+    ObserverPriorityActive,
+    
+    #[msg("Trigger is not ready yet")]
+    TriggerNotReady,
+    
+    #[msg("Nonce account is required for all threads")]
+    NonceRequired,
+    
+    #[msg("Invalid observer account provided")]
+    InvalidObserverAccount,
+    
+    #[msg("Invalid config admin")]
+    InvalidConfigAdmin,
+    
+    #[msg("Global pause is active")]
+    GlobalPauseActive,
+    
+    #[msg("Invalid authority for this operation")]
+    InvalidAuthority,
+    
+    #[msg("Invalid fee percentage (must be 0-10000)")]
+    InvalidFeePercentage,
+    
+    #[msg("Invalid priority window duration")]
+    InvalidPriorityWindow,
 }
 
 /// Alias for AntegenThreadError

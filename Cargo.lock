@@ -391,41 +391,12 @@ name = "antegen"
 version = "3.0.0"
 
 [[package]]
-name = "antegen-builder"
-version = "3.0.0"
-dependencies = [
- "anchor-lang",
- "antegen-network-program",
- "antegen-submitter",
- "antegen-thread-program",
- "antegen-utils",
- "anyhow",
- "async-nats",
- "async-trait",
- "bincode",
- "chrono",
- "hex",
- "log 0.4.25",
- "serde",
- "serde_json",
- "solana-account-decoder",
- "solana-client",
- "solana-program",
- "solana-rpc-client-nonce-utils",
- "solana-sdk",
- "tokio",
-]
-
-[[package]]
 name = "antegen-cli"
 version = "3.0.0"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
- "antegen-network-program",
- "antegen-plugin-utils",
- "antegen-thread-program",
- "antegen-utils",
+ "antegen-sdk",
  "anyhow",
  "bincode",
  "bs58 0.5.1",
@@ -452,16 +423,58 @@ dependencies = [
  "spl-token 7.0.0",
  "tar",
  "termcolor",
+ "terminal-link",
  "thiserror 2.0.11",
 ]
 
 [[package]]
-name = "antegen-network-program"
+name = "antegen-executor"
 version = "3.0.0"
 dependencies = [
  "anchor-lang",
- "anchor-spl",
- "antegen-utils",
+ "antegen-thread-program",
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "bincode",
+ "borsh 0.10.4",
+ "chrono",
+ "futures",
+ "log 0.4.25",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "solana-client",
+ "solana-cron",
+ "solana-program",
+ "solana-quic-client",
+ "solana-sdk",
+ "solana-tpu-client",
+ "tokio",
+]
+
+[[package]]
+name = "antegen-observer"
+version = "3.0.0"
+dependencies = [
+ "anchor-lang",
+ "antegen-executor",
+ "antegen-thread-program",
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "bincode",
+ "chrono",
+ "hex",
+ "log 0.4.25",
+ "serde",
+ "serde_json",
+ "solana-account-decoder",
+ "solana-client",
+ "solana-program",
+ "solana-rpc-client-nonce-utils",
+ "solana-sdk",
+ "tokio",
 ]
 
 [[package]]
@@ -470,12 +483,9 @@ version = "3.0.0"
 dependencies = [
  "agave-geyser-plugin-interface",
  "anchor-lang",
- "antegen-builder",
- "antegen-network-program",
- "antegen-plugin-utils",
- "antegen-submitter",
+ "antegen-executor",
+ "antegen-observer",
  "antegen-thread-program",
- "antegen-utils",
  "anyhow",
  "async-nats",
  "async-trait",
@@ -514,51 +524,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "antegen-plugin-utils"
-version = "3.0.0"
-dependencies = [
- "agave-geyser-plugin-interface",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "antegen-sdk"
 version = "3.0.0"
 dependencies = [
  "anchor-lang",
  "antegen-thread-program",
- "antegen-utils",
  "chrono",
  "nom",
  "once_cell",
-]
-
-[[package]]
-name = "antegen-submitter"
-version = "3.0.0"
-dependencies = [
- "anchor-lang",
- "antegen-thread-program",
- "antegen-utils",
- "anyhow",
- "async-nats",
- "async-trait",
- "bincode",
- "borsh 0.10.4",
- "chrono",
- "futures",
- "log 0.4.25",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "solana-client",
- "solana-cron",
- "solana-program",
- "solana-quic-client",
- "solana-sdk",
- "solana-tpu-client",
- "tokio",
 ]
 
 [[package]]
@@ -567,25 +540,11 @@ version = "3.0.0"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
- "antegen-network-program",
- "antegen-utils",
  "chrono",
  "pyth-sdk-solana",
  "solana-cron",
  "static-pubkey",
  "version",
-]
-
-[[package]]
-name = "antegen-utils"
-version = "3.0.0"
-dependencies = [
- "anchor-lang",
- "base64 0.22.1",
- "serde",
- "serde_json",
- "static-pubkey",
- "terminal-link",
 ]
 
 [[package]]

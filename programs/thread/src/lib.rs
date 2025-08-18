@@ -1,6 +1,6 @@
 pub mod constants;
 pub mod errors;
-mod instructions;
+pub mod instructions;
 pub mod state;
 
 pub use constants::*;
@@ -9,7 +9,7 @@ use state::*;
 
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::Instruction;
-use antegen_utils::thread::{SerializableInstruction, Trigger};
+use state::{SerializableInstruction, Trigger};
 
 declare_id!("AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1");
 
@@ -75,6 +75,16 @@ impl From<ThreadId> for Vec<u8> {
 pub mod thread_program {
     use super::*;
 
+    /// Initialize the global thread configuration.
+    pub fn config_init(ctx: Context<ConfigInit>) -> Result<()> {
+        config_init::handler(ctx)
+    }
+
+    /// Update the global thread configuration.
+    pub fn config_update(ctx: Context<ConfigUpdate>, params: ConfigUpdateParams) -> Result<()> {
+        config_update::handler(ctx, params)
+    }
+
     /// Creates a fiber (instruction) for a thread.
     pub fn fiber_create(
         ctx: Context<FiberCreate>,
@@ -92,20 +102,18 @@ pub mod thread_program {
         fiber_delete::handler(ctx, index)
     }
 
-    /// Executes the next instruction on thread.
-    pub fn thread_exec(ctx: Context<ThreadExec>) -> Result<()> {
-        thread_exec::handler(ctx)
+    /// Creates a new transaction thread.
+    pub fn thread_claim(ctx: Context<ThreadClaim>) -> Result<()> {
+        thread_claim::handler(ctx)
     }
 
-    /// Creates a new transaction thread.
     pub fn thread_create(
         ctx: Context<ThreadCreate>,
         amount: u64,
         id: ThreadId,
         trigger: Trigger,
-        initial_instruction: Option<SerializableInstruction>,
     ) -> Result<()> {
-        thread_create::handler(ctx, amount, id, trigger, initial_instruction)
+        thread_create::handler(ctx, amount, id, trigger)
     }
 
     /// Closes an existing thread account and returns the lamports to the owner.
@@ -113,14 +121,20 @@ pub mod thread_program {
         thread_delete::handler(ctx)
     }
 
-    /// Kicks off a thread if its trigger condition is active.
-    pub fn thread_kickoff(ctx: Context<ThreadKickoff>) -> Result<()> {
-        thread_kickoff::handler(ctx)
+    /// Executes a thread fiber with trigger validation and fee distribution.
+    /// Respects builder claim priority windows from registry configuration.
+    pub fn thread_exec(ctx: Context<ThreadExec>) -> Result<()> {
+        thread_exec::handler(ctx)
     }
 
     /// Toggles a thread's pause state.
     pub fn thread_toggle(ctx: Context<ThreadToggle>) -> Result<()> {
         thread_toggle::handler(ctx)
+    }
+
+    /// Executes the next instruction in the thread with durable nonce advancement.
+    pub fn thread_kickoff(ctx: Context<ThreadKickoff>) -> Result<()> {
+        thread_kickoff::handler(ctx)
     }
 
     /// Allows an owner to update the thread's trigger.
@@ -131,15 +145,5 @@ pub mod thread_program {
     /// Allows an owner to withdraw from a thread's lamport balance.
     pub fn thread_withdraw(ctx: Context<ThreadWithdraw>, amount: u64) -> Result<()> {
         thread_withdraw::handler(ctx, amount)
-    }
-
-    /// Allows a builder to claim a thread for building.
-    pub fn thread_claim(ctx: Context<ThreadClaim>) -> Result<()> {
-        thread_claim::handler(ctx)
-    }
-
-    /// Submits a thread execution with fee distribution.
-    pub fn thread_submit(ctx: Context<ThreadSubmit>, thread_exec_ix_data: Vec<u8>) -> Result<()> {
-        thread_submit::handler(ctx, thread_exec_ix_data)
     }
 }

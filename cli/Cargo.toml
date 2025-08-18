@@ -19,10 +19,7 @@ default = []
 
 [dependencies]
 solana-cron = { workspace = true }
-antegen-utils = { workspace = true }
-antegen-plugin-utils= { workspace = true }
-antegen-thread-program = { workspace = true }
-antegen-network-program = { workspace = true }
+antegen-sdk = { workspace = true }
 # antegen-test-program = { workspace = true }
 
 anchor-lang = { workspace = true }
@@ -51,6 +48,7 @@ spl-token = { workspace = true }
 tar = { workspace = true }
 thiserror = { workspace = true }
 termcolor = { workspace = true }
+terminal-link = { workspace = true }
 
 [[bin]]
 name = "antegen"

@@ -48,6 +48,7 @@ pub fn handler(ctx: Context<ThreadWithdraw>, amount: u64) -> Result<()> {
     );
 
     // Withdraw balance from thread to the pay_to account
-    transfer_lamports(&thread.to_account_info(), &pay_to.to_account_info(), amount)?;
+    **thread.to_account_info().try_borrow_mut_lamports()? -= amount;
+    **pay_to.try_borrow_mut_lamports()? += amount;
     Ok(())
 }

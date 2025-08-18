@@ -1,7 +1,6 @@
 use std::{convert::TryFrom, fs, path::PathBuf, str::FromStr};
 
-use antegen_thread_program::state::Trigger;
-use antegen_utils::thread::{SerializableAccountMeta, SerializableInstruction};
+use antegen_sdk::state::{Trigger, SerializableAccountMeta, SerializableInstruction};
 use clap::ArgMatches;
 use serde::{Deserialize as JsonDeserialize, Serialize as JsonSerialize};
 use solana_sdk::{
@@ -18,11 +17,8 @@ impl TryFrom<&ArgMatches> for CliCommand {
     fn try_from(matches: &ArgMatches) -> Result<Self, Self::Error> {
         match matches.subcommand() {
             Some(("crontab", matches)) => parse_crontab_command(matches),
-            Some(("network", matches)) => parse_network_command(matches),
             Some(("localnet", matches)) => parse_bpf_command(matches),
             Some(("thread", matches)) => parse_thread_command(matches),
-            Some(("registry", matches)) => parse_registry_command(matches),
-            Some(("builder", matches)) => parse_builder_command(matches),
             _ => Err(CliError::CommandNotRecognized(
                 matches.subcommand().unwrap().0.into(),
             )),
@@ -96,15 +92,6 @@ fn parse_crontab_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     })
 }
 
-fn parse_network_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
-    match matches.subcommand() {
-        Some(("initialize", _)) => Ok(CliCommand::NetworkInitialize {}),
-        _ => Err(CliError::CommandNotRecognized(
-            matches.subcommand().unwrap().0.into(),
-        )),
-    }
-}
-
 fn parse_thread_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
     match matches.subcommand() {
         Some(("create", matches)) => Ok(CliCommand::ThreadCreate {
@@ -125,34 +112,6 @@ fn parse_thread_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
         Some(("update", matches)) => Ok(CliCommand::ThreadUpdate {
             id: parse_string("id", matches)?,
             schedule: parse_string("schedule", matches).ok(),
-        }),
-        _ => Err(CliError::CommandNotRecognized(
-            matches.subcommand().unwrap().0.into(),
-        )),
-    }
-}
-
-fn parse_registry_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
-    match matches.subcommand() {
-        Some(("get", _)) => Ok(CliCommand::RegistryGet {}),
-        _ => Err(CliError::CommandNotRecognized(
-            matches.subcommand().unwrap().0.into(),
-        )),
-    }
-}
-
-fn parse_builder_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
-    match matches.subcommand() {
-        Some(("create", matches)) => Ok(CliCommand::BuilderCreate {
-            signatory: parse_keypair_file("signatory_keypair", matches)?,
-        }),
-        Some(("get", matches)) => Ok(CliCommand::BuilderGet {
-            id: parse_u32("id", matches)?,
-        }),
-        Some(("update", matches)) => Ok(CliCommand::BuilderUpdate {
-            id: parse_u32("id", matches)?,
-            commission_bps: parse_u64("commission_bps", matches).ok(),
-            signatory: parse_keypair_file("signatory_keypair", matches).ok(),
         }),
         _ => Err(CliError::CommandNotRecognized(
             matches.subcommand().unwrap().0.into(),

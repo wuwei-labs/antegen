@@ -1,12 +1,13 @@
-pub mod config {
-    pub use antegen_plugin_utils::PluginConfig;
-}
-
 use agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin;
 
 mod events;
 mod plugin;
+mod utils;
 mod worker;
+
+pub mod config {
+    pub use crate::utils::PluginConfig;
+}
 
 pub use plugin::AntegenPlugin;
 
