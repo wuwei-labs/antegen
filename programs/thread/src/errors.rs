@@ -113,9 +113,6 @@ pub enum AntegenThreadError {
     
     #[msg("Invalid fee percentage (must be 0-10000)")]
     InvalidFeePercentage,
-    
-    #[msg("Invalid priority window duration")]
-    InvalidPriorityWindow,
 }
 
 /// Alias for AntegenThreadError

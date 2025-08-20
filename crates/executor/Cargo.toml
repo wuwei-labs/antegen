@@ -12,6 +12,7 @@ keywords = { workspace = true }
 description = "Antegen transaction executor with TPU client support"
 
 [dependencies]
+solana-account-decoder = { workspace = true }
 solana-sdk = { workspace = true }
 solana-client = { workspace = true }
 solana-quic-client = { workspace = true }
@@ -33,3 +34,5 @@ antegen-thread-program = { workspace = true }
 anchor-lang = { workspace = true }
 borsh = { workspace = true }
 rand = { workspace = true }
+tempfile = { workspace = true }
+sled = "0.34"

@@ -41,7 +41,7 @@ pub struct FiberDelete<'info> {
     pub fiber: Account<'info, FiberState>,
 }
 
-pub fn handler(ctx: Context<FiberDelete>, index: u8) -> Result<()> {
+pub fn fiber_delete(ctx: Context<FiberDelete>, index: u8) -> Result<()> {
     let thread = &mut ctx.accounts.thread;
 
     // If we're deleting the current fiber, advance to next one first

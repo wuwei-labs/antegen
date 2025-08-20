@@ -76,17 +76,17 @@ pub mod thread_program {
     use super::*;
 
     /// Initialize the global thread configuration.
-    pub fn config_init(ctx: Context<ConfigInit>) -> Result<()> {
-        config_init::handler(ctx)
+    pub fn init_config(ctx: Context<ConfigInit>) -> Result<()> {
+        config_init(ctx)
     }
 
     /// Update the global thread configuration.
-    pub fn config_update(ctx: Context<ConfigUpdate>, params: ConfigUpdateParams) -> Result<()> {
-        config_update::handler(ctx, params)
+    pub fn update_config(ctx: Context<ConfigUpdate>, params: ConfigUpdateParams) -> Result<()> {
+        config_update(ctx, params)
     }
 
     /// Creates a fiber (instruction) for a thread.
-    pub fn fiber_create(
+    pub fn create_fiber(
         ctx: Context<FiberCreate>,
         index: u8,
         instruction: SerializableInstruction,
@@ -94,56 +94,47 @@ pub mod thread_program {
     ) -> Result<()> {
         // Convert to regular Instruction
         let instruction: Instruction = instruction.into();
-        fiber_create::handler(ctx, index, instruction, signer_seeds)
+        fiber_create(ctx, index, instruction, signer_seeds)
     }
 
     /// Deletes a fiber from a thread.
-    pub fn fiber_delete(ctx: Context<FiberDelete>, index: u8) -> Result<()> {
-        fiber_delete::handler(ctx, index)
+    pub fn delete_fiber(ctx: Context<FiberDelete>, index: u8) -> Result<()> {
+        fiber_delete(ctx, index)
     }
 
     /// Creates a new transaction thread.
-    pub fn thread_claim(ctx: Context<ThreadClaim>) -> Result<()> {
-        thread_claim::handler(ctx)
-    }
-
-    pub fn thread_create(
+    pub fn create_thread(
         ctx: Context<ThreadCreate>,
         amount: u64,
         id: ThreadId,
         trigger: Trigger,
     ) -> Result<()> {
-        thread_create::handler(ctx, amount, id, trigger)
+        thread_create(ctx, amount, id, trigger)
     }
 
     /// Closes an existing thread account and returns the lamports to the owner.
-    pub fn thread_delete(ctx: Context<ThreadDelete>) -> Result<()> {
-        thread_delete::handler(ctx)
+    pub fn delete_thread(ctx: Context<ThreadDelete>) -> Result<()> {
+        thread_delete(ctx)
     }
 
     /// Executes a thread fiber with trigger validation and fee distribution.
     /// Respects builder claim priority windows from registry configuration.
-    pub fn thread_exec(ctx: Context<ThreadExec>) -> Result<()> {
-        thread_exec::handler(ctx)
+    pub fn exec_thread(ctx: Context<ThreadExec>) -> Result<()> {
+        thread_exec(ctx)
     }
 
     /// Toggles a thread's pause state.
-    pub fn thread_toggle(ctx: Context<ThreadToggle>) -> Result<()> {
-        thread_toggle::handler(ctx)
-    }
-
-    /// Executes the next instruction in the thread with durable nonce advancement.
-    pub fn thread_kickoff(ctx: Context<ThreadKickoff>) -> Result<()> {
-        thread_kickoff::handler(ctx)
+    pub fn toggle_thread(ctx: Context<ThreadToggle>) -> Result<()> {
+        thread_toggle(ctx)
     }
 
     /// Allows an owner to update the thread's trigger.
-    pub fn thread_update(ctx: Context<ThreadUpdate>, new_trigger: Option<Trigger>) -> Result<()> {
-        thread_update::handler(ctx, new_trigger)
+    pub fn update_thread(ctx: Context<ThreadUpdate>, new_trigger: Option<Trigger>) -> Result<()> {
+        thread_update(ctx, new_trigger)
     }
 
     /// Allows an owner to withdraw from a thread's lamport balance.
-    pub fn thread_withdraw(ctx: Context<ThreadWithdraw>, amount: u64) -> Result<()> {
-        thread_withdraw::handler(ctx, amount)
+    pub fn withdraw_thread(ctx: Context<ThreadWithdraw>, amount: u64) -> Result<()> {
+        thread_withdraw(ctx, amount)
     }
 }

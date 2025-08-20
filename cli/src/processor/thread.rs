@@ -12,11 +12,7 @@ use solana_sdk::{
     sysvar::{recent_blockhashes, rent},
 };
 
-pub fn create(
-    client: &Client,
-    id: String,
-    trigger: Trigger,
-) -> Result<(), CliError> {
+pub fn create(client: &Client, id: String, trigger: Trigger) -> Result<(), CliError> {
     let thread_pubkey = Thread::pubkey(client.payer_pubkey(), id.clone().into_bytes());
     let nonce_keypair = Keypair::new();
 
@@ -32,7 +28,7 @@ pub fn create(
             system_program: system_program::ID,
         }
         .to_account_metas(Some(false)),
-        data: antegen_sdk::instruction::ThreadCreate {
+        data: antegen_sdk::instruction::CreateThread {
             amount: LAMPORTS_PER_SOL,
             id: id.into(),
             trigger,
@@ -55,7 +51,7 @@ pub fn delete(client: &Client, address: Pubkey) -> Result<(), CliError> {
             thread: address,
         }
         .to_account_metas(Some(false)),
-        data: antegen_sdk::instruction::ThreadDelete {}.data(),
+        data: antegen_sdk::instruction::DeleteThread {}.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
     Ok(())
@@ -77,18 +73,14 @@ pub fn toggle(client: &Client, id: String) -> Result<(), CliError> {
             thread: thread_pubkey,
         }
         .to_account_metas(Some(false)),
-        data: antegen_sdk::instruction::ThreadToggle {}.data(),
+        data: antegen_sdk::instruction::ToggleThread {}.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
     get(client, thread_pubkey)?;
     Ok(())
 }
 
-pub fn update(
-    client: &Client,
-    id: String,
-    schedule: Option<String>,
-) -> Result<(), CliError> {
+pub fn update(client: &Client, id: String, schedule: Option<String>) -> Result<(), CliError> {
     let thread_pubkey = Thread::pubkey(client.payer_pubkey(), id.into_bytes());
     let new_trigger = if let Some(schedule) = schedule {
         Some(Trigger::Cron {
@@ -105,7 +97,7 @@ pub fn update(
             thread: thread_pubkey,
         }
         .to_account_metas(Some(false)),
-        data: antegen_sdk::instruction::ThreadUpdate { new_trigger }.data(),
+        data: antegen_sdk::instruction::UpdateThread { new_trigger }.data(),
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
     get(client, thread_pubkey)?;

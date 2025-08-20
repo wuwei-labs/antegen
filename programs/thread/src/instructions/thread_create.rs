@@ -1,3 +1,4 @@
+use crate::state::Trigger;
 use crate::*;
 use anchor_lang::{
     prelude::*,
@@ -8,7 +9,6 @@ use anchor_lang::{
     },
     system_program::{create_nonce_account, transfer, CreateNonceAccount, Transfer},
 };
-use crate::state::Trigger;
 
 /// Accounts required by the `thread_create` instruction.
 #[derive(Accounts)]
@@ -53,7 +53,7 @@ pub struct ThreadCreate<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(
+pub fn thread_create(
     ctx: Context<ThreadCreate>,
     amount: u64,
     id: ThreadId,
@@ -108,10 +108,10 @@ pub fn handler(
     thread.id = id.into();
     thread.paused = false;
     thread.trigger = trigger;
-    
+
     // Handle optional initial instruction
     thread.fibers = Vec::new(); // No fibers initially, use fiber_create to add them
-    
+
     thread.exec_index = 0;
 
     // Transfer SOL from payer to the thread.

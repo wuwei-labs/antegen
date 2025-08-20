@@ -11,6 +11,7 @@ use log::{info, warn};
 /// Handles transaction submission
 pub struct TransactionSubmitter {
     rpc_client: Arc<RpcClient>,
+    #[allow(dead_code)]
     use_tpu: bool,
 }
 

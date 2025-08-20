@@ -2,16 +2,15 @@ use anyhow::Result;
 use log::{debug, error, info, warn};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_program::pubkey::Pubkey;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{channel, Sender};
-use std::collections::VecDeque;
 
-use crate::events::{EventSource, ObservedEvent, CarbonEventSource, GeyserEventSource};
-use antegen_thread_program::state::Thread;
+use crate::events::{CarbonEventSource, EventSource, GeyserEventSource, ObservedEvent};
 
 // Re-export from executor crate
-pub use antegen_executor::{ClaimableThread, ExecutorEvent};
+pub use antegen_executor::{ExecutableThread, ExecutorEvent};
 
 /// Observer service that monitors events and notifies executor
 pub struct ObserverService {
@@ -36,14 +35,14 @@ impl ObserverService {
     ) -> Box<dyn EventSource> {
         Box::new(CarbonEventSource::new(receiver))
     }
-    
+
     /// Create a Geyser event source
     pub fn create_geyser_source(
         receiver: tokio::sync::mpsc::Receiver<ObservedEvent>,
     ) -> Box<dyn EventSource> {
         Box::new(GeyserEventSource::new(receiver))
     }
-    
+
     /// Create observer service (always with executor)
     pub fn new(
         event_source: Box<dyn EventSource>,
@@ -67,18 +66,18 @@ impl ObserverService {
 
     /// Wait for thread config to exist with exponential backoff
     async fn wait_for_thread_config(&self) -> Result<()> {
-        let config_pubkey = Pubkey::find_program_address(
-            &[b"thread_config"],
-            &antegen_thread_program::ID,
-        )
-        .0;
-        info!("OBSERVER: Waiting for thread config {} to be created...", config_pubkey);
-        
+        let config_pubkey =
+            Pubkey::find_program_address(&[b"thread_config"], &antegen_thread_program::ID).0;
+        info!(
+            "OBSERVER: Waiting for thread config {} to be created...",
+            config_pubkey
+        );
+
         let mut attempts = 0;
         let mut delay_ms: u64 = 100;
         const MAX_DELAY_MS: u64 = 600_000;
         const BACKOFF_MULTIPLIER: f64 = 1.5;
-        
+
         loop {
             match self.rpc_client.get_account(&config_pubkey).await {
                 Ok(_account) => {
@@ -89,13 +88,19 @@ impl ObserverService {
                     if attempts == 0 {
                         info!("OBSERVER: Thread config not found yet, will keep checking...");
                     } else if attempts % 10 == 0 {
-                        info!("OBSERVER: Still waiting for thread config (attempt {})", attempts);
+                        info!(
+                            "OBSERVER: Still waiting for thread config (attempt {})",
+                            attempts
+                        );
                     } else {
-                        debug!("OBSERVER: Thread config check #{} failed: {:?}", attempts, e);
+                        debug!(
+                            "OBSERVER: Thread config check #{} failed: {:?}",
+                            attempts, e
+                        );
                     }
                 }
             }
-            
+
             attempts += 1;
             tokio::time::sleep(Duration::from_millis(delay_ms)).await;
             delay_ms = ((delay_ms as f64 * BACKOFF_MULTIPLIER) as u64).min(MAX_DELAY_MS);
@@ -104,8 +109,11 @@ impl ObserverService {
 
     /// Main service loop
     pub async fn run(&mut self) -> Result<()> {
-        info!("OBSERVER: Service starting (observer={}, source={})", 
-              self.observer_pubkey, self.event_source.name());
+        info!(
+            "OBSERVER: Service starting (observer={}, source={})",
+            self.observer_pubkey,
+            self.event_source.name()
+        );
 
         // Wait for thread config to exist
         self.wait_for_thread_config().await?;
@@ -118,13 +126,13 @@ impl ObserverService {
         loop {
             // First, try to drain any buffered events
             self.drain_event_buffer().await;
-            
+
             // Get next event from event source
             match self.event_source.next_event().await? {
                 Some(event) => {
                     event_count += 1;
                     debug!("OBSERVER: Received event #{}", event_count);
-                    
+
                     if let Err(e) = self.process_event(event).await {
                         error!("OBSERVER: Error processing event: {}", e);
                     }
@@ -136,21 +144,25 @@ impl ObserverService {
             }
         }
     }
-    
+
     /// Try to drain buffered events to executor
     async fn drain_event_buffer(&mut self) {
         while let Some(event) = self.event_buffer.pop_front() {
             match self.event_sender.try_send(event.clone()) {
-                Ok(()) => {
-                    match &event {
-                        ExecutorEvent::ClaimableThread(thread) => {
-                            debug!("OBSERVER: Sent buffered thread {} to executor", thread.thread_pubkey);
-                        }
-                        ExecutorEvent::ClockUpdate { slot, .. } => {
-                            debug!("OBSERVER: Sent buffered clock update (slot {}) to executor", slot);
-                        }
+                Ok(()) => match &event {
+                    ExecutorEvent::ExecutableThread(thread) => {
+                        debug!(
+                            "OBSERVER: Sent buffered thread {} to executor",
+                            thread.thread_pubkey
+                        );
                     }
-                }
+                    ExecutorEvent::ClockUpdate { slot, .. } => {
+                        debug!(
+                            "OBSERVER: Sent buffered clock update (slot {}) to executor",
+                            slot
+                        );
+                    }
+                },
                 Err(tokio::sync::mpsc::error::TrySendError::Full(msg)) => {
                     // Channel still full, put it back
                     self.event_buffer.push_front(msg);
@@ -162,12 +174,15 @@ impl ObserverService {
                 }
             }
         }
-        
+
         if !self.event_buffer.is_empty() {
-            debug!("OBSERVER: {} events still buffered", self.event_buffer.len());
+            debug!(
+                "OBSERVER: {} events still buffered",
+                self.event_buffer.len()
+            );
         }
     }
-    
+
     /// Process an observed event
     async fn process_event(&mut self, event: ObservedEvent) -> Result<()> {
         let executor_event = match event {
@@ -177,20 +192,29 @@ impl ObserverService {
                 slot,
             } => {
                 // Don't check trigger readiness here - let executor handle with accurate clock
-                info!("OBSERVER: Thread {} is potentially claimable", thread_pubkey);
-                
-                let claimable = ClaimableThread {
+                info!(
+                    "OBSERVER: Thread {} is potentially executable",
+                    thread_pubkey
+                );
+
+                let executable = ExecutableThread {
                     thread_pubkey,
                     thread,
                     slot,
                 };
-                
-                ExecutorEvent::ClaimableThread(claimable)
+
+                ExecutorEvent::ExecutableThread(executable)
             }
-            ObservedEvent::ClockUpdate { slot, epoch, unix_timestamp } => {
-                debug!("OBSERVER: Clock update - slot: {}, epoch: {}, timestamp: {}", 
-                       slot, epoch, unix_timestamp);
-                
+            ObservedEvent::ClockUpdate {
+                slot,
+                epoch,
+                unix_timestamp,
+            } => {
+                debug!(
+                    "OBSERVER: Clock update - slot: {}, epoch: {}, timestamp: {}",
+                    slot, epoch, unix_timestamp
+                );
+
                 ExecutorEvent::ClockUpdate {
                     slot,
                     epoch,
@@ -202,25 +226,28 @@ impl ObserverService {
                 return Ok(());
             }
         };
-        
+
         // Try to send to executor
         match self.event_sender.try_send(executor_event.clone()) {
-            Ok(()) => {
-                match &executor_event {
-                    ExecutorEvent::ClaimableThread(thread) => {
-                        info!("OBSERVER: Notified executor about thread {}", thread.thread_pubkey);
-                    }
-                    ExecutorEvent::ClockUpdate { slot, .. } => {
-                        debug!("OBSERVER: Sent clock update (slot {}) to executor", slot);
-                    }
+            Ok(()) => match &executor_event {
+                ExecutorEvent::ExecutableThread(thread) => {
+                    info!(
+                        "OBSERVER: Notified executor about thread {}",
+                        thread.thread_pubkey
+                    );
                 }
-            }
+                ExecutorEvent::ClockUpdate { slot, .. } => {
+                    debug!("OBSERVER: Sent clock update (slot {}) to executor", slot);
+                }
+            },
             Err(tokio::sync::mpsc::error::TrySendError::Full(msg)) => {
                 // Channel full, buffer it
                 if self.event_buffer.len() < self.max_buffer_size {
                     self.event_buffer.push_back(msg);
-                    debug!("OBSERVER: Channel full, buffered event (buffer size: {})", 
-                           self.event_buffer.len());
+                    debug!(
+                        "OBSERVER: Channel full, buffered event (buffer size: {})",
+                        self.event_buffer.len()
+                    );
                 } else {
                     warn!("OBSERVER: Buffer full, dropping event");
                 }
@@ -229,7 +256,7 @@ impl ObserverService {
                 error!("OBSERVER: Executor channel closed!");
             }
         }
-        
+
         Ok(())
     }
 }

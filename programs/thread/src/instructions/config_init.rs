@@ -22,7 +22,7 @@ pub struct ConfigInit<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(ctx: Context<ConfigInit>) -> Result<()> {
+pub fn config_init(ctx: Context<ConfigInit>) -> Result<()> {
     let config = &mut ctx.accounts.config;
     let admin = &ctx.accounts.admin;
 
@@ -31,12 +31,11 @@ pub fn handler(ctx: Context<ConfigInit>) -> Result<()> {
     config.bump = ctx.bumps.config;
     config.admin = admin.key();
     config.paused = false;
-    config.commission_fee = 1000; // 1000 lamports
-    config.observer_fee_bps = 9000; // 90% when observer executes
-    config.executor_helper_fee_bps = 500; // 5% when helping observer
-    config.observer_share_bps = 8500; // 85% observer share when helped
-    config.core_team_bps = 1000; // 10% core team
-    config.priority_window = 120; // 2 minutes
+    config.commission_fee = 1000; // 1000 lamports base commission
+    config.executor_fee_bps = 9000; // 90% to executor
+    config.core_team_bps = 1000; // 10% to core team
+    config.grace_period_seconds = 5; // 5 second grace period
+    config.fee_decay_seconds = 295; // 295 second decay (total 300s = 5 minutes)
 
     msg!("Thread config initialized with admin: {}", admin.key());
 

@@ -21,7 +21,7 @@ pub struct ThreadToggle<'info> {
     pub thread: Account<'info, Thread>,
 }
 
-pub fn handler(ctx: Context<ThreadToggle>) -> Result<()> {
+pub fn thread_toggle(ctx: Context<ThreadToggle>) -> Result<()> {
     let thread = &mut ctx.accounts.thread;
 
     // Toggle the pause state

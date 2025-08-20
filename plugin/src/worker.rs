@@ -79,6 +79,7 @@ impl PluginWorker {
             keypair.clone(),
             executor_event_rx,
             None, // TPU client config
+            None, // data_dir for sled persistence
         )
         .await?;
         info!("Created executor service");

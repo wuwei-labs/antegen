@@ -41,14 +41,14 @@ pub mod cpi {
         instruction: SerializableInstruction,
         signer_seeds: Vec<Vec<Vec<u8>>>,
     ) -> Result<()> {
-        antegen_thread_program::cpi::fiber_create(ctx, index, instruction, signer_seeds)
+        antegen_thread_program::cpi::create_fiber(ctx, index, instruction, signer_seeds)
     }
 
     pub fn fiber_delete<'info>(
         ctx: CpiContext<'_, '_, '_, 'info, FiberDelete<'info>>,
         index: u8,
     ) -> Result<()> {
-        antegen_thread_program::cpi::fiber_delete(ctx, index)
+        antegen_thread_program::cpi::delete_fiber(ctx, index)
     }
 
     pub fn thread_create<'info>(
@@ -57,59 +57,47 @@ pub mod cpi {
         id: ThreadId,
         trigger: Trigger,
     ) -> Result<()> {
-        antegen_thread_program::cpi::thread_create(ctx, amount, id, trigger)
+        antegen_thread_program::cpi::create_thread(ctx, amount, id, trigger)
     }
 
     pub fn thread_delete<'info>(
         ctx: CpiContext<'_, '_, '_, 'info, ThreadDelete<'info>>,
     ) -> Result<()> {
-        antegen_thread_program::cpi::thread_delete(ctx)
+        antegen_thread_program::cpi::delete_thread(ctx)
     }
 
     pub fn thread_toggle<'info>(
         ctx: CpiContext<'_, '_, '_, 'info, ThreadToggle<'info>>,
     ) -> Result<()> {
-        antegen_thread_program::cpi::thread_toggle(ctx)
+        antegen_thread_program::cpi::toggle_thread(ctx)
     }
 
     pub fn thread_update<'info>(
         ctx: CpiContext<'_, '_, '_, 'info, ThreadUpdate<'info>>,
         new_trigger: Option<Trigger>,
     ) -> Result<()> {
-        antegen_thread_program::cpi::thread_update(ctx, new_trigger)
+        antegen_thread_program::cpi::update_thread(ctx, new_trigger)
     }
 
     pub fn thread_withdraw<'info>(
         ctx: CpiContext<'_, '_, '_, 'info, ThreadWithdraw<'info>>,
         amount: u64,
     ) -> Result<()> {
-        antegen_thread_program::cpi::thread_withdraw(ctx, amount)
+        antegen_thread_program::cpi::withdraw_thread(ctx, amount)
     }
 
     pub fn config_init<'info>(ctx: CpiContext<'_, '_, '_, 'info, ConfigInit<'info>>) -> Result<()> {
-        antegen_thread_program::cpi::config_init(ctx)
+        antegen_thread_program::cpi::init_config(ctx)
     }
 
     pub fn config_update<'info>(
         ctx: CpiContext<'_, '_, '_, 'info, ConfigUpdate<'info>>,
         params: ConfigUpdateParams,
     ) -> Result<()> {
-        antegen_thread_program::cpi::config_update(ctx, params)
-    }
-
-    pub fn thread_claim<'info>(
-        ctx: CpiContext<'_, '_, '_, 'info, ThreadClaim<'info>>,
-    ) -> Result<()> {
-        antegen_thread_program::cpi::thread_claim(ctx)
+        antegen_thread_program::cpi::update_config(ctx, params)
     }
 
     pub fn thread_exec<'info>(ctx: CpiContext<'_, '_, '_, 'info, ThreadExec<'info>>) -> Result<()> {
-        antegen_thread_program::cpi::thread_exec(ctx)
-    }
-
-    pub fn thread_kickoff<'info>(
-        ctx: CpiContext<'_, '_, '_, 'info, ThreadKickoff<'info>>,
-    ) -> Result<()> {
-        antegen_thread_program::cpi::thread_kickoff(ctx)
+        antegen_thread_program::cpi::exec_thread(ctx)
     }
 }

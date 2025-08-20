@@ -29,7 +29,7 @@ pub struct ThreadWithdraw<'info> {
     pub thread: Account<'info, Thread>,
 }
 
-pub fn handler(ctx: Context<ThreadWithdraw>, amount: u64) -> Result<()> {
+pub fn thread_withdraw(ctx: Context<ThreadWithdraw>, amount: u64) -> Result<()> {
     // Get accounts
     let pay_to = &mut ctx.accounts.pay_to;
     let thread = &mut ctx.accounts.thread;

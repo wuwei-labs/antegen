@@ -3,15 +3,17 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+use crate::state::{
+    decompile_instruction, CompiledInstructionV0, Trigger, TriggerContext, PAYER_PUBKEY,
+};
 use crate::{constants::*, errors::*, state::*};
 use anchor_lang::{
     prelude::*,
     solana_program::{
-        program::invoke_signed, system_instruction::advance_nonce_account,
-        system_program, sysvar::recent_blockhashes,
+        program::invoke_signed, system_instruction::advance_nonce_account, system_program,
+        sysvar::recent_blockhashes,
     },
 };
-use crate::state::{Trigger, TriggerContext, CompiledInstructionV0, decompile_instruction, PAYER_PUBKEY};
 use chrono::{DateTime, Utc};
 use solana_cron::Schedule;
 use std::str::FromStr;
@@ -68,11 +70,6 @@ pub struct ThreadExec<'info> {
     )]
     pub thread_authority: UncheckedAccount<'info>,
 
-    /// The observer who claimed (for fee distribution if claimed)
-    /// CHECK: This account is only used if fiber.observer is Some
-    #[account(mut)]
-    pub observer_account: UncheckedAccount<'info>,
-
     /// The config admin (for core team fee distribution)
     /// CHECK: This is validated by the config account
     #[account(
@@ -102,20 +99,17 @@ fn next_timestamp(after: i64, schedule: String) -> Option<i64> {
         .map(|datetime| datetime.timestamp())
 }
 
-pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
+pub fn thread_exec(ctx: Context<ThreadExec>) -> Result<()> {
     let thread = &mut ctx.accounts.thread;
     let fiber = &mut ctx.accounts.fiber;
     let config = &ctx.accounts.config;
     let executor = &ctx.accounts.executor;
-    let fee_payer = &ctx.accounts.fee_payer;
+    let _fee_payer = &ctx.accounts.fee_payer;
     let clock = Clock::get()?;
-    
+
     // Check if global pause is active
-    require!(
-        !config.paused,
-        AntegenThreadError::GlobalPauseActive
-    );
-    
+    require!(!config.paused, AntegenThreadError::GlobalPauseActive);
+
     // Verify durable nonce is required
     require!(
         ctx.accounts.nonce_account.is_some(),
@@ -160,48 +154,7 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
         &clock,
         ctx.remaining_accounts.first(),
     )?;
-    
-    // Check observer priority window
-    enum FeeDistribution {
-        ObserverExecuting,   // Observer executing (gets 90% share)
-        ExternalHelper,      // Different executor helping (observer 85%, executor 5%)
-        Unclaimed,          // No claim, executor gets 90%
-    }
-    
-    let fee_distribution = if let Some(claimed_observer) = fiber.observer {
-        // Validate that observer_account matches the claimed observer
-        require!(
-            ctx.accounts.observer_account.key() == claimed_observer,
-            AntegenThreadError::InvalidObserverAccount
-        );
-        
-        let time_since_trigger = clock.unix_timestamp - trigger_ready_time;
-        
-        if time_since_trigger < config.priority_window {
-            // Within priority window - only observer can execute
-            require!(
-                executor.key() == claimed_observer || fee_payer.key() == claimed_observer,
-                AntegenThreadError::ObserverPriorityActive
-            );
-            msg!("Observer executing within {} second priority window", 
-                 config.priority_window - time_since_trigger);
-            FeeDistribution::ObserverExecuting
-        } else {
-            // After priority window - anyone can execute
-            if executor.key() == claimed_observer {
-                msg!("Observer executing after priority expired (still gets full reward)");
-                FeeDistribution::ObserverExecuting
-            } else {
-                msg!("External executor helping after observer priority expired");
-                FeeDistribution::ExternalHelper
-            }
-        }
-    } else {
-        // No claim - anyone can execute immediately
-        msg!("Unclaimed fiber - immediate execution allowed");
-        FeeDistribution::Unclaimed
-    };
-    
+
     // Get the last started at timestamp for trigger context updates
     let last_started_at = match &thread.trigger_context {
         TriggerContext::Timestamp { prev, .. } => *prev,
@@ -354,14 +307,14 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
     // Decompile the fiber instruction
     let compiled = CompiledInstructionV0::try_from_slice(&fiber.compiled_instruction)?;
     let mut instruction = decompile_instruction(&compiled)?;
-    
+
     // Replace PAYER_PUBKEY with executor
     for acc in instruction.accounts.iter_mut() {
         if acc.pubkey.eq(&PAYER_PUBKEY) {
             acc.pubkey = executor.key();
         }
     }
-    
+
     // Execute the fiber instruction via CPI
     let thread_seeds = &[
         SEED_THREAD,
@@ -370,64 +323,61 @@ pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
         &[thread.bump],
     ];
 
-    invoke_signed(
-        &instruction,
-        &ctx.remaining_accounts,
-        &[thread_seeds],
-    )?;
+    invoke_signed(&instruction, &ctx.remaining_accounts, &[thread_seeds])?;
 
     // Update exec_index to next fiber (wraps around if at end)
     thread.exec_index = (thread.exec_index + 1) % thread.fibers.len() as u8;
 
-    // Distribute fees based on execution scenario
-    let total_fee = config.commission_fee;
-    
-    match fee_distribution {
-        FeeDistribution::ObserverExecuting => {
-            // Observer executing (on-time or late) gets most of the fee
-            let observer_fee = (total_fee * config.observer_fee_bps) / 10_000;
-            let core_fee = (total_fee * config.core_team_bps) / 10_000;
-            
-            **ctx.accounts.executor.try_borrow_mut_lamports()? += observer_fee;
-            **ctx.accounts.thread_authority.try_borrow_mut_lamports()? -= observer_fee;
-            
-            **ctx.accounts.config_admin.try_borrow_mut_lamports()? += core_fee;
-            **ctx.accounts.thread_authority.try_borrow_mut_lamports()? -= core_fee;
-        }
-        FeeDistribution::ExternalHelper => {
-            // Observer gets most, external executor gets some
-            let observer_fee = (total_fee * config.observer_share_bps) / 10_000;
-            let executor_fee = (total_fee * config.executor_helper_fee_bps) / 10_000;
-            let core_fee = (total_fee * config.core_team_bps) / 10_000;
-            
-            **ctx.accounts.observer_account.try_borrow_mut_lamports()? += observer_fee;
-            **ctx.accounts.thread_authority.try_borrow_mut_lamports()? -= observer_fee;
-            
-            **ctx.accounts.executor.try_borrow_mut_lamports()? += executor_fee;
-            **ctx.accounts.thread_authority.try_borrow_mut_lamports()? -= executor_fee;
-            
-            **ctx.accounts.config_admin.try_borrow_mut_lamports()? += core_fee;
-            **ctx.accounts.thread_authority.try_borrow_mut_lamports()? -= core_fee;
-        }
-        FeeDistribution::Unclaimed => {
-            // Executor gets most of the fee for unclaimed fiber
-            let executor_fee = (total_fee * config.observer_fee_bps) / 10_000; // Uses same rate as observer
-            let core_fee = (total_fee * config.core_team_bps) / 10_000;
-            
-            **ctx.accounts.executor.try_borrow_mut_lamports()? += executor_fee;
-            **ctx.accounts.thread_authority.try_borrow_mut_lamports()? -= executor_fee;
-            
-            **ctx.accounts.config_admin.try_borrow_mut_lamports()? += core_fee;
-            **ctx.accounts.thread_authority.try_borrow_mut_lamports()? -= core_fee;
-        }
+    // Calculate time since trigger was ready
+    let time_since_ready = clock.unix_timestamp.saturating_sub(trigger_ready_time);
+
+    // Calculate commission multiplier based on timing
+    let commission_multiplier = if time_since_ready <= config.grace_period_seconds {
+        // Within grace period: full commission
+        1.0
+    } else if time_since_ready <= config.grace_period_seconds + config.fee_decay_seconds {
+        // Within decay period: linear decay from 100% to 0%
+        let time_into_decay = (time_since_ready - config.grace_period_seconds) as f64;
+        let decay_progress = time_into_decay / config.fee_decay_seconds as f64;
+        1.0 - decay_progress  // Goes from 1.0 to 0.0
+    } else {
+        // After grace + decay period: no commission
+        0.0
+    };
+
+    // Calculate effective commission fee
+    let effective_commission = (config.commission_fee as f64 * commission_multiplier) as u64;
+
+    // Distribute using fixed percentages
+    let executor_fee = (effective_commission * config.executor_fee_bps) / 10_000;
+    let core_team_fee = (effective_commission * config.core_team_bps) / 10_000;
+
+    msg!("Execution timing: {}s after trigger ready", time_since_ready);
+    msg!("Commission: {} lamports ({}% of base)", 
+        effective_commission, 
+        (commission_multiplier * 100.0) as u64
+    );
+
+    // Transfer fees only if non-zero
+    if executor_fee > 0 {
+        **ctx.accounts.executor.try_borrow_mut_lamports()? += executor_fee;
+        **ctx.accounts.thread_authority.try_borrow_mut_lamports()? -= executor_fee;
     }
-    
-    // Clear observer claim for next round
-    fiber.observer = None;
-    fiber.observer_signature = None;
+
+    if core_team_fee > 0 {
+        **ctx.accounts.config_admin.try_borrow_mut_lamports()? += core_team_fee;
+        **ctx.accounts.thread_authority.try_borrow_mut_lamports()? -= core_team_fee;
+    }
+
+    // Log warning if late execution
+    if commission_multiplier == 0.0 {
+        msg!("WARNING: Execution >{}s late - no commission paid!", 
+            config.grace_period_seconds + config.fee_decay_seconds);
+    }
+
+    // Update execution tracking
     fiber.last_executed = clock.unix_timestamp;
     fiber.execution_count += 1;
-
 
     Ok(())
 }
@@ -452,18 +402,12 @@ fn verify_trigger_and_get_ready_time(
             Ok(*unix_ts)
         }
         Trigger::Slot { slot } => {
-            require!(
-                clock.slot >= *slot,
-                AntegenThreadError::TriggerNotReady
-            );
+            require!(clock.slot >= *slot, AntegenThreadError::TriggerNotReady);
             // Approximate when slot was reached (assuming 400ms per slot)
             Ok(clock.unix_timestamp - ((clock.slot - slot) as i64 * 400 / 1000))
         }
         Trigger::Epoch { epoch } => {
-            require!(
-                clock.epoch >= *epoch,
-                AntegenThreadError::TriggerNotReady
-            );
+            require!(clock.epoch >= *epoch, AntegenThreadError::TriggerNotReady);
             // Approximate when epoch was reached
             Ok(clock.unix_timestamp)
         }

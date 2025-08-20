@@ -48,7 +48,7 @@ pub struct FiberCreate<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(
+pub fn fiber_create(
     ctx: Context<FiberCreate>,
     index: u8,
     instruction: Instruction,
