@@ -66,7 +66,22 @@ impl GeyserPlugin for AntegenPlugin {
                 format!("{}/.config/solana/id.json", std::env::var("HOME").unwrap())
             });
 
-            match PluginWorker::new(config.builder_id, rpc_url, ws_url, keypair_path).await {
+            let data_dir = config.data_dir.clone();
+            let forgo_executor_commission = config.forgo_executor_commission.unwrap_or(false);
+            let enable_replay = config.enable_replay.unwrap_or(false);
+            let nats_url = config.nats_url.clone();
+            let replay_delay_ms = config.replay_delay_ms;
+            
+            match PluginWorker::new(
+                rpc_url, 
+                ws_url, 
+                keypair_path, 
+                data_dir, 
+                forgo_executor_commission,
+                enable_replay,
+                nats_url,
+                replay_delay_ms,
+            ).await {
                 Ok(worker) => Ok(worker),
                 Err(e) => {
                     let error_msg = format!("Failed to create worker: {}", e);

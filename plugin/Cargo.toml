@@ -22,6 +22,7 @@ name = "antegen_plugin"
 solana-cron = { workspace = true }
 antegen-observer = { workspace = true }
 antegen-executor = { workspace = true }
+antegen-submitter = { workspace = true }
 antegen-thread-program = { workspace = true }
 
 anchor-lang = { workspace = true }

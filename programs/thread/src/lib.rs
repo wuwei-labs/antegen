@@ -119,8 +119,8 @@ pub mod thread_program {
 
     /// Executes a thread fiber with trigger validation and fee distribution.
     /// Respects builder claim priority windows from registry configuration.
-    pub fn exec_thread(ctx: Context<ThreadExec>) -> Result<()> {
-        thread_exec(ctx)
+    pub fn exec_thread(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<()> {
+        thread_exec(ctx, forgo_commission)
     }
 
     /// Toggles a thread's pause state.

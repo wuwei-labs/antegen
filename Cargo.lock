@@ -432,6 +432,7 @@ name = "antegen-executor"
 version = "3.0.0"
 dependencies = [
  "anchor-lang",
+ "antegen-submitter",
  "antegen-thread-program",
  "anyhow",
  "async-nats",
@@ -488,6 +489,7 @@ dependencies = [
  "anchor-lang",
  "antegen-executor",
  "antegen-observer",
+ "antegen-submitter",
  "antegen-thread-program",
  "anyhow",
  "async-nats",
@@ -535,6 +537,33 @@ dependencies = [
  "chrono",
  "nom",
  "once_cell",
+]
+
+[[package]]
+name = "antegen-submitter"
+version = "3.0.0"
+dependencies = [
+ "anchor-lang",
+ "antegen-thread-program",
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "base64 0.22.1",
+ "bincode",
+ "chrono",
+ "futures",
+ "log 0.4.25",
+ "serde",
+ "serde_json",
+ "solana-account-decoder",
+ "solana-client",
+ "solana-connection-cache",
+ "solana-program",
+ "solana-quic-client",
+ "solana-sdk",
+ "solana-tpu-client",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

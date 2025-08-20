@@ -1,5 +1,5 @@
 [package]
-name = "antegen-executor"
+name = "antegen-submitter"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -9,12 +9,13 @@ license = { workspace = true }
 edition = { workspace = true }
 readme = { workspace = true }
 keywords = { workspace = true }
-description = "Antegen transaction executor with TPU client support"
+description = "Antegen transaction submitter with TPU client support and optional replay feature"
 
 [dependencies]
 solana-account-decoder = { workspace = true }
 solana-sdk = { workspace = true }
 solana-client = { workspace = true }
+solana-connection-cache = { workspace = true }
 solana-quic-client = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-program = { workspace = true }
@@ -23,17 +24,13 @@ tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
 log = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-bincode = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 async-nats = { workspace = true }
 futures = { workspace = true }
 chrono = { workspace = true }
-solana-cron = { workspace = true }
+base64 = { workspace = true }
+bincode = { workspace = true }
 antegen-thread-program = { workspace = true }
-antegen-submitter = { workspace = true }
 anchor-lang = { workspace = true }
-borsh = { workspace = true }
-rand = { workspace = true }
-tempfile = { workspace = true }
-sled = "0.34"
+uuid = { version = "1.0", features = ["v4"] }

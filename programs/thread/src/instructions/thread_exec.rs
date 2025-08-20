@@ -99,7 +99,7 @@ fn next_timestamp(after: i64, schedule: String) -> Option<i64> {
         .map(|datetime| datetime.timestamp())
 }
 
-pub fn thread_exec(ctx: Context<ThreadExec>) -> Result<()> {
+pub fn thread_exec(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<()> {
     let thread = &mut ctx.accounts.thread;
     let fiber = &mut ctx.accounts.fiber;
     let config = &ctx.accounts.config;
@@ -349,7 +349,11 @@ pub fn thread_exec(ctx: Context<ThreadExec>) -> Result<()> {
     let effective_commission = (config.commission_fee as f64 * commission_multiplier) as u64;
 
     // Distribute using fixed percentages
-    let executor_fee = (effective_commission * config.executor_fee_bps) / 10_000;
+    let executor_fee = if forgo_commission {
+        0 // Executor forgoes their commission
+    } else {
+        (effective_commission * config.executor_fee_bps) / 10_000
+    };
     let core_team_fee = (effective_commission * config.core_team_bps) / 10_000;
 
     msg!("Execution timing: {}s after trigger ready", time_since_ready);
@@ -357,6 +361,11 @@ pub fn thread_exec(ctx: Context<ThreadExec>) -> Result<()> {
         effective_commission, 
         (commission_multiplier * 100.0) as u64
     );
+    
+    if forgo_commission && effective_commission > 0 {
+        msg!("Executor forgoing commission: {} lamports retained by thread", 
+            (effective_commission * config.executor_fee_bps) / 10_000);
+    }
 
     // Transfer fees only if non-zero
     if executor_fee > 0 {

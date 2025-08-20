@@ -27,6 +27,7 @@ members = [
     "crates/observer",
     "crates/cron",
     "crates/executor",
+    "crates/submitter",
     "plugin",
     "programs/thread",
     "sdk",
@@ -47,6 +48,7 @@ keywords = ["solana"]
 solana-cron = { path = "crates/cron" }
 antegen-observer = { path = "crates/observer" }
 antegen-executor = { path = "crates/executor" }
+antegen-submitter = { path = "crates/submitter" }
 antegen-sdk = { path = "sdk" }
 antegen-thread-program = { path = "programs/thread", features = [
     "no-entrypoint",
@@ -96,6 +98,7 @@ solana-account-decoder = { version = "=2.1.21" }
 solana-clap-utils = { version = "=2.1.21" }
 solana-cli-config = { version = "=2.1.21" }
 solana-client = { version = "=2.1.21" }
+solana-connection-cache = { version = "=2.1.21" }
 solana-logger = { version = "=2.1.21" }
 solana-program = { version = "=2.1.21" }
 solana-quic-client = { version = "=2.1.21" }

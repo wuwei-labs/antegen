@@ -7,4 +7,4 @@ pub mod transaction;
 pub use queue::*;
 pub use service::*;
 pub use sources::*;
-pub use transaction::*;
+pub use transaction::{TransactionMonitor, TransactionStatus};

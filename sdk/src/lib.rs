@@ -97,7 +97,7 @@ pub mod cpi {
         antegen_thread_program::cpi::update_config(ctx, params)
     }
 
-    pub fn thread_exec<'info>(ctx: CpiContext<'_, '_, '_, 'info, ThreadExec<'info>>) -> Result<()> {
-        antegen_thread_program::cpi::exec_thread(ctx)
+    pub fn thread_exec<'info>(ctx: CpiContext<'_, '_, '_, 'info, ThreadExec<'info>>, forgo_commission: bool) -> Result<()> {
+        antegen_thread_program::cpi::exec_thread(ctx, forgo_commission)
     }
 }

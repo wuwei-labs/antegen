@@ -14,9 +14,10 @@ use tokio::sync::mpsc::Receiver;
 
 use crate::queue::{ExecutionTask, Queue, RetryConfig, TaskResult};
 use crate::sources::{ExecutorEvent, RpcSource};
-use crate::transaction::{TransactionMonitor, TransactionStatus, TransactionSubmitter};
-use anchor_lang::{AccountDeserialize, InstructionData};
+use crate::transaction::{TransactionMonitor, TransactionStatus};
+use anchor_lang::AccountDeserialize;
 use antegen_thread_program::state::{FiberState, Thread, ThreadConfig};
+use antegen_submitter::SubmitterService;
 
 /// Clock state from the cluster
 #[derive(Clone, Debug, Default)]
@@ -41,8 +42,8 @@ pub struct ExecutorService {
     mode: ExecutorMode,
     /// RPC client for queries
     rpc_client: Arc<RpcClient>,
-    /// Transaction submitter for TPU/RPC submission
-    tx_submitter: TransactionSubmitter,
+    /// Submitter service for transaction submission and NATS publishing
+    submitter: Arc<SubmitterService>,
     /// Transaction monitor for confirmations
     tx_monitor: TransactionMonitor,
     /// Executor keypair for signing transactions
@@ -55,6 +56,8 @@ pub struct ExecutorService {
     event_receiver: Option<Receiver<ExecutorEvent>>,
     /// Optional RPC source for standalone mode
     rpc_source: Option<RpcSource>,
+    /// Whether to forgo executor commission
+    forgo_executor_commission: bool,
 }
 
 impl ExecutorService {
@@ -63,10 +66,10 @@ impl ExecutorService {
         rpc_client: Arc<RpcClient>,
         keypair: Arc<Keypair>,
         event_receiver: Receiver<ExecutorEvent>,
-        tpu_client_config: Option<String>,
+        submitter: Arc<SubmitterService>,
         data_dir: Option<String>,
+        forgo_executor_commission: bool,
     ) -> Result<Self> {
-        let tx_submitter = TransactionSubmitter::new(rpc_client.clone(), tpu_client_config).await?;
         let tx_monitor = TransactionMonitor::new(rpc_client.clone());
 
         let retry_config = RetryConfig {
@@ -86,13 +89,14 @@ impl ExecutorService {
         Ok(Self {
             mode: ExecutorMode::WithObserver,
             rpc_client,
-            tx_submitter,
+            submitter,
             tx_monitor,
             keypair,
             clock: ClockState::default(),
             execution_queue,
             event_receiver: Some(event_receiver),
             rpc_source: None,
+            forgo_executor_commission,
         })
     }
 
@@ -100,11 +104,11 @@ impl ExecutorService {
     pub async fn new_standalone(
         rpc_client: Arc<RpcClient>,
         keypair: Arc<Keypair>,
-        tpu_client_config: Option<String>,
+        submitter: Arc<SubmitterService>,
         ws_url: Option<String>,
         data_dir: Option<String>,
+        forgo_executor_commission: bool,
     ) -> Result<Self> {
-        let tx_submitter = TransactionSubmitter::new(rpc_client.clone(), tpu_client_config).await?;
         let tx_monitor = TransactionMonitor::new(rpc_client.clone());
 
         let retry_config = RetryConfig {
@@ -127,13 +131,14 @@ impl ExecutorService {
         Ok(Self {
             mode: ExecutorMode::Standalone,
             rpc_client,
-            tx_submitter,
+            submitter,
             tx_monitor,
             keypair,
             clock: ClockState::default(),
             execution_queue,
             event_receiver: None,
             rpc_source: Some(rpc_source),
+            forgo_executor_commission,
         })
     }
 
@@ -394,7 +399,7 @@ impl ExecutorService {
             recent_blockhash,
         );
 
-        let signature = self.tx_submitter.submit(&tx).await?;
+        let signature = self.submitter.submit(&tx).await?;
 
         // Monitor for confirmation
         use solana_sdk::commitment_config::CommitmentConfig;
@@ -519,10 +524,23 @@ impl ExecutorService {
             _ => {}
         }
 
+        // Build instruction data for exec_thread with forgo_commission parameter
+        // Anchor instruction discriminator for exec_thread
+        let mut data = vec![];
+        
+        // The discriminator is the first 8 bytes of SHA256 hash of "global:exec_thread"
+        // This is how Anchor identifies which instruction to call
+        use anchor_lang::solana_program::hash::hash;
+        let discriminator = &hash("global:exec_thread".as_bytes()).to_bytes()[..8];
+        data.extend_from_slice(discriminator);
+        
+        // Add the forgo_commission boolean parameter (borsh encoded)
+        data.push(if self.forgo_executor_commission { 1 } else { 0 });
+        
         Ok(Instruction {
             program_id: antegen_thread_program::ID,
             accounts: account_metas,
-            data: antegen_thread_program::instruction::ExecThread {}.data(),
+            data,
         })
     }
 

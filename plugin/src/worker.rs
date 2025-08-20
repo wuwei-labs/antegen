@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 
-/// Worker that runs both observer and executor in the plugin
+/// Worker that runs observer, executor, and submitter services in the plugin
 pub struct PluginWorker {
     /// Channel to send ObservedEvents from Geyser to Observer
     event_sender: Sender<ObservedEvent>,
@@ -23,6 +23,8 @@ pub struct PluginWorker {
     observer_service: Option<ObserverService>,
     /// Executor service (owned until start is called)  
     executor_service: Option<ExecutorService>,
+    /// Submitter service for transaction submission and replay
+    submitter_service: Option<Arc<antegen_submitter::SubmitterService>>,
 }
 
 impl Debug for PluginWorker {
@@ -31,19 +33,23 @@ impl Debug for PluginWorker {
             .field("event_sender", &"Sender<ObservedEvent>")
             .field("observer_service", &self.observer_service.is_some())
             .field("executor_service", &self.executor_service.is_some())
+            .field("submitter_service", &self.submitter_service.is_some())
             .finish()
     }
 }
 
 impl PluginWorker {
     pub async fn new(
-        observer_id: u32,
         rpc_url: String,
         ws_url: String,
         keypair_path: String,
+        data_dir: Option<String>,
+        forgo_executor_commission: bool,
+        enable_replay: bool,
+        nats_url: Option<String>,
+        replay_delay_ms: Option<u64>,
     ) -> Result<Self> {
         info!("=== Initializing PluginWorker ===");
-        info!("Observer ID: {}", observer_id);
         info!("RPC URL: {}", rpc_url);
         info!("WS URL: {}", ws_url);
 
@@ -73,13 +79,29 @@ impl PluginWorker {
             ObserverService::new(event_source, observer_pubkey, rpc_client.clone());
         info!("Created observer service");
 
+        // Create submitter service with replay configuration
+        let submitter_config = antegen_submitter::SubmitterConfig {
+            enable_replay,
+            nats_url,
+            replay_delay_ms: replay_delay_ms.unwrap_or(30_000), // Default 30s
+            tpu_config: Some(antegen_submitter::TpuConfig::default()), // Enable TPU with defaults
+            submission_mode: antegen_submitter::SubmissionMode::TpuWithFallback,
+            ..Default::default()
+        };
+        
+        let submitter_service = Arc::new(antegen_submitter::SubmitterService::new(
+            rpc_client.clone(),
+            submitter_config,
+        ).await?);
+        
         // Create executor service that receives events from observer
         let executor_service = ExecutorService::new_with_observer(
             rpc_client,
             keypair.clone(),
             executor_event_rx,
-            None, // TPU client config
-            None, // data_dir for sled persistence
+            submitter_service.clone(), // Share the submitter service
+            data_dir, // data_dir for sled persistence
+            forgo_executor_commission,
         )
         .await?;
         info!("Created executor service");
@@ -90,10 +112,11 @@ impl PluginWorker {
             event_sender: observed_tx,
             observer_service: Some(observer_service),
             executor_service: Some(executor_service),
+            submitter_service: Some(submitter_service),
         })
     }
 
-    /// Start the observer and executor services
+    /// Start the observer, executor, and submitter services
     pub fn start(&mut self, runtime: Handle) -> Result<()> {
         info!("=== Starting Worker Services ===");
 
@@ -106,6 +129,10 @@ impl PluginWorker {
             .executor_service
             .take()
             .ok_or_else(|| anyhow!("Executor service already started"))?;
+        let submitter_service = self
+            .submitter_service
+            .take()
+            .ok_or_else(|| anyhow!("Submitter service already started"))?;
 
         info!("Spawning observer service task...");
 
@@ -129,6 +156,25 @@ impl PluginWorker {
                 Err(e) => error!("EXECUTOR: Service stopped with error: {}", e),
             }
             info!("EXECUTOR: Task exiting");
+        });
+
+        info!("Starting submitter service (including optional replay)...");
+
+        // Start submitter service on this thread (async but non-blocking)
+        // Note: The submitter service is Arc-wrapped and shared with executor
+        runtime.spawn(async move {
+            info!("SUBMITTER: Starting replay consumer if enabled");
+            match submitter_service.start_replay_consumer().await {
+                Ok(Some(_handle)) => {
+                    info!("SUBMITTER: Replay consumer started successfully");
+                }
+                Ok(None) => {
+                    info!("SUBMITTER: Replay consumer not enabled or NATS not available");
+                }
+                Err(e) => {
+                    error!("SUBMITTER: Failed to start replay consumer: {}", e);
+                }
+            }
         });
 
         info!("=== Worker Services Started ===");

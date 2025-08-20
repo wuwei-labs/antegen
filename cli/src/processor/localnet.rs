@@ -113,22 +113,22 @@ fn create_geyser_plugin_config(config: &CliConfig) -> Result<()> {
         name: String,
         keypath: Option<String>,
         libpath: Option<String>,
-        builder_id: u32,
         rpc_url: Option<String>,
         ws_url: Option<String>,
         thread_count: usize,
         transaction_timeout_threshold: u64,
+        data_dir: Option<String>,
     }
     
     let geyser_config = PluginConfig {
         name: "antegen".to_string(),
         keypath: Some(config.signatory().to_owned()),
         libpath: Some(config.geyser_lib().to_owned()),
-        builder_id: 1,
         rpc_url: Some("http://localhost:8899".to_string()),
         ws_url: Some("ws://localhost:8900".to_string()),
         thread_count: 10,
         transaction_timeout_threshold: 150,
+        data_dir: Some("/tmp/antegen_executor".to_string()),
     };
 
     let content = serde_json::to_string_pretty(&geyser_config)
