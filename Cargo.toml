@@ -26,7 +26,6 @@ members = [
     "cli",
     "crates/observer",
     "crates/cron",
-    "crates/executor",
     "crates/submitter",
     "plugin",
     "programs/thread",
@@ -47,7 +46,6 @@ keywords = ["solana"]
 [workspace.dependencies]
 solana-cron = { path = "crates/cron" }
 antegen-observer = { path = "crates/observer" }
-antegen-executor = { path = "crates/executor" }
 antegen-submitter = { path = "crates/submitter" }
 antegen-sdk = { path = "sdk" }
 antegen-thread-program = { path = "programs/thread", features = [

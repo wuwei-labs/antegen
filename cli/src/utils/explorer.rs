@@ -1,5 +1,3 @@
-use terminal_link::Link;
-
 const EXPLORER_URL: &str = "https://solscan.io";
 
 #[derive(Default, Debug)]
@@ -57,34 +55,5 @@ impl Explorer {
         } else {
             url
         }
-    }
-
-    fn build_url(&self, path: &str) -> String {
-        let url = format!("{}/{}?cluster={}", EXPLORER_URL, path, self.cluster);
-        if self.cluster == "custom" {
-            url + "&customUrl=" + self.custom_rpc.as_ref().unwrap()
-        } else {
-            url
-        }
-    }
-
-    pub fn tx<T: std::fmt::Display>(&self, tx: T) -> String {
-        let url = self.build_url(&format!("tx/{}", tx));
-        Link::new(tx.to_string().as_str(), url.as_str()).to_string()
-    }
-
-    pub fn account<T: std::fmt::Display>(&self, account: T) -> String {
-        let url = self.build_url(&format!("account/{}", account));
-        Link::new(account.to_string().as_str(), url.as_str()).to_string()
-    }
-
-    pub fn portfolio<T: std::fmt::Display>(&self, account: T) -> String {
-        let url = self.build_url(&format!("account/{}#portfolio", account));
-        Link::new(account.to_string().as_str(), url.as_str()).to_string()
-    }
-
-    pub fn token<T: std::fmt::Display>(&self, token: T) -> String {
-        let url = self.build_url(&format!("token/{}", token));
-        Link::new(token.to_string().as_str(), url.as_str()).to_string()
     }
 }

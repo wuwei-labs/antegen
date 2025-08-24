@@ -46,8 +46,7 @@ impl CarbonEventSource {
         // 3. Create channel for receiving decoded events
         // 4. Start the Carbon pipeline
         
-        // For now, we assume Carbon is initialized elsewhere and 
-        // we just receive events through the channel
+        // Carbon is initialized externally and sends events through the channel
         let (_tx, rx) = tokio::sync::mpsc::channel(1000);
         
         // Carbon would be configured to send ObservedEvent to tx

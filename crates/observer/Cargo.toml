@@ -32,5 +32,5 @@ tokio = { workspace = true, features = ["sync"] }
 hex = { workspace = true }
 bincode = { workspace = true }
 
-# Import types from executor
-antegen-executor = { workspace = true }
+# Import types from submitter
+antegen-submitter = { workspace = true }

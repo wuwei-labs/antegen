@@ -17,6 +17,10 @@ pub enum CliCommand {
         solana_archive: Option<String>,
         antegen_archive: Option<String>,
         dev: bool,
+        enable_replay: bool,
+        nats_url: Option<String>,
+        replay_delay_ms: u64,
+        forgo_commission: bool,
         trailing_args: Vec<String>,
     },
     ThreadCreate {
@@ -128,6 +132,35 @@ pub fn app() -> Command {
                         .action(ArgAction::SetTrue)
                         .default_value("false")
                         .help("Use development versions of antegen programs")
+                )
+                .arg(
+                    Arg::new("enable_replay")
+                        .long("enable-replay")
+                        .action(ArgAction::SetTrue)
+                        .default_value("false")
+                        .help("Enable transaction replay via NATS")
+                )
+                .arg(
+                    Arg::new("nats_url")
+                        .long("nats-url")
+                        .value_name("NATS_URL")
+                        .num_args(1)
+                        .help("NATS server URL for transaction replay (e.g., nats://localhost:4222)")
+                )
+                .arg(
+                    Arg::new("replay_delay_ms")
+                        .long("replay-delay-ms")
+                        .value_name("MILLISECONDS")
+                        .num_args(1)
+                        .default_value("30000")
+                        .help("Delay in milliseconds before replaying transactions")
+                )
+                .arg(
+                    Arg::new("forgo_commission")
+                        .long("forgo-commission")
+                        .action(ArgAction::SetTrue)
+                        .default_value("false")
+                        .help("Executor forgoes commission fees")
                 )
                 .arg(
                     Arg::new("test_validator_args")

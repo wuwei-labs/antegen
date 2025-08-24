@@ -113,6 +113,9 @@ pub enum AntegenThreadError {
     
     #[msg("Invalid fee percentage (must be 0-10000)")]
     InvalidFeePercentage,
+    
+    #[msg("Initial instruction provided but fiber account is missing")]
+    MissingFiberAccount,
 }
 
 /// Alias for AntegenThreadError

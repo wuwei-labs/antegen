@@ -19,7 +19,6 @@ pub struct PluginConfig {
     pub transaction_timeout_threshold: u64,
     pub rpc_url: Option<String>,
     pub ws_url: Option<String>,
-    pub data_dir: Option<String>,
     pub forgo_executor_commission: Option<bool>,
     pub enable_replay: Option<bool>,
     pub nats_url: Option<String>,
@@ -36,7 +35,6 @@ impl Default for PluginConfig {
             thread_count: DEFAULT_THREAD_COUNT,
             rpc_url: Some("http://localhost:8899".to_string()),
             ws_url: Some("ws://localhost:8900".to_string()),
-            data_dir: None,
             forgo_executor_commission: None,
             enable_replay: None,
             nats_url: None,
@@ -75,10 +73,6 @@ impl PluginConfig {
             self.ws_url = Some(ws_url);
         }
         
-        // Override data directory if env var is set
-        if let Ok(data_dir) = std::env::var("ANTEGEN_DATA_DIR") {
-            self.data_dir = Some(data_dir);
-        }
         
         // Override thread count if env var is set
         if let Ok(thread_count) = std::env::var("ANTEGEN_THREAD_COUNT") {

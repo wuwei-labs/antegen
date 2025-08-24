@@ -1,5 +1,8 @@
-use crate::state::Trigger;
-use crate::*;
+use crate::{
+    state::{Trigger, TriggerContext},
+    utils::next_timestamp,
+    *,
+};
 use anchor_lang::{
     prelude::*,
     solana_program::{
@@ -100,14 +103,46 @@ pub fn thread_create(
     }
 
     // Initialize the thread
+    let clock = Clock::get().unwrap();
+    let current_timestamp = clock.unix_timestamp;
+
     thread.version = CURRENT_THREAD_VERSION;
     thread.authority = authority.key();
     thread.bump = ctx.bumps.thread;
-    thread.created_at = Clock::get().unwrap().unix_timestamp;
+    thread.created_at = current_timestamp;
     thread.name = id.to_name();
     thread.id = id.into();
     thread.paused = false;
-    thread.trigger = trigger;
+    thread.trigger = trigger.clone();
+
+    // Initialize trigger_context based on trigger type
+    thread.trigger_context = match trigger {
+        Trigger::Account { .. } => TriggerContext::Account { hash: 0 },
+        Trigger::Cron { schedule, .. } => {
+            let next = next_timestamp(current_timestamp, schedule).unwrap_or(current_timestamp);
+            TriggerContext::Timestamp { prev: 0, next }
+        }
+        Trigger::Now => TriggerContext::Timestamp {
+            prev: 0,
+            next: current_timestamp,
+        },
+        Trigger::Slot { slot } => TriggerContext::Block {
+            prev: 0,
+            next: slot,
+        },
+        Trigger::Epoch { epoch } => TriggerContext::Block {
+            prev: 0,
+            next: epoch,
+        },
+        Trigger::Interval { seconds, .. } => TriggerContext::Timestamp {
+            prev: 0,
+            next: current_timestamp.saturating_add(seconds),
+        },
+        Trigger::Timestamp { unix_ts } => TriggerContext::Timestamp {
+            prev: 0,
+            next: unix_ts,
+        },
+    };
 
     // Handle optional initial instruction
     thread.fibers = Vec::new(); // No fibers initially, use fiber_create to add them

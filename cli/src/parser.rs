@@ -5,7 +5,7 @@ use clap::ArgMatches;
 use serde::{Deserialize as JsonDeserialize, Serialize as JsonSerialize};
 use solana_sdk::{
     pubkey::Pubkey,
-    signature::{read_keypair_file, Keypair},
+    signature::read_keypair_file,
     signer::Signer,
 };
 
@@ -78,6 +78,10 @@ fn parse_bpf_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
         solana_archive: parse_string("solana_archive", matches).ok(),
         antegen_archive: parse_string("antegen_archive", matches).ok(),
         dev: matches.get_flag("dev"),
+        enable_replay: matches.get_flag("enable_replay"),
+        nats_url: parse_string("nats_url", matches).ok(),
+        replay_delay_ms: parse_u64("replay_delay_ms", matches).unwrap_or(30000),
+        forgo_commission: matches.get_flag("forgo_commission"),
         trailing_args: matches
             .get_many::<String>("test_validator_args")
             .unwrap_or_default()
@@ -152,11 +156,6 @@ fn _parse_instruction_file(
     SerializableInstruction::try_from(&ix)
 }
 
-fn parse_keypair_file(arg: &str, matches: &ArgMatches) -> Result<Keypair, CliError> {
-    Ok(read_keypair_file(parse_string(arg, matches)?)
-        .map_err(|_err| CliError::BadParameter(arg.into()))?)
-}
-
 fn parse_pubkey(arg: &str, matches: &ArgMatches) -> Result<Pubkey, CliError> {
     Ok(Pubkey::from_str(parse_string(arg, matches)?.as_str())
         .map_err(|_err| CliError::BadParameter(arg.into()))?)
@@ -172,13 +171,6 @@ fn parse_string(arg: &str, matches: &ArgMatches) -> Result<String, CliError> {
 pub fn _parse_i64(arg: &str, matches: &ArgMatches) -> Result<i64, CliError> {
     Ok(parse_string(arg, matches)?
         .parse::<i64>()
-        .map_err(|_err| CliError::BadParameter(arg.into()))
-        .unwrap())
-}
-
-pub fn parse_u32(arg: &str, matches: &ArgMatches) -> Result<u32, CliError> {
-    Ok(parse_string(arg, matches)?
-        .parse::<u32>()
         .map_err(|_err| CliError::BadParameter(arg.into()))
         .unwrap())
 }

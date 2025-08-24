@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use log::{debug, info};
+use log::{debug, error, info};
 use solana_program::pubkey::Pubkey;
 use std::collections::HashSet;
 use tokio::sync::mpsc::Receiver;
@@ -29,8 +29,9 @@ impl GeyserEventSource {
 #[async_trait]
 impl EventSource for GeyserEventSource {
     async fn start(&mut self) -> Result<()> {
-        info!("Starting Geyser event source");
+        info!("GEYSER_SOURCE: Starting Geyser event source (running={})", self.running);
         self.running = true;
+        info!("GEYSER_SOURCE: Event source started and ready to receive events");
         Ok(())
     }
 
@@ -42,6 +43,7 @@ impl EventSource for GeyserEventSource {
 
     async fn next_event(&mut self) -> Result<Option<ObservedEvent>> {
         if !self.running {
+            debug!("GEYSER_SOURCE: Not running, returning None");
             return Ok(None);
         }
 
@@ -51,13 +53,13 @@ impl EventSource for GeyserEventSource {
                 // Log the received event
                 match &event {
                     ObservedEvent::ThreadExecutable { thread_pubkey, slot, .. } => {
-                        debug!("Received ThreadExecutable event from Geyser: thread={}, slot={}", thread_pubkey, slot);
+                        info!("GEYSER_SOURCE: Received ThreadExecutable event from Geyser plugin: thread={}, slot={}", thread_pubkey, slot);
                     }
                     ObservedEvent::ThreadUpdate { thread_pubkey, slot, .. } => {
-                        debug!("Received ThreadUpdate event from Geyser: thread={}, slot={}", thread_pubkey, slot);
+                        info!("GEYSER_SOURCE: Received ThreadUpdate event from Geyser plugin: thread={}, slot={}", thread_pubkey, slot);
                     }
                     ObservedEvent::ClockUpdate { slot, epoch, unix_timestamp } => {
-                        debug!("Received ClockUpdate event from Geyser: slot={}, epoch={}, timestamp={}", slot, epoch, unix_timestamp);
+                        info!("GEYSER_SOURCE: Received ClockUpdate event from Geyser plugin: slot={}, epoch={}, timestamp={}", slot, epoch, unix_timestamp);
                         self.current_slot = *slot;
                     }
                     ObservedEvent::AccountUpdate { pubkey, slot, .. } => {
@@ -72,17 +74,22 @@ impl EventSource for GeyserEventSource {
                         if !self.subscribed_threads.is_empty()
                             && !self.subscribed_threads.contains(thread_pubkey)
                         {
-                            debug!("Filtering out unsubscribed thread: {}", thread_pubkey);
+                            info!("GEYSER_SOURCE: Filtering out unsubscribed thread: {} (subscribed threads: {})", thread_pubkey, self.subscribed_threads.len());
                             return Ok(None);
                         }
+                        info!("GEYSER_SOURCE: Thread {} passed subscription filter, forwarding to observer", thread_pubkey);
                     }
                     _ => {}
                 }
 
                 Ok(Some(event))
             }
-            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => Ok(None),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                // No events available right now
+                Ok(None)
+            }
             Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                error!("GEYSER_SOURCE: Channel disconnected!");
                 Err(anyhow::anyhow!("Geyser channel disconnected"))
             }
         }

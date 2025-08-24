@@ -3,7 +3,7 @@ use anchor_lang::{
     solana_program::{instruction::Instruction, system_program},
     InstructionData, ToAccountMetas,
 };
-use antegen_sdk::state::{Thread, Trigger};
+use antegen_sdk::state::{Thread, Trigger, SerializableInstruction, ThreadConfig};
 use solana_sdk::{
     native_token::LAMPORTS_PER_SOL,
     pubkey::Pubkey,
@@ -101,6 +101,65 @@ pub fn update(client: &Client, id: String, schedule: Option<String>) -> Result<(
     };
     client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
     get(client, thread_pubkey)?;
+    Ok(())
+}
+
+pub fn init_config(client: &Client) -> Result<(), CliError> {
+    let config_pubkey = ThreadConfig::pubkey();
+    
+    let ix = Instruction {
+        program_id: antegen_sdk::ID,
+        accounts: antegen_sdk::accounts::ConfigInit {
+            admin: client.payer_pubkey(),
+            config: config_pubkey,
+            system_program: system_program::ID,
+        }
+        .to_account_metas(Some(false)),
+        data: antegen_sdk::instruction::InitConfig {}.data(),
+    };
+    
+    client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
+    println!("Initialized thread config at {}", config_pubkey);
+    Ok(())
+}
+
+pub fn create_fiber(
+    client: &Client,
+    thread_id: String,
+    index: u8,
+    instruction: SerializableInstruction,
+) -> Result<(), CliError> {
+    let thread_pubkey = Thread::pubkey(client.payer_pubkey(), thread_id.into_bytes());
+    
+    // Derive fiber PDA
+    let fiber_pubkey = Pubkey::find_program_address(
+        &[
+            b"thread_fiber",
+            thread_pubkey.as_ref(),
+            &[index],
+        ],
+        &antegen_sdk::ID,
+    ).0;
+    
+    let ix = Instruction {
+        program_id: antegen_sdk::ID,
+        accounts: antegen_sdk::accounts::FiberCreate {
+            authority: client.payer_pubkey(),
+            payer: client.payer_pubkey(),
+            thread: thread_pubkey,
+            fiber: fiber_pubkey,
+            system_program: system_program::ID,
+        }
+        .to_account_metas(Some(false)),
+        data: antegen_sdk::instruction::CreateFiber {
+            index,
+            instruction,
+            signer_seeds: vec![], // Empty for simple instructions
+        }
+        .data(),
+    };
+    
+    client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
     Ok(())
 }
 

@@ -25,6 +25,10 @@ pub fn start(
     solana_archive: Option<String>,
     antegen_archive: Option<String>,
     dev: bool,
+    enable_replay: bool,
+    nats_url: Option<String>,
+    replay_delay_ms: u64,
+    forgo_commission: bool,
     trailing_args: Vec<String>,
 ) -> Result<(), CliError> {
     config.dev = dev;
@@ -45,7 +49,7 @@ pub fn start(
     )?;
 
     // Create Geyser Plugin Config file
-    create_geyser_plugin_config(config)?;
+    create_geyser_plugin_config(config, enable_replay, nats_url, replay_delay_ms, forgo_commission)?;
 
     // Start the validator
     start_test_validator(
@@ -58,14 +62,27 @@ pub fn start(
     wait_for_validator(client, 120)?;
 
     // Initialize Antegen
+    init_thread_config(client)?;
     create_test_thread(client)?;
 
     Ok(())
 }
 
+fn init_thread_config(client: &Client) -> Result<()> {
+    // Initialize the thread config
+    super::thread::init_config(client)
+        .context("Failed to initialize thread config")?;
+    
+    print_status!(
+        "Thread Config ⚙️",
+        "Initialized global thread configuration"
+    );
+    Ok(())
+}
+
 fn create_test_thread(client: &Client) -> Result<()> {
     // Create a simple transfer instruction (1 lamport to self)
-    let _test_instruction = SerializableInstruction {
+    let test_instruction = SerializableInstruction {
         program_id: system_program::ID,
         accounts: vec![
             SerializableAccountMeta {
@@ -95,9 +112,13 @@ fn create_test_thread(client: &Client) -> Result<()> {
         skippable: true,
     };
 
-    // Create thread (without initial instruction since thread_create was simplified)
-    super::thread::create(client, thread_id, trigger)
+    // Create thread
+    super::thread::create(client, thread_id.clone(), trigger)
         .context("Failed to create test thread")?;
+    
+    // Create initial fiber with test instruction
+    super::thread::create_fiber(client, thread_id, 0, test_instruction)
+        .context("Failed to create test fiber")?;
 
     print_status!(
         "Test Thread 🧵",
@@ -106,7 +127,13 @@ fn create_test_thread(client: &Client) -> Result<()> {
     Ok(())
 }
 
-fn create_geyser_plugin_config(config: &CliConfig) -> Result<()> {
+fn create_geyser_plugin_config(
+    config: &CliConfig,
+    enable_replay: bool,
+    nats_url: Option<String>,
+    replay_delay_ms: u64,
+    forgo_commission: bool,
+) -> Result<()> {
     // Create a simple plugin config without using external crate
     #[derive(serde::Serialize)]
     struct PluginConfig {
@@ -118,6 +145,10 @@ fn create_geyser_plugin_config(config: &CliConfig) -> Result<()> {
         thread_count: usize,
         transaction_timeout_threshold: u64,
         data_dir: Option<String>,
+        forgo_executor_commission: Option<bool>,
+        enable_replay: Option<bool>,
+        nats_url: Option<String>,
+        replay_delay_ms: Option<u64>,
     }
     
     let geyser_config = PluginConfig {
@@ -129,6 +160,10 @@ fn create_geyser_plugin_config(config: &CliConfig) -> Result<()> {
         thread_count: 10,
         transaction_timeout_threshold: 150,
         data_dir: Some("/tmp/antegen_executor".to_string()),
+        forgo_executor_commission: Some(forgo_commission),
+        enable_replay: Some(enable_replay),
+        nats_url: nats_url,
+        replay_delay_ms: Some(replay_delay_ms),
     };
 
     let content = serde_json::to_string_pretty(&geyser_config)

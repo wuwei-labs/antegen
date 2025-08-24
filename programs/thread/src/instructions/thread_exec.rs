@@ -1,12 +1,11 @@
-use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
+use crate::{
+    constants::*,
+    errors::*,
+    state::{
+        decompile_instruction, CompiledInstructionV0, Trigger, TriggerContext, PAYER_PUBKEY, *,
+    },
+    utils::next_timestamp,
 };
-
-use crate::state::{
-    decompile_instruction, CompiledInstructionV0, Trigger, TriggerContext, PAYER_PUBKEY,
-};
-use crate::{constants::*, errors::*, state::*};
 use anchor_lang::{
     prelude::*,
     solana_program::{
@@ -14,9 +13,10 @@ use anchor_lang::{
         sysvar::recent_blockhashes,
     },
 };
-use chrono::{DateTime, Utc};
-use solana_cron::Schedule;
-use std::str::FromStr;
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
 
 /// Accounts required by the `thread_exec` instruction.
 #[derive(Accounts)]
@@ -91,14 +91,6 @@ pub struct ThreadExec<'info> {
     pub system_program: Program<'info, System>,
 }
 
-fn next_timestamp(after: i64, schedule: String) -> Option<i64> {
-    Schedule::from_str(&schedule)
-        .unwrap()
-        .next_after(&DateTime::<Utc>::from_timestamp(after, 0).unwrap())
-        .take()
-        .map(|datetime| datetime.timestamp())
-}
-
 pub fn thread_exec(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<()> {
     let thread = &mut ctx.accounts.thread;
     let fiber = &mut ctx.accounts.fiber;
@@ -110,14 +102,8 @@ pub fn thread_exec(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<(
     // Check if global pause is active
     require!(!config.paused, AntegenThreadError::GlobalPauseActive);
 
-    // Verify durable nonce is required
-    require!(
-        ctx.accounts.nonce_account.is_some(),
-        AntegenThreadError::NonceRequired
-    );
-
-    // Advance nonce account (required for all threads)
-    {
+    // Advance nonce account if thread has one
+    if thread.has_nonce_account() {
         match (
             &ctx.accounts.nonce_account,
             &ctx.accounts.recent_blockhashes,
@@ -142,7 +128,7 @@ pub fn thread_exec(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<(
                 )?;
             }
             _ => {
-                return Err(AntegenThreadError::InvalidNonceAccount.into());
+                return Err(AntegenThreadError::NonceRequired.into());
             }
         }
     }
@@ -339,7 +325,7 @@ pub fn thread_exec(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<(
         // Within decay period: linear decay from 100% to 0%
         let time_into_decay = (time_since_ready - config.grace_period_seconds) as f64;
         let decay_progress = time_into_decay / config.fee_decay_seconds as f64;
-        1.0 - decay_progress  // Goes from 1.0 to 0.0
+        1.0 - decay_progress // Goes from 1.0 to 0.0
     } else {
         // After grace + decay period: no commission
         0.0
@@ -356,15 +342,21 @@ pub fn thread_exec(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<(
     };
     let core_team_fee = (effective_commission * config.core_team_bps) / 10_000;
 
-    msg!("Execution timing: {}s after trigger ready", time_since_ready);
-    msg!("Commission: {} lamports ({}% of base)", 
-        effective_commission, 
+    msg!(
+        "Execution timing: {}s after trigger ready",
+        time_since_ready
+    );
+    msg!(
+        "Commission: {} lamports ({}% of base)",
+        effective_commission,
         (commission_multiplier * 100.0) as u64
     );
-    
+
     if forgo_commission && effective_commission > 0 {
-        msg!("Executor forgoing commission: {} lamports retained by thread", 
-            (effective_commission * config.executor_fee_bps) / 10_000);
+        msg!(
+            "Executor forgoing commission: {} lamports retained by thread",
+            (effective_commission * config.executor_fee_bps) / 10_000
+        );
     }
 
     // Transfer fees only if non-zero
@@ -380,8 +372,10 @@ pub fn thread_exec(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<(
 
     // Log warning if late execution
     if commission_multiplier == 0.0 {
-        msg!("WARNING: Execution >{}s late - no commission paid!", 
-            config.grace_period_seconds + config.fee_decay_seconds);
+        msg!(
+            "WARNING: Execution >{}s late - no commission paid!",
+            config.grace_period_seconds + config.fee_decay_seconds
+        );
     }
 
     // Update execution tracking

@@ -1,4 +1,4 @@
-use anchor_lang::{prelude::Clock, AccountDeserialize};
+use anchor_lang::prelude::Clock;
 use solana_client::{client_error, rpc_client::RpcClient};
 use solana_sdk::{
     commitment_config::CommitmentConfig,
@@ -42,11 +42,6 @@ impl Client {
         Self { client, payer }
     }
 
-    pub fn get<T: AccountDeserialize>(&self, pubkey: &Pubkey) -> ClientResult<T> {
-        let data = self.client.get_account_data(pubkey)?;
-        T::try_deserialize(&mut data.as_slice()).map_err(|_| ClientError::DeserializationError)
-    }
-
     pub fn get_clock(&self) -> ClientResult<Clock> {
         let clock_pubkey = Pubkey::from_str("SysvarC1ock11111111111111111111111111111111").unwrap();
         let clock_data = self.client.get_account_data(&clock_pubkey)?;
@@ -63,13 +58,6 @@ impl Client {
 
     pub fn latest_blockhash(&self) -> ClientResult<Hash> {
         Ok(self.client.get_latest_blockhash()?)
-    }
-
-    pub fn airdrop(&self, to_pubkey: &Pubkey, lamports: u64) -> ClientResult<Signature> {
-        let blockhash = self.client.get_latest_blockhash()?;
-        let signature = self.request_airdrop_with_blockhash(to_pubkey, lamports, &blockhash)?;
-        self.confirm_transaction_with_spinner(&signature, &blockhash, self.commitment())?;
-        Ok(signature)
     }
 
     pub fn send_and_confirm<T: Signers>(

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use log::{debug, info, warn};
 use solana_client::{
     nonblocking::rpc_client::RpcClient, nonblocking::tpu_client::TpuClient,
@@ -9,7 +9,7 @@ use solana_sdk::{
     commitment_config::CommitmentConfig, signature::Signature, transaction::Transaction,
 };
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 /// Submission mode for transactions
@@ -53,56 +53,112 @@ impl Default for TpuConfig {
     }
 }
 
+/// Wait for RPC server to become available
+async fn wait_for_rpc_availability(
+    rpc_client: &RpcClient,
+    max_wait: Duration,
+) -> Result<()> {
+    let start = Instant::now();
+    let mut delay = Duration::from_secs(1);
+    let max_delay = Duration::from_secs(30);
+    let mut last_log = Instant::now();
+    
+    info!("Waiting for RPC server to become available at {}...", rpc_client.url());
+    
+    loop {
+        // Try to connect to RPC
+        match rpc_client.get_health().await {
+            Ok(_) => {
+                info!("RPC server is available (took {:.1}s)", 
+                    start.elapsed().as_secs_f32());
+                return Ok(());
+            }
+            Err(e) => {
+                debug!("RPC not ready yet: {}", e);
+            }
+        }
+        
+        // Check timeout
+        if start.elapsed() > max_wait {
+            return Err(anyhow!(
+                "RPC server at {} failed to become available after {} seconds",
+                rpc_client.url(),
+                max_wait.as_secs()
+            ));
+        }
+        
+        // Log progress every 30 seconds
+        if last_log.elapsed() > Duration::from_secs(30) {
+            info!("Still waiting for RPC server (elapsed: {:.0}s of max {}s)...",
+                start.elapsed().as_secs(),
+                max_wait.as_secs());
+            last_log = Instant::now();
+        }
+        
+        // Wait with exponential backoff
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(max_delay);
+    }
+}
+
 /// Handles transaction submission via RPC and TPU
 pub struct TransactionSubmitter {
     rpc_client: Arc<RpcClient>,
-    tpu_client: Option<Arc<TpuClient<QuicPool, QuicConnectionManager, QuicConfig>>>,
+    tpu_client: RwLock<Option<Arc<TpuClient<QuicPool, QuicConnectionManager, QuicConfig>>>>,
     config: TpuConfig,
     submission_mode: RwLock<SubmissionMode>,
 }
 
 impl TransactionSubmitter {
-    /// Create a new transaction submitter
+    /// Create a new transaction submitter (non-blocking, requires initialize() to be called)
     pub async fn new(rpc_client: Arc<RpcClient>, tpu_config: Option<TpuConfig>) -> Result<Self> {
         let config = tpu_config.unwrap_or_default();
-
-        // Try to create TPU client if mode requires it
-        let tpu_client = if matches!(
-            config.mode,
-            SubmissionMode::Tpu | SubmissionMode::TpuWithFallback
-        ) {
-            match Self::create_tpu_client(rpc_client.clone(), &config).await {
-                Ok(client) => {
-                    info!("TPU client initialized successfully");
-                    Some(Arc::new(client))
-                }
-                Err(e) => {
-                    warn!("Failed to create TPU client, will use RPC only: {}", e);
-                    None
-                }
-            }
-        } else {
-            info!("TPU disabled by configuration, using RPC only");
-            None
-        };
-
-        // Adjust submission mode if TPU creation failed
-        let submission_mode = if tpu_client.is_none() && config.mode != SubmissionMode::Rpc {
-            warn!("TPU client unavailable, falling back to RPC mode");
-            RwLock::new(SubmissionMode::Rpc)
-        } else {
-            RwLock::new(config.mode)
-        };
-
+        
+        // Don't wait for RPC or create TPU client here - defer to initialize()
+        // Start in RPC-only mode until we verify connectivity
+        let submission_mode = RwLock::new(SubmissionMode::Rpc);
+        
         Ok(Self {
             rpc_client,
-            tpu_client,
+            tpu_client: RwLock::new(None),
             config,
             submission_mode,
         })
     }
+    
+    /// Complete initialization by waiting for RPC and creating TPU client
+    pub async fn initialize(&self) -> Result<()> {
+        // Wait for RPC to be available (max 5 minutes)
+        wait_for_rpc_availability(&self.rpc_client, Duration::from_secs(300)).await
+            .context("Failed to connect to RPC server")?;
+        
+        info!("RPC connection established, completing initialization");
+        
+        // Now try to create TPU client if configured
+        if matches!(
+            self.config.mode,
+            SubmissionMode::Tpu | SubmissionMode::TpuWithFallback
+        ) {
+            match Self::create_tpu_client(self.rpc_client.clone(), &self.config).await {
+                Ok(client) => {
+                    info!("TPU client initialized successfully");
+                    *self.tpu_client.write().await = Some(Arc::new(client));
+                    *self.submission_mode.write().await = self.config.mode;
+                }
+                Err(e) => {
+                    warn!("Failed to create TPU client: {}, using RPC only", e);
+                    *self.submission_mode.write().await = SubmissionMode::Rpc;
+                }
+            }
+        } else {
+            info!("TPU disabled by configuration, using RPC only");
+            *self.submission_mode.write().await = self.config.mode;
+        }
+        
+        Ok(())
+    }
 
-    /// Create a TPU client
+    /// Create a TPU client with retry logic
     async fn create_tpu_client(
         rpc_client: Arc<RpcClient>,
         config: &TpuConfig,
@@ -121,11 +177,37 @@ impl TransactionSubmitter {
             fanout_slots: config.fanout_slots,
             ..TpuClientConfig::default()
         };
-
-        // Create TPU client (4 parameters: name, rpc_client, websocket_url, config)
-        TpuClient::new("antegen-submitter", rpc_client, &ws_url, tpu_client_config)
-            .await
-            .map_err(|e| anyhow!("Failed to create TPU client: {}", e))
+        
+        // Try up to 3 times with delays
+        let mut attempts = 0;
+        let max_attempts = 3;
+        
+        loop {
+            attempts += 1;
+            
+            match TpuClient::new(
+                "antegen-submitter",
+                rpc_client.clone(),
+                &ws_url,
+                tpu_client_config.clone()
+            ).await {
+                Ok(client) => {
+                    info!("TPU client created successfully on attempt {}", attempts);
+                    return Ok(client);
+                }
+                Err(e) => {
+                    if attempts >= max_attempts {
+                        return Err(anyhow!("Failed to create TPU client after {} attempts: {}", 
+                            max_attempts, e));
+                    }
+                    
+                    let delay = Duration::from_secs(attempts as u64);
+                    warn!("TPU client creation failed (attempt {}/{}): {}, retrying in {:?}...",
+                        attempts, max_attempts, e, delay);
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        }
     }
 
     /// Submit a transaction using configured mode
@@ -156,8 +238,8 @@ impl TransactionSubmitter {
 
     /// Submit transaction via TPU
     async fn submit_via_tpu(&self, tx: &Transaction) -> Result<Signature> {
-        let tpu_client = self
-            .tpu_client
+        let tpu_client_guard = self.tpu_client.read().await;
+        let tpu_client = tpu_client_guard
             .as_ref()
             .ok_or_else(|| anyhow!("TPU client not available"))?;
 
@@ -286,10 +368,11 @@ impl TransactionSubmitter {
     /// Update submission mode (useful for runtime adjustments)
     pub async fn set_mode(&self, mode: SubmissionMode) -> Result<()> {
         // Validate we can use the requested mode
-        if matches!(mode, SubmissionMode::Tpu | SubmissionMode::TpuWithFallback)
-            && self.tpu_client.is_none()
-        {
-            return Err(anyhow!("Cannot set TPU mode: TPU client not available"));
+        if matches!(mode, SubmissionMode::Tpu | SubmissionMode::TpuWithFallback) {
+            let tpu_client_guard = self.tpu_client.read().await;
+            if tpu_client_guard.is_none() {
+                return Err(anyhow!("Cannot set TPU mode: TPU client not available"));
+            }
         }
 
         let mut submission_mode = self.submission_mode.write().await;
@@ -299,7 +382,7 @@ impl TransactionSubmitter {
     }
 
     /// Check if TPU client is available
-    pub fn has_tpu_client(&self) -> bool {
-        self.tpu_client.is_some()
+    pub async fn has_tpu_client(&self) -> bool {
+        self.tpu_client.read().await.is_some()
     }
 }
