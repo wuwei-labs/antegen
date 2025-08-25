@@ -595,19 +595,23 @@ impl PaymentDistributor for Thread {
         let total_executor_payment =
             payments.fee_payer_reimbursement + payments.executor_commission;
 
-        if total_executor_payment > 0 {
+        // Log all payments in one line for conciseness
+        if total_executor_payment > 0 || payments.core_team_fee > 0 {
             msg!(
-                "Executor payment: {} lamports (tx reimbursement: {} + commission: {})",
+                "Payments: executor {} (reimburse {}, commission {}), team {}",
                 total_executor_payment,
                 payments.fee_payer_reimbursement,
-                payments.executor_commission
+                payments.executor_commission,
+                payments.core_team_fee
             );
+        }
+
+        if total_executor_payment > 0 {
             transfer_lamports(thread_account, executor, total_executor_payment)?;
         }
 
         // Transfer core team fee to admin
         if payments.core_team_fee > 0 {
-            msg!("Core team fee: {} lamports", payments.core_team_fee);
             transfer_lamports(thread_account, admin, payments.core_team_fee)?;
         }
 

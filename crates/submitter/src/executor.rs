@@ -99,24 +99,19 @@ impl ExecutorLogic {
                     
                     // Check if it's an account not found error (expected during race conditions)
                     if error_str.contains("AccountNotFound") || error_str.contains("could not find account") {
-                        if attempt == 1 {
-                            debug!("Fiber account {} not found, will retry until it exists...", fiber_pubkey);
-                        } else if last_log.elapsed() > Duration::from_secs(30) {
+                        if last_log.elapsed() > Duration::from_secs(30) {
                             // Log progress every 30 seconds
-                            info!("Still waiting for fiber account {} to exist (attempt {}, elapsed: {:.0}s)...",
-                                fiber_pubkey, attempt, start_time.elapsed().as_secs());
+                            info!("Still waiting for fiber account {} to exist (elapsed: {:.0}s)...",
+                                fiber_pubkey, start_time.elapsed().as_secs());
                             last_log = std::time::Instant::now();
                         }
                     } else {
                         // For non-AccountNotFound errors, we might want to fail after some attempts
                         // but for now, keep retrying with logging
-                        if attempt <= 5 {
-                            debug!("Error fetching fiber account {} (attempt {}): {}, retrying in {:?}...",
-                                fiber_pubkey, attempt, e, delay);
-                        } else if last_log.elapsed() > Duration::from_secs(30) {
-                            // After 5 attempts, only log every 30 seconds to avoid spam
-                            info!("Still having errors fetching fiber account {} (attempt {}): {}",
-                                fiber_pubkey, attempt, e);
+                        if last_log.elapsed() > Duration::from_secs(30) {
+                            // Log errors every 30 seconds to avoid spam
+                            warn!("Error fetching fiber account {} after {:.0}s: {}",
+                                fiber_pubkey, start_time.elapsed().as_secs(), e);
                             last_log = std::time::Instant::now();
                         }
                     }
@@ -206,8 +201,7 @@ impl ExecutorLogic {
         // Fetch config with simple retry (config should be stable, but handle edge cases)
         let config_account = match self.rpc_client.get_account(&config_pubkey).await {
             Ok(account) => account,
-            Err(e) => {
-                debug!("Failed to fetch config account on first attempt: {}, retrying...", e);
+            Err(_) => {
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 self.rpc_client.get_account(&config_pubkey).await
                     .map_err(|e| anyhow!("Failed to fetch thread config account: {}", e))?
@@ -229,10 +223,7 @@ impl ExecutorLogic {
         use antegen_thread_program::state::CompiledInstructionV0;
         let compiled = CompiledInstructionV0::deserialize(&mut fiber.compiled_instruction.as_slice())?;
         
-        info!("Fiber instruction has {} accounts", compiled.accounts.len());
-        for (i, acc) in compiled.accounts.iter().enumerate() {
-            debug!("  Account[{}]: {}", i, acc);
-        }
+        debug!("Fiber instruction has {} accounts", compiled.accounts.len());
         
         // Build base accounts using Anchor-generated types
         let mut accounts = ThreadExec {
@@ -259,10 +250,6 @@ impl ExecutorLogic {
         // These are needed for the CPI - even if they're already in base accounts
         // The program's invoke_signed passes ALL remaining_accounts to the CPI
         use solana_sdk::instruction::AccountMeta;
-        debug!("Base accounts before adding fiber accounts:");
-        for (i, acc) in accounts.iter().enumerate() {
-            debug!("  Base[{}]: {} (writable: {})", i, acc.pubkey, acc.is_writable);
-        }
         
         for (account_index, pubkey) in compiled.accounts.iter().enumerate() {
             // Determine if account should be writable based on its position in the sorted accounts
@@ -278,7 +265,6 @@ impl ExecutorLogic {
                 false  // Read-only non-signer
             };
             
-            debug!("    Adding fiber account {} as writable={}", pubkey, is_writable);
             accounts.push(AccountMeta {
                 pubkey: *pubkey,
                 is_signer: false,  // CPI accounts don't need to be signers at the transaction level
@@ -286,10 +272,7 @@ impl ExecutorLogic {
             });
         }
         
-        info!("Final accounts list ({} total):", accounts.len());
-        for (i, acc) in accounts.iter().enumerate() {
-            debug!("  Final[{}]: {} (writable: {})", i, acc.pubkey, acc.is_writable);
-        }
+        debug!("Total accounts for instruction: {}", accounts.len());
 
         // Build instruction data using Anchor-generated type
         let data = ExecThread {
@@ -343,7 +326,6 @@ impl ExecutorLogic {
         // Build initial transaction with default compute units
         let initial_tx = self.build_execute_transaction(executable).await?;
         
-        debug!("Simulating transaction for thread {} with trigger slot {}", thread_pubkey, trigger_slot);
         
         // Simulate transaction with proper config
         let sim_result = match self.rpc_client.simulate_transaction_with_config(
@@ -378,7 +360,6 @@ impl ExecutorLogic {
         if let Some(err) = sim_result.value.err {
             let logs = sim_result.value.logs.unwrap_or_default();
             warn!("Simulation failed for thread {}: {:?}", thread_pubkey, err);
-            warn!("Simulation logs: {:?}", logs);
             return Err(anyhow!("Simulation failed: {:?}, logs: {:?}", err, logs));
         }
         
@@ -391,9 +372,9 @@ impl ExecutorLogic {
         let optimized_cu = if let Some(units_consumed) = sim_result.value.units_consumed {
             let with_multiplier = (units_consumed as f64 * cu_multiplier) as u32;
             let final_cu = cmp::min(with_multiplier, max_compute_units);
-            info!(
-                "Simulation successful for thread {} - consumed: {}, with multiplier: {}, final: {}",
-                thread_pubkey, units_consumed, with_multiplier, final_cu
+            debug!(
+                "Simulation successful for thread {} - consumed: {}, final: {}",
+                thread_pubkey, units_consumed, final_cu
             );
             final_cu
         } else {

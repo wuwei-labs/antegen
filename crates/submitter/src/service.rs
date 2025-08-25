@@ -363,7 +363,7 @@ impl SubmitterService {
             tokio::select! {
                 // Handle thread events
                 Some(executable) = thread_rx.recv() => {
-                    info!(
+                    debug!(
                         "SUBMITTER: Received executable thread {} from observer",
                         executable.thread_pubkey
                     );
@@ -392,8 +392,8 @@ impl SubmitterService {
                         continue;
                     }
                     
-                    info!(
-                        "SUBMITTER: Processing clock update - slot: {} ({}), epoch: {} ({}), timestamp: {} ({})",
+                    debug!(
+                        "SUBMITTER: Clock update - slot: {} ({}), epoch: {} ({}), timestamp: {} ({})",
                         clock.slot,
                         if slot_changed { "changed" } else { "unchanged" },
                         clock.epoch,
@@ -475,7 +475,7 @@ impl SubmitterService {
             let submitter = submitter.clone();
             
             async move {
-                info!("SUBMITTER: Processing thread {}", thread_pubkey);
+                debug!("SUBMITTER: Processing thread {}", thread_pubkey);
                 
                 // Create ExecutableThread for compatibility
                 let executable = ExecutableThread {
@@ -486,7 +486,7 @@ impl SubmitterService {
                 
                 // Build transaction
                 let tx = if simulate_before_submit {
-                    info!("SUBMITTER: Simulating transaction for thread {}", thread_pubkey);
+                    debug!("SUBMITTER: Simulating transaction for thread {}", thread_pubkey);
                     executor.simulate_and_optimize_transaction(
                         &executable,
                         compute_unit_multiplier,
@@ -541,7 +541,7 @@ impl SubmitterService {
             let submitter = submitter.clone();
             
             async move {
-                info!("SUBMITTER: Processing thread {}", thread_pubkey);
+                debug!("SUBMITTER: Processing thread {}", thread_pubkey);
                 
                 // Create ExecutableThread for compatibility
                 let executable = ExecutableThread {
@@ -552,7 +552,7 @@ impl SubmitterService {
                 
                 // Build transaction
                 let tx = if simulate_before_submit {
-                    info!("SUBMITTER: Simulating transaction for thread {}", thread_pubkey);
+                    debug!("SUBMITTER: Simulating transaction for thread {}", thread_pubkey);
                     executor.simulate_and_optimize_transaction(
                         &executable,
                         compute_unit_multiplier,
@@ -575,17 +575,17 @@ impl SubmitterService {
         
         // Only process the queues for values that actually changed
         if timestamp_changed {
-            info!("SUBMITTER: Checking time-triggered threads (timestamp: {})", timestamp);
+            debug!("SUBMITTER: Checking time-triggered threads (timestamp: {})", timestamp);
             queue.process_time_queue(timestamp, process_fn.clone()).await;
         }
         
         if slot_changed {
-            info!("SUBMITTER: Checking slot-triggered threads (slot: {})", slot);
+            debug!("SUBMITTER: Checking slot-triggered threads (slot: {})", slot);
             queue.process_slot_queue(slot, process_fn.clone()).await;
         }
         
         if epoch_changed {
-            info!("SUBMITTER: Checking epoch-triggered threads (epoch: {})", epoch);
+            debug!("SUBMITTER: Checking epoch-triggered threads (epoch: {})", epoch);
             queue.process_epoch_queue(epoch, process_fn).await;
         }
         

@@ -1,11 +1,4 @@
-use crate::{
-    constants::*,
-    errors::*,
-    state::{
-        FiberInstructionProcessor, NonceProcessor, PaymentDistributor, PaymentProcessor,
-        ThreadSeeds, TriggerProcessor, *,
-    },
-};
+use crate::{errors::*, *};
 use anchor_lang::{
     prelude::*,
     solana_program::{program::invoke_signed, system_program, sysvar::recent_blockhashes},
@@ -116,18 +109,16 @@ pub fn thread_exec(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<(
     let balance_change = executor.lamports() as i64 - executor_lamports_start as i64;
     let payments = config.calculate_payments(time_since_ready, balance_change, forgo_commission);
 
-    // Log payment details
-    msg!(
-        "Execution timing: {}s after trigger ready",
-        time_since_ready
-    );
+    // Log execution timing and commission details
     if forgo_commission && payments.executor_commission.eq(&0) {
         let effective_commission = config.calculate_effective_commission(time_since_ready);
         let forgone = config.calculate_executor_fee(effective_commission);
         msg!(
-            "Executor forgoing commission: {} lamports retained by thread",
-            forgone
+            "Executed {}s after trigger, forgoing {} commission",
+            time_since_ready, forgone
         );
+    } else {
+        msg!("Executed {}s after trigger", time_since_ready);
     }
 
     // Distribute payments using thread trait
