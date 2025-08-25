@@ -116,30 +116,34 @@ pub fn thread_create(
     thread.trigger = trigger.clone();
 
     // Initialize trigger_context based on trigger type
+    // Use created_at as initial prev value for proper fee calculation on first execution
     thread.trigger_context = match trigger {
         Trigger::Account { .. } => TriggerContext::Account { hash: 0 },
         Trigger::Cron { schedule, .. } => {
             let next = next_timestamp(current_timestamp, schedule).unwrap_or(current_timestamp);
-            TriggerContext::Timestamp { prev: 0, next }
+            TriggerContext::Timestamp {
+                prev: current_timestamp, // Use creation time as initial prev
+                next,
+            }
         }
         Trigger::Now => TriggerContext::Timestamp {
-            prev: 0,
+            prev: current_timestamp, // Use creation time as initial prev
             next: current_timestamp,
         },
         Trigger::Slot { slot } => TriggerContext::Block {
-            prev: 0,
+            prev: clock.slot, // Use current slot as initial prev
             next: slot,
         },
         Trigger::Epoch { epoch } => TriggerContext::Block {
-            prev: 0,
+            prev: clock.epoch, // Use current epoch as initial prev
             next: epoch,
         },
         Trigger::Interval { seconds, .. } => TriggerContext::Timestamp {
-            prev: 0,
+            prev: current_timestamp, // Use creation time as initial prev
             next: current_timestamp.saturating_add(seconds),
         },
         Trigger::Timestamp { unix_ts } => TriggerContext::Timestamp {
-            prev: 0,
+            prev: current_timestamp, // Use creation time as initial prev
             next: unix_ts,
         },
     };

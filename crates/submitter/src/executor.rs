@@ -17,7 +17,7 @@ use solana_sdk::{
 use std::{sync::Arc, cmp, time::Duration};
 
 use antegen_thread_program::state::{Thread, ThreadConfig, FiberState, Trigger, TriggerContext};
-use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
+use anchor_lang::{AccountDeserialize, AnchorDeserialize, InstructionData, ToAccountMetas};
 use antegen_sdk::accounts::ThreadExec;
 use antegen_sdk::instruction::ExecThread;
 
@@ -197,7 +197,7 @@ impl ExecutorLogic {
         &self,
         thread_pubkey: &Pubkey,
         thread: &Thread,
-        _fiber: &FiberState,
+        fiber: &FiberState,
     ) -> Result<Instruction> {
         // Get config for fee recipients
         let config_pubkey =
@@ -225,15 +225,23 @@ impl ExecutorLogic {
             &antegen_thread_program::ID,
         ).0;
 
-        // Build accounts using Anchor-generated types
-        let accounts = ThreadExec {
+        // Deserialize the compiled instruction to get referenced accounts
+        use antegen_thread_program::state::CompiledInstructionV0;
+        let compiled = CompiledInstructionV0::deserialize(&mut fiber.compiled_instruction.as_slice())?;
+        
+        info!("Fiber instruction has {} accounts", compiled.accounts.len());
+        for (i, acc) in compiled.accounts.iter().enumerate() {
+            debug!("  Account[{}]: {}", i, acc);
+        }
+        
+        // Build base accounts using Anchor-generated types
+        let mut accounts = ThreadExec {
             executor: self.keypair.pubkey(),
-            fee_payer: self.keypair.pubkey(),
             thread: *thread_pubkey,
             fiber: fiber_pubkey,
             config: config_pubkey,
             thread_authority: thread.authority,
-            config_admin: config.admin,
+            admin: config.admin,
             nonce_account: if thread.has_nonce_account() {
                 Some(thread.nonce_account)
             } else {
@@ -246,6 +254,42 @@ impl ExecutorLogic {
             },
             system_program: solana_program::system_program::id(),
         }.to_account_metas(Some(false));
+
+        // Add ALL accounts referenced by the fiber instruction as remaining accounts
+        // These are needed for the CPI - even if they're already in base accounts
+        // The program's invoke_signed passes ALL remaining_accounts to the CPI
+        use solana_sdk::instruction::AccountMeta;
+        debug!("Base accounts before adding fiber accounts:");
+        for (i, acc) in accounts.iter().enumerate() {
+            debug!("  Base[{}]: {} (writable: {})", i, acc.pubkey, acc.is_writable);
+        }
+        
+        for (account_index, pubkey) in compiled.accounts.iter().enumerate() {
+            // Determine if account should be writable based on its position in the sorted accounts
+            // The accounts are sorted by: rw_signers, ro_signers, rw_non_signers, ro_non_signers
+            let account_idx = account_index as u8;
+            let is_writable = if account_idx < compiled.num_rw_signers {
+                true  // Read-write signer
+            } else if account_idx < compiled.num_rw_signers + compiled.num_ro_signers {
+                false  // Read-only signer
+            } else if account_idx < compiled.num_rw_signers + compiled.num_ro_signers + compiled.num_rw {
+                true  // Read-write non-signer
+            } else {
+                false  // Read-only non-signer
+            };
+            
+            debug!("    Adding fiber account {} as writable={}", pubkey, is_writable);
+            accounts.push(AccountMeta {
+                pubkey: *pubkey,
+                is_signer: false,  // CPI accounts don't need to be signers at the transaction level
+                is_writable,
+            });
+        }
+        
+        info!("Final accounts list ({} total):", accounts.len());
+        for (i, acc) in accounts.iter().enumerate() {
+            debug!("  Final[{}]: {} (writable: {})", i, acc.pubkey, acc.is_writable);
+        }
 
         // Build instruction data using Anchor-generated type
         let data = ExecThread {

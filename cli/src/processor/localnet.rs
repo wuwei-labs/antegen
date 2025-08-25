@@ -4,15 +4,15 @@ use {
         client::Client, config::CliConfig, deps, errors::CliError, parser::ProgramInfo,
         print::print_style, print_status,
     },
-    antegen_sdk::state::{Trigger, SerializableAccountMeta, SerializableInstruction},
+    antegen_sdk::state::{Thread, Trigger},
     crate::utils::Explorer,
     anyhow::{Context, Result},
     solana_sdk::{
         commitment_config::CommitmentConfig,
         pubkey::Pubkey,
-        system_instruction, system_program,
+        system_instruction,
     },
-    std::fs,
+    std::{fs, str::FromStr},
     std::process::{Command, Stdio},
 };
 
@@ -81,30 +81,11 @@ fn init_thread_config(client: &Client) -> Result<()> {
 }
 
 fn create_test_thread(client: &Client) -> Result<()> {
-    // Create a simple transfer instruction (1 lamport to self)
-    let test_instruction = SerializableInstruction {
-        program_id: system_program::ID,
-        accounts: vec![
-            SerializableAccountMeta {
-                pubkey: client.payer_pubkey(),
-                is_signer: true,
-                is_writable: true,
-            },
-            SerializableAccountMeta {
-                pubkey: client.payer_pubkey(),
-                is_signer: false,
-                is_writable: true,
-            },
-        ],
-        data: system_instruction::transfer(
-            &client.payer_pubkey(),
-            &client.payer_pubkey(),
-            1, // 1 lamport
-        )
-        .data,
-    };
-
     let thread_id = "test-thread".to_string();
+    
+    // Calculate thread PDA
+    let thread_pubkey = Thread::pubkey(client.payer_pubkey(), thread_id.as_bytes());
+    
     // Use an interval trigger that fires every 30 seconds
     // This will let us see the submitter waiting and then submitting
     let trigger = Trigger::Interval {
@@ -116,13 +97,34 @@ fn create_test_thread(client: &Client) -> Result<()> {
     super::thread::create(client, thread_id.clone(), trigger)
         .context("Failed to create test thread")?;
     
+    // Fund the thread with extra lamports for fee payments
+    // The thread needs lamports to pay executor and core team fees
+    let fund_ix = system_instruction::transfer(
+        &client.payer_pubkey(),
+        &thread_pubkey,
+        10_000_000, // 0.01 SOL for fee reserves
+    );
+    client.send_and_confirm(&[fund_ix], &[client.payer()])
+        .context("Failed to fund thread account")?;
+    print_status!("Funded 💰", "Thread account with 0.01 SOL for fees");
+    
+    // Create a simple SPL Memo instruction for testing
+    // This is a safe no-op that just logs a message
+    let memo_program_id = Pubkey::from_str("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
+        .unwrap();
+    let test_instruction = solana_sdk::instruction::Instruction {
+        program_id: memo_program_id,
+        accounts: vec![],  // Memo program doesn't require accounts
+        data: b"Thread execution test!".to_vec(),
+    };
+    
     // Create initial fiber with test instruction
     super::thread::create_fiber(client, thread_id, 0, test_instruction)
         .context("Failed to create test fiber")?;
 
     print_status!(
         "Test Thread 🧵",
-        "Created test thread with transfer instruction (runs every 30 seconds)"
+        "Created test thread with memo instruction (runs every 30 seconds)"
     );
     Ok(())
 }

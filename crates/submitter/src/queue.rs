@@ -302,6 +302,70 @@ impl ThreadQueue {
         }
     }
 
+    /// Process only time-triggered threads
+    pub async fn process_time_queue<F, Fut>(
+        &self,
+        current_timestamp: i64,
+        thread_executor: F,
+    ) where
+        F: Fn(Pubkey, Thread) -> Fut + Send + Sync + 'static + Clone,
+        Fut: std::future::Future<Output = Result<Signature>> + Send + 'static,
+    {
+        let current_timestamp_u64 = current_timestamp.max(0) as u64;
+        info!(
+            "QUEUE: Checking scheduled_by_time queue for threads <= {}",
+            current_timestamp_u64
+        );
+        self.process_queue_with_version(
+            &self.scheduled_by_time,
+            current_timestamp_u64,
+            thread_executor,
+        )
+        .await;
+    }
+
+    /// Process only slot-triggered threads
+    pub async fn process_slot_queue<F, Fut>(
+        &self,
+        current_slot: u64,
+        thread_executor: F,
+    ) where
+        F: Fn(Pubkey, Thread) -> Fut + Send + Sync + 'static + Clone,
+        Fut: std::future::Future<Output = Result<Signature>> + Send + 'static,
+    {
+        info!(
+            "QUEUE: Checking scheduled_by_slot queue for threads <= {}",
+            current_slot
+        );
+        self.process_queue_with_version(
+            &self.scheduled_by_slot,
+            current_slot,
+            thread_executor,
+        )
+        .await;
+    }
+
+    /// Process only epoch-triggered threads
+    pub async fn process_epoch_queue<F, Fut>(
+        &self,
+        current_epoch: u64,
+        thread_executor: F,
+    ) where
+        F: Fn(Pubkey, Thread) -> Fut + Send + Sync + 'static + Clone,
+        Fut: std::future::Future<Output = Result<Signature>> + Send + 'static,
+    {
+        info!(
+            "QUEUE: Checking scheduled_by_epoch queue for threads <= {}",
+            current_epoch
+        );
+        self.process_queue_with_version(
+            &self.scheduled_by_epoch,
+            current_epoch,
+            thread_executor,
+        )
+        .await;
+    }
+
     /// Process all threads whose trigger conditions are met
     /// Spawns async tasks to handle each ready thread atomically
     pub async fn process_threads<F, Fut>(

@@ -407,12 +407,14 @@ impl SubmitterService {
                     self.last_processed_slot = clock.slot;
                     self.last_processed_epoch = clock.epoch;
                     
-                    // Process any threads that are now ready
-                    info!("SUBMITTER: Checking for ready threads at timestamp {}", clock.unix_timestamp);
-                    if let Err(e) = self.process_ready_threads_with_clock(
-                        clock.slot, 
+                    // Process only the queues for values that changed
+                    if let Err(e) = self.process_ready_threads_selective(
+                        clock.slot,
                         clock.epoch, 
-                        clock.unix_timestamp
+                        clock.unix_timestamp,
+                        timestamp_changed,
+                        slot_changed,
+                        epoch_changed
                     ).await {
                         error!("SUBMITTER: Failed to process ready threads on clock update: {}", e);
                     }
@@ -511,6 +513,85 @@ impl SubmitterService {
         Ok(())
     }
 
+    /// Process threads selectively based on what clock values changed
+    async fn process_ready_threads_selective(
+        &self,
+        slot: u64,
+        epoch: u64,
+        timestamp: i64,
+        timestamp_changed: bool,
+        slot_changed: bool,
+        epoch_changed: bool,
+    ) -> Result<()> {
+        let queue = self.thread_queue.as_ref()
+            .ok_or_else(|| anyhow!("No thread queue in full mode"))?;
+        
+        // Clone what we need for the closure
+        let executor = self.executor_logic.as_ref()
+            .ok_or_else(|| anyhow!("No executor logic in full mode"))?
+            .clone();
+        let submitter = self.submitter.clone();
+        let simulate_before_submit = self.config.simulate_before_submit;
+        let compute_unit_multiplier = self.config.compute_unit_multiplier;
+        let max_compute_units = self.config.max_compute_units;
+        
+        // Create the processing function that will be called for each ready thread
+        let process_fn = move |thread_pubkey: Pubkey, thread: Thread| {
+            let executor = executor.clone();
+            let submitter = submitter.clone();
+            
+            async move {
+                info!("SUBMITTER: Processing thread {}", thread_pubkey);
+                
+                // Create ExecutableThread for compatibility
+                let executable = ExecutableThread {
+                    thread_pubkey,
+                    thread: thread.clone(),
+                    slot,
+                };
+                
+                // Build transaction
+                let tx = if simulate_before_submit {
+                    info!("SUBMITTER: Simulating transaction for thread {}", thread_pubkey);
+                    executor.simulate_and_optimize_transaction(
+                        &executable,
+                        compute_unit_multiplier,
+                        max_compute_units,
+                    ).await?
+                } else {
+                    debug!("SUBMITTER: Building transaction for thread {} without simulation", thread_pubkey);
+                    executor.build_execute_transaction(&executable).await?
+                };
+                
+                // Submit transaction
+                let signature = submitter.submit(&tx).await?;
+                
+                info!("SUBMITTER: Successfully submitted thread {} with signature {}", 
+                    thread_pubkey, signature);
+                
+                Ok(signature)
+            }
+        };
+        
+        // Only process the queues for values that actually changed
+        if timestamp_changed {
+            info!("SUBMITTER: Checking time-triggered threads (timestamp: {})", timestamp);
+            queue.process_time_queue(timestamp, process_fn.clone()).await;
+        }
+        
+        if slot_changed {
+            info!("SUBMITTER: Checking slot-triggered threads (slot: {})", slot);
+            queue.process_slot_queue(slot, process_fn.clone()).await;
+        }
+        
+        if epoch_changed {
+            info!("SUBMITTER: Checking epoch-triggered threads (epoch: {})", epoch);
+            queue.process_epoch_queue(epoch, process_fn).await;
+        }
+        
+        Ok(())
+    }
+    
     /// Update clock state (called by Observer via channel)
     pub async fn update_clock(&self, slot: u64, epoch: u64, unix_timestamp: i64) {
         // Note: We can't update executor's clock state with immutable self

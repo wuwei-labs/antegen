@@ -1,17 +1,17 @@
-use crate::*;
+use crate::{errors::AntegenThreadError, *};
 use anchor_lang::{
     prelude::*,
     solana_program::instruction::{AccountMeta, Instruction},
     AnchorDeserialize, AnchorSerialize,
 };
-use std::collections::HashMap;
+use std::{collections::hash_map::DefaultHasher, collections::HashMap, hash::Hasher};
 
 /// Current version of the Thread structure.
 pub const CURRENT_THREAD_VERSION: u8 = 1;
 
 /// Static pubkey for the payer placeholder - this is a placeholder address
 /// "AntegenPayer1111111111111111111111111111111" in base58  
-pub const PAYER_PUBKEY: Pubkey = anchor_lang::prelude::pubkey!("AntegenPayer1111111111111111111111111111111");
+pub const PAYER_PUBKEY: Pubkey = pubkey!("AntegenPayer1111111111111111111111111111111");
 
 /// Serializable version of Solana's Instruction for easier handling
 #[derive(AnchorDeserialize, AnchorSerialize, Clone, Debug)]
@@ -224,7 +224,6 @@ impl Thread {
             self.exec_index = self.fibers.first().copied().unwrap_or(0);
         }
     }
-
 }
 
 impl TryFrom<Vec<u8>> for Thread {
@@ -366,4 +365,291 @@ pub fn decompile_instruction(compiled: &CompiledInstructionV0) -> Result<Instruc
         accounts,
         data: ix.data.clone(),
     })
+}
+
+/// Trait for processing trigger validation and context updates
+pub trait TriggerProcessor {
+    fn validate_and_update_context(
+        &mut self,
+        clock: &Clock,
+        remaining_accounts: &[AccountInfo],
+    ) -> Result<i64>; // Returns time_since_ready (elapsed time since trigger was ready)
+    fn get_last_started_at(&self) -> i64;
+}
+
+/// Trait for getting thread seeds for signing  
+pub trait ThreadSeeds {
+    fn get_seed_bytes(&self) -> Vec<Vec<u8>>;
+
+    /// Use seeds with a callback to avoid lifetime issues
+    fn sign<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&[&[u8]]) -> R,
+    {
+        let seed_bytes = self.get_seed_bytes();
+        let seeds: Vec<&[u8]> = seed_bytes.iter().map(|s| s.as_slice()).collect();
+        f(&seeds)
+    }
+}
+
+/// Trait for handling nonce account operations
+pub trait NonceProcessor {
+    fn advance_nonce_if_required<'info>(
+        &self,
+        thread_account_info: &AccountInfo<'info>,
+        nonce_account: &Option<UncheckedAccount<'info>>,
+        recent_blockhashes: &Option<UncheckedAccount<'info>>,
+    ) -> Result<()>;
+}
+
+/// Trait for distributing payments
+pub trait PaymentDistributor {
+    fn distribute_payments<'info>(
+        &self,
+        thread_account: &AccountInfo<'info>,
+        executor: &AccountInfo<'info>,
+        admin: &AccountInfo<'info>,
+        payments: &crate::state::PaymentDetails,
+    ) -> Result<()>;
+}
+
+impl TriggerProcessor for Thread {
+    fn validate_and_update_context(
+        &mut self,
+        clock: &Clock,
+        remaining_accounts: &[AccountInfo],
+    ) -> Result<i64> {
+        let last_started_at = self.get_last_started_at();
+
+        // Determine trigger ready time and validate
+        let trigger_ready_time = match &self.trigger {
+            Trigger::Now => {
+                self.trigger_context = TriggerContext::Timestamp {
+                    prev: last_started_at,
+                    next: clock.unix_timestamp,
+                };
+                clock.unix_timestamp
+            }
+
+            Trigger::Timestamp { unix_ts } => {
+                require!(
+                    clock.unix_timestamp >= *unix_ts,
+                    AntegenThreadError::TriggerConditionFailed
+                );
+                self.trigger_context = TriggerContext::Timestamp {
+                    prev: last_started_at,
+                    next: *unix_ts,
+                };
+                *unix_ts
+            }
+
+            Trigger::Slot { slot } => {
+                require!(
+                    clock.slot >= *slot,
+                    AntegenThreadError::TriggerConditionFailed
+                );
+                self.trigger_context = TriggerContext::Block {
+                    prev: last_started_at as u64,
+                    next: *slot,
+                };
+                // Approximate when slot was reached (assuming 400ms per slot)
+                clock.unix_timestamp - ((clock.slot - slot) as i64 * 400 / 1000)
+            }
+
+            Trigger::Epoch { epoch } => {
+                require!(
+                    clock.epoch >= *epoch,
+                    AntegenThreadError::TriggerConditionFailed
+                );
+                self.trigger_context = TriggerContext::Block {
+                    prev: last_started_at as u64,
+                    next: *epoch,
+                };
+                clock.unix_timestamp
+            }
+
+            Trigger::Interval { seconds, skippable } => {
+                let next_timestamp = last_started_at.saturating_add(*seconds);
+                require!(
+                    clock.unix_timestamp >= next_timestamp,
+                    AntegenThreadError::TriggerConditionFailed
+                );
+
+                let started_at = if *skippable {
+                    clock.unix_timestamp
+                } else {
+                    next_timestamp
+                };
+
+                self.trigger_context = TriggerContext::Timestamp {
+                    prev: started_at,
+                    next: started_at.saturating_add(*seconds),
+                };
+                next_timestamp
+            }
+
+            Trigger::Cron {
+                schedule,
+                skippable,
+            } => {
+                let threshold_timestamp =
+                    crate::utils::next_timestamp(last_started_at, schedule.clone())
+                        .ok_or(AntegenThreadError::TriggerConditionFailed)?;
+
+                require!(
+                    clock.unix_timestamp >= threshold_timestamp,
+                    AntegenThreadError::TriggerConditionFailed
+                );
+
+                let started_at = if *skippable {
+                    clock.unix_timestamp
+                } else {
+                    threshold_timestamp
+                };
+
+                self.trigger_context = TriggerContext::Timestamp {
+                    prev: last_started_at,
+                    next: started_at,
+                };
+                threshold_timestamp
+            }
+
+            Trigger::Account {
+                address,
+                offset,
+                size,
+            } => {
+                // Verify proof account is provided
+                let account_info = remaining_accounts
+                    .first()
+                    .ok_or(AntegenThreadError::TriggerConditionFailed)?;
+
+                // Verify it's the correct account
+                require!(
+                    address.eq(account_info.key),
+                    AntegenThreadError::TriggerConditionFailed
+                );
+
+                // Compute data hash
+                let mut hasher = DefaultHasher::new();
+                let data = &account_info.try_borrow_data()?;
+                let offset = *offset as usize;
+                let range_end = offset.checked_add(*size as usize).unwrap() as usize;
+
+                use std::hash::Hash;
+                if data.len() > range_end {
+                    data[offset..range_end].hash(&mut hasher);
+                } else {
+                    data[offset..].hash(&mut hasher);
+                }
+                let data_hash = hasher.finish();
+
+                // Verify hash changed
+                if let TriggerContext::Account { hash: prior_hash } = &self.trigger_context {
+                    require!(
+                        data_hash.ne(prior_hash),
+                        AntegenThreadError::TriggerConditionFailed
+                    );
+                }
+
+                self.trigger_context = TriggerContext::Account { hash: data_hash };
+                clock.unix_timestamp
+            }
+        };
+
+        // Return elapsed time since trigger was ready
+        Ok(clock.unix_timestamp.saturating_sub(trigger_ready_time))
+    }
+
+    fn get_last_started_at(&self) -> i64 {
+        match &self.trigger_context {
+            TriggerContext::Timestamp { prev, .. } => *prev,
+            TriggerContext::Block { prev, .. } => *prev as i64,
+            TriggerContext::Account { .. } => self.created_at,
+        }
+    }
+}
+
+impl ThreadSeeds for Thread {
+    fn get_seed_bytes(&self) -> Vec<Vec<u8>> {
+        vec![
+            SEED_THREAD.to_vec(),
+            self.authority.to_bytes().to_vec(),
+            self.id.clone(),
+            vec![self.bump],
+        ]
+    }
+}
+
+impl PaymentDistributor for Thread {
+    fn distribute_payments<'info>(
+        &self,
+        thread_account: &AccountInfo<'info>,
+        executor: &AccountInfo<'info>,
+        admin: &AccountInfo<'info>,
+        payments: &crate::state::PaymentDetails,
+    ) -> Result<()> {
+        use crate::utils::transfer_lamports;
+
+        // Combined payment to executor (reimbursement + commission)
+        let total_executor_payment =
+            payments.fee_payer_reimbursement + payments.executor_commission;
+
+        if total_executor_payment > 0 {
+            msg!(
+                "Executor payment: {} lamports (tx reimbursement: {} + commission: {})",
+                total_executor_payment,
+                payments.fee_payer_reimbursement,
+                payments.executor_commission
+            );
+            transfer_lamports(thread_account, executor, total_executor_payment)?;
+        }
+
+        // Transfer core team fee to admin
+        if payments.core_team_fee > 0 {
+            msg!("Core team fee: {} lamports", payments.core_team_fee);
+            transfer_lamports(thread_account, admin, payments.core_team_fee)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl NonceProcessor for Thread {
+    fn advance_nonce_if_required<'info>(
+        &self,
+        thread_account_info: &AccountInfo<'info>,
+        nonce_account: &Option<UncheckedAccount<'info>>,
+        recent_blockhashes: &Option<UncheckedAccount<'info>>,
+    ) -> Result<()> {
+        use anchor_lang::solana_program::{
+            program::invoke_signed, system_instruction::advance_nonce_account,
+        };
+
+        if !self.has_nonce_account() {
+            return Ok(());
+        }
+
+        match (nonce_account, recent_blockhashes) {
+            (Some(nonce_acc), Some(recent_bh)) => {
+                // Get thread key from account info
+                let thread_key = *thread_account_info.key;
+
+                // Use seeds with callback to handle invoke_signed
+                self.sign(|seeds| {
+                    invoke_signed(
+                        &advance_nonce_account(&nonce_acc.key(), &thread_key),
+                        &[
+                            nonce_acc.to_account_info(),
+                            recent_bh.to_account_info(),
+                            thread_account_info.clone(),
+                        ],
+                        &[seeds],
+                    )
+                })?;
+                Ok(())
+            }
+            _ => Err(AntegenThreadError::NonceRequired.into()),
+        }
+    }
 }

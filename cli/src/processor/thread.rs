@@ -127,9 +127,12 @@ pub fn create_fiber(
     client: &Client,
     thread_id: String,
     index: u8,
-    instruction: SerializableInstruction,
+    instruction: Instruction,
 ) -> Result<(), CliError> {
     let thread_pubkey = Thread::pubkey(client.payer_pubkey(), thread_id.into_bytes());
+    
+    // Convert standard Instruction to SerializableInstruction
+    let serializable_instruction: SerializableInstruction = instruction.into();
     
     // Derive fiber PDA
     let fiber_pubkey = Pubkey::find_program_address(
@@ -153,7 +156,7 @@ pub fn create_fiber(
         .to_account_metas(Some(false)),
         data: antegen_sdk::instruction::CreateFiber {
             index,
-            instruction,
+            instruction: serializable_instruction,
             signer_seeds: vec![], // Empty for simple instructions
         }
         .data(),

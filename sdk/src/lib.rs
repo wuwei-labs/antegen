@@ -27,6 +27,26 @@ pub mod state {
     pub use antegen_thread_program::instructions::ConfigUpdateParams;
 }
 
+/// Convenience functions for working with fibers
+pub mod fiber {
+    use super::state::SerializableInstruction;
+    use anchor_lang::solana_program::instruction::Instruction;
+    
+    /// Convert a standard Solana instruction to a SerializableInstruction for use in fibers
+    /// 
+    /// # Example
+    /// ```ignore
+    /// use antegen_sdk::fiber;
+    /// use solana_sdk::system_instruction;
+    /// 
+    /// let transfer = system_instruction::transfer(&from, &to, amount);
+    /// let serializable = fiber::to_serializable(transfer);
+    /// ```
+    pub fn to_serializable(instruction: Instruction) -> SerializableInstruction {
+        instruction.into()
+    }
+}
+
 pub mod cpi {
     use anchor_lang::prelude::{CpiContext, Result};
     use antegen_thread_program::instructions::ConfigUpdateParams;
