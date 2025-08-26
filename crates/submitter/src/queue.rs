@@ -1,3 +1,4 @@
+use crate::metrics::SubmitterMetrics;
 use antegen_thread_program::state::{Thread, Trigger, TriggerContext};
 use anyhow::Result;
 use dashmap::DashMap;
@@ -10,12 +11,24 @@ use std::time::Duration;
 use tokio::{sync::Semaphore, task::JoinHandle};
 
 /// Entry in the priority queue with version tracking
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 struct ThreadEntry {
     trigger_value: u64, // timestamp, slot, or epoch
     thread_pubkey: Pubkey,
+    thread: Thread, // Store the full thread data
     version: u64, // Version to detect stale entries
 }
+
+// Implement Eq and PartialEq for ThreadEntry (needed for BinaryHeap)
+impl PartialEq for ThreadEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.trigger_value == other.trigger_value 
+            && self.thread_pubkey == other.thread_pubkey
+            && self.version == other.version
+    }
+}
+
+impl Eq for ThreadEntry {}
 
 // Implement Ord for min-heap behavior (lowest trigger_value first)
 impl Ord for ThreadEntry {
@@ -44,32 +57,53 @@ pub struct ThreadQueue {
     // Version tracking for each thread
     thread_versions: Arc<DashMap<Pubkey, u64>>,
 
-    // Thread data storage
-    threads: Arc<DashMap<Pubkey, Thread>>,
-
     // Active task tracking
     active_tasks: Arc<DashMap<Pubkey, JoinHandle<()>>>,
 
     // Limit concurrent processing tasks
     task_semaphore: Arc<Semaphore>,
+
+    // Metrics
+    metrics: Option<Arc<SubmitterMetrics>>,
 }
 
 impl ThreadQueue {
     /// Create a new ephemeral thread queue
-    pub fn new(max_concurrent_threads: usize) -> Result<Self> {
+    pub fn new(
+        max_concurrent_threads: usize,
+    ) -> Result<Self> {
         Ok(Self {
             scheduled_by_time: Arc::new(Mutex::new(BinaryHeap::new())),
             scheduled_by_slot: Arc::new(Mutex::new(BinaryHeap::new())),
             scheduled_by_epoch: Arc::new(Mutex::new(BinaryHeap::new())),
             thread_versions: Arc::new(DashMap::new()),
-            threads: Arc::new(DashMap::new()),
             active_tasks: Arc::new(DashMap::new()),
             task_semaphore: Arc::new(Semaphore::new(max_concurrent_threads)),
+            metrics: None,
         })
     }
 
+    /// Create a new thread queue with metrics
+    pub fn with_metrics(
+        max_concurrent_threads: usize,
+        metrics: Arc<SubmitterMetrics>,
+    ) -> Result<Self> {
+        let mut queue = Self::new(max_concurrent_threads)?;
+        queue.metrics = Some(metrics);
+        Ok(queue)
+    }
+
+    /// Update queue size metric
+    fn update_queue_metric(&self) {
+        if let Some(ref metrics) = self.metrics {
+            // Count unique threads in version tracking (active threads)
+            let total_size = self.thread_versions.len() as u64;
+            metrics.set_queue_size(total_size, None);
+        }
+    }
+
     /// Schedule a thread
-    pub fn schedule_thread(&self, thread_pubkey: Pubkey, thread: Thread) -> Result<()> {
+    pub async fn schedule_thread(&self, thread_pubkey: Pubkey, thread: Thread) -> Result<()> {
         // Cancel any existing task for this thread
         if let Some((_, task)) = self.active_tasks.remove(&thread_pubkey) {
             task.abort();
@@ -87,8 +121,9 @@ impl ThreadQueue {
             .or_insert(0)
             .clone();
 
-        // Store/update thread data
-        self.threads.insert(thread_pubkey, thread.clone());
+        
+        // Update queue size metric
+        self.update_queue_metric();
 
         // Add to appropriate priority queue based on trigger context
         match &thread.trigger_context {
@@ -96,6 +131,7 @@ impl ThreadQueue {
                 let entry = ThreadEntry {
                     trigger_value: (*next).max(0) as u64,
                     thread_pubkey,
+                    thread: thread.clone(),
                     version,
                 };
                 let mut queue = self.scheduled_by_time.lock().unwrap();
@@ -112,6 +148,7 @@ impl ThreadQueue {
                         let entry = ThreadEntry {
                             trigger_value: *next,
                             thread_pubkey,
+                            thread: thread.clone(),
                             version,
                         };
                         let mut queue = self.scheduled_by_slot.lock().unwrap();
@@ -125,6 +162,7 @@ impl ThreadQueue {
                         let entry = ThreadEntry {
                             trigger_value: *next,
                             thread_pubkey,
+                            thread: thread.clone(),
                             version,
                         };
                         let mut queue = self.scheduled_by_epoch.lock().unwrap();
@@ -167,9 +205,9 @@ impl ThreadQueue {
         Fut: std::future::Future<Output = Result<Signature>> + Send + 'static,
     {
         let active_tasks = self.active_tasks.clone();
-        let threads = self.threads.clone();
         let thread_versions = self.thread_versions.clone();
         let semaphore = self.task_semaphore.clone();
+        let metrics = self.metrics.clone();
 
         tokio::spawn(async move {
             // Acquire permit before processing - this will wait if at capacity
@@ -202,15 +240,30 @@ impl ThreadQueue {
                         );
 
                         // Clean up on success
-                        threads.remove(&thread_pubkey);
                         thread_versions.remove(&thread_pubkey);
                         active_tasks.remove(&thread_pubkey);
+
+                        // Update queue metric after removal
+                        if let Some(ref m) = metrics {
+                            let total_size = thread_versions.len() as u64;
+                            m.set_queue_size(total_size, None);
+                        }
                         break;
                     }
                     Err(e) => {
+                        let error_str = e.to_string();
+                        
+                        // Use shorter retry for RPC not caught up errors
+                        let retry_delay = if error_str.contains("RPC not caught up to slot") {
+                            // RPC lag, retry quickly
+                            Duration::from_millis(500)
+                        } else {
+                            backoff
+                        };
+                        
                         warn!(
                             "Thread {} failed: {}, retrying in {:?}",
-                            thread_pubkey, e, backoff
+                            thread_pubkey, e, retry_delay
                         );
 
                         // Check if task was cancelled (thread updated)
@@ -219,8 +272,12 @@ impl ThreadQueue {
                             break;
                         }
 
-                        tokio::time::sleep(backoff).await;
-                        backoff = std::cmp::min(backoff * 2, max_backoff);
+                        tokio::time::sleep(retry_delay).await;
+                        
+                        // Only increase backoff for non-RPC-lag errors
+                        if !error_str.contains("RPC not caught up to slot") {
+                            backoff = std::cmp::min(backoff * 2, max_backoff);
+                        }
                     }
                 }
             }
@@ -271,10 +328,8 @@ impl ThreadQueue {
                     continue;
                 }
 
-                // Get thread data
-                if let Some(thread) = self.threads.get(&entry.thread_pubkey) {
-                    ready_threads.push((entry.thread_pubkey, thread.clone()));
-                }
+                // Thread data is embedded in the entry
+                ready_threads.push((entry.thread_pubkey, entry.thread));
             }
         }
 
@@ -303,11 +358,8 @@ impl ThreadQueue {
     }
 
     /// Process only time-triggered threads
-    pub async fn process_time_queue<F, Fut>(
-        &self,
-        current_timestamp: i64,
-        thread_executor: F,
-    ) where
+    pub async fn process_time_queue<F, Fut>(&self, current_timestamp: i64, thread_executor: F)
+    where
         F: Fn(Pubkey, Thread) -> Fut + Send + Sync + 'static + Clone,
         Fut: std::future::Future<Output = Result<Signature>> + Send + 'static,
     {
@@ -325,11 +377,8 @@ impl ThreadQueue {
     }
 
     /// Process only slot-triggered threads
-    pub async fn process_slot_queue<F, Fut>(
-        &self,
-        current_slot: u64,
-        thread_executor: F,
-    ) where
+    pub async fn process_slot_queue<F, Fut>(&self, current_slot: u64, thread_executor: F)
+    where
         F: Fn(Pubkey, Thread) -> Fut + Send + Sync + 'static + Clone,
         Fut: std::future::Future<Output = Result<Signature>> + Send + 'static,
     {
@@ -337,20 +386,13 @@ impl ThreadQueue {
             "QUEUE: Checking scheduled_by_slot queue for threads <= {}",
             current_slot
         );
-        self.process_queue_with_version(
-            &self.scheduled_by_slot,
-            current_slot,
-            thread_executor,
-        )
-        .await;
+        self.process_queue_with_version(&self.scheduled_by_slot, current_slot, thread_executor)
+            .await;
     }
 
     /// Process only epoch-triggered threads
-    pub async fn process_epoch_queue<F, Fut>(
-        &self,
-        current_epoch: u64,
-        thread_executor: F,
-    ) where
+    pub async fn process_epoch_queue<F, Fut>(&self, current_epoch: u64, thread_executor: F)
+    where
         F: Fn(Pubkey, Thread) -> Fut + Send + Sync + 'static + Clone,
         Fut: std::future::Future<Output = Result<Signature>> + Send + 'static,
     {
@@ -358,12 +400,8 @@ impl ThreadQueue {
             "QUEUE: Checking scheduled_by_epoch queue for threads <= {}",
             current_epoch
         );
-        self.process_queue_with_version(
-            &self.scheduled_by_epoch,
-            current_epoch,
-            thread_executor,
-        )
-        .await;
+        self.process_queue_with_version(&self.scheduled_by_epoch, current_epoch, thread_executor)
+            .await;
     }
 
     /// Process all threads whose trigger conditions are met

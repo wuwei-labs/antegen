@@ -1,16 +1,16 @@
 use anyhow::{Result, anyhow};
 use log::{debug, info, warn};
 use solana_client::{
-    nonblocking::rpc_client::RpcClient,
     rpc_config::{RpcSimulateTransactionAccountsConfig, RpcSimulateTransactionConfig},
-    rpc_custom_error::JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED,
 };
 use solana_account_decoder::UiAccountEncoding;
 use solana_program::{sysvar, pubkey::Pubkey};
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     compute_budget::ComputeBudgetInstruction,
+    hash::Hash,
     instruction::Instruction,
+    nonce,
     signature::{Keypair, Signer},
     transaction::Transaction,
 };
@@ -21,7 +21,9 @@ use anchor_lang::{AccountDeserialize, AnchorDeserialize, InstructionData, ToAcco
 use antegen_sdk::accounts::ThreadExec;
 use antegen_sdk::instruction::ExecThread;
 
-use crate::types::ExecutableThread;
+use crate::cached_rpc_client::CachedRpcClient;
+use crate::types::{ExecutableThread, ThreadExecutionData};
+use crate::metrics::SubmitterMetrics;
 
 /// Clock state from the cluster
 #[derive(Clone, Debug, Default)]
@@ -36,18 +38,20 @@ pub struct ClockState {
 pub struct ExecutorLogic {
     /// Executor keypair for signing transactions
     keypair: Arc<Keypair>,
-    /// RPC client for queries
-    rpc_client: Arc<RpcClient>,
+    /// RPC client for queries (cached)
+    rpc_client: Arc<CachedRpcClient>,
     /// Current clock state
     clock: ClockState,
     /// Whether to forgo executor commission
     forgo_executor_commission: bool,
+    /// Metrics collector
+    pub metrics: Arc<SubmitterMetrics>,
 }
 
 impl ExecutorLogic {
     pub fn new(
         keypair: Arc<Keypair>,
-        rpc_client: Arc<RpcClient>,
+        rpc_client: Arc<CachedRpcClient>,
         forgo_executor_commission: bool,
     ) -> Self {
         Self {
@@ -55,6 +59,7 @@ impl ExecutorLogic {
             rpc_client,
             clock: ClockState::default(),
             forgo_executor_commission,
+            metrics: Arc::new(SubmitterMetrics::default()),
         }
     }
 
@@ -71,6 +76,30 @@ impl ExecutorLogic {
         );
     }
 
+    /// Get blockhash from nonce account
+    async fn get_nonce_blockhash(&self, nonce_pubkey: &Pubkey) -> Result<Hash> {
+        let account = self.rpc_client.get_account(nonce_pubkey).await?;
+        // Parse nonce account state
+        let nonce_state: nonce::state::Versions = bincode::deserialize(&account.data)
+            .map_err(|e| anyhow!("Failed to deserialize nonce account: {}", e))?;
+        
+        match nonce_state.state() {
+            nonce::state::State::Initialized(data) => Ok(data.blockhash()),
+            _ => Err(anyhow!("Nonce account is not initialized")),
+        }
+    }
+    
+    /// Get blockhash for transaction - uses nonce if available, otherwise fresh RPC
+    async fn get_transaction_blockhash(&self, thread: &Thread) -> Result<Hash> {
+        if thread.has_nonce_account() {
+            // Use nonce account blockhash for durable transaction
+            self.get_nonce_blockhash(&thread.nonce_account).await
+        } else {
+            // Get fresh blockhash (bypass cache for unique signatures)
+            self.rpc_client.get_latest_blockhash().await
+        }
+    }
+
     /// Get fiber state with retry logic for race conditions
     /// Will retry indefinitely for AccountNotFound errors (account will eventually exist)
     /// Uses exponential backoff capped at 5 seconds between retries
@@ -84,6 +113,7 @@ impl ExecutorLogic {
         loop {
             attempt += 1;
             
+            self.metrics.rpc_request("get_account");
             match self.rpc_client.get_account(fiber_pubkey).await {
                 Ok(account) => {
                     if attempt > 1 {
@@ -147,10 +177,44 @@ impl ExecutorLogic {
         }
     }
 
+    /// Build a transaction to execute a thread with cached fiber
+    pub async fn build_execute_transaction_with_fiber(
+        &self,
+        executable: &ExecutableThread,
+        fiber: &FiberState,
+        blockhash: Option<Hash>,
+    ) -> Result<Transaction> {
+        let thread_pubkey = &executable.thread_pubkey;
+        let thread = &executable.thread;
+
+        // Build execute instruction
+        let execute_ix = self.build_execute_instruction(thread_pubkey, thread, fiber).await?;
+
+        // Add compute budget
+        let ixs = vec![
+            ComputeBudgetInstruction::set_compute_unit_limit(1_400_000),
+            execute_ix,
+        ];
+
+        // Get blockhash - use provided or fetch new
+        let recent_blockhash = match blockhash {
+            Some(hash) => hash,
+            None => self.get_transaction_blockhash(thread).await?,
+        };
+        
+        Ok(Transaction::new_signed_with_payer(
+            &ixs,
+            Some(&self.keypair.pubkey()),
+            &[&*self.keypair],
+            recent_blockhash,
+        ))
+    }
+    
     /// Build a transaction to execute a thread
     pub async fn build_execute_transaction(
         &self,
         executable: &ExecutableThread,
+        blockhash: Option<Hash>,
     ) -> Result<Transaction> {
         let thread_pubkey = &executable.thread_pubkey;
         let thread = &executable.thread;
@@ -177,8 +241,15 @@ impl ExecutorLogic {
             execute_ix,
         ];
 
-        // Build transaction
-        let recent_blockhash = self.rpc_client.get_latest_blockhash().await?;
+        // Get blockhash - use provided or fetch new
+        let recent_blockhash = match blockhash {
+            Some(hash) => hash,
+            None => {
+                let thread = &executable.thread;
+                self.get_transaction_blockhash(thread).await?
+            },
+        };
+        
         Ok(Transaction::new_signed_with_payer(
             &ixs,
             Some(&self.keypair.pubkey()),
@@ -199,11 +270,15 @@ impl ExecutorLogic {
             Pubkey::find_program_address(&[b"thread_config"], &antegen_thread_program::ID).0;
         
         // Fetch config with simple retry (config should be stable, but handle edge cases)
+        self.metrics.rpc_request("get_account");
         let config_account = match self.rpc_client.get_account(&config_pubkey).await {
             Ok(account) => account,
             Err(_) => {
                 tokio::time::sleep(Duration::from_millis(500)).await;
-                self.rpc_client.get_account(&config_pubkey).await
+                {
+                    self.metrics.rpc_request("get_account");
+                    self.rpc_client.get_account(&config_pubkey).await
+                }
                     .map_err(|e| anyhow!("Failed to fetch thread config account: {}", e))?
             }
         };
@@ -323,11 +398,34 @@ impl ExecutorLogic {
     ) -> Result<Transaction> {
         let thread_pubkey = executable.thread_pubkey;
         
-        // Build initial transaction with default compute units
-        let initial_tx = self.build_execute_transaction(executable).await?;
+        // Fetch blockhash ONCE for both simulation and final transaction
+        let blockhash = self.get_transaction_blockhash(&executable.thread).await?;
         
+        // Build initial transaction with default compute units using fetched blockhash
+        let initial_tx = self.build_execute_transaction(executable, Some(blockhash)).await?;
+        
+        // Start timing simulation
+        let sim_start = std::time::Instant::now();
         
         // Simulate transaction with proper config
+        // Only use min_context_slot if the trigger_slot is recent (within last 150 slots)
+        // This avoids issues where RPC hasn't caught up yet
+        let current_slot = self.clock.slot;
+        let use_min_slot = if current_slot > 0 && trigger_slot > current_slot {
+            // Future slot, don't use min_context_slot
+            debug!("Trigger slot {} is in future (current: {}), not using min_context_slot", trigger_slot, current_slot);
+            None
+        } else if current_slot > 0 && current_slot > trigger_slot + 150 {
+            // Too old, don't use min_context_slot
+            debug!("Trigger slot {} is too old (current: {}), not using min_context_slot", trigger_slot, current_slot);
+            None
+        } else {
+            // Recent slot, use it for accuracy
+            debug!("Using min_context_slot {} for simulation (current: {})", trigger_slot, current_slot);
+            Some(trigger_slot)
+        };
+        
+        self.metrics.rpc_request("simulate_transaction");
         let sim_result = match self.rpc_client.simulate_transaction_with_config(
             &initial_tx,
             RpcSimulateTransactionConfig {
@@ -338,28 +436,39 @@ impl ExecutorLogic {
                     encoding: Some(UiAccountEncoding::Base64Zstd),
                     addresses: vec![thread_pubkey.to_string()],
                 }),
-                min_context_slot: Some(trigger_slot),
+                min_context_slot: use_min_slot,
                 ..Default::default()
             },
         ).await {
-            Ok(result) => result,
+            Ok(result) => {
+                // Record successful simulation
+                self.metrics.simulation_performed("success");
+                result
+            },
             Err(err) => {
-                // Check for min context slot error
-                if let solana_client::client_error::ClientErrorKind::RpcError(
-                    solana_client::rpc_request::RpcError::RpcResponseError { code, .. }
-                ) = &err.kind {
-                    if *code == JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED {
-                        return Err(anyhow!("RPC not caught up to slot {}", trigger_slot));
-                    }
+                // Check for min context slot error if it's related to the RPC error
+                let error_str = err.to_string();
+                if error_str.contains("Minimum context slot has not been reached") 
+                    || error_str.contains("MinContextSlotNotReached")
+                    || error_str.contains("-32016") {
+                    self.metrics.simulation_performed("slot_not_reached");
+                    debug!("RPC not caught up to slot {}, will retry", trigger_slot);
+                    // Return a specific error that the queue can recognize for retry
+                    return Err(anyhow!("RPC not caught up to slot {}", trigger_slot));
                 }
+                self.metrics.simulation_performed("failed");
                 return Err(anyhow!("Simulation failed: {}", err));
             }
         };
+        
+        // Record simulation duration
+        self.metrics.record_simulation_duration(sim_start.elapsed().as_secs_f64());
         
         // Check for simulation errors
         if let Some(err) = sim_result.value.err {
             let logs = sim_result.value.logs.unwrap_or_default();
             warn!("Simulation failed for thread {}: {:?}", thread_pubkey, err);
+            self.metrics.simulation_performed("error");
             return Err(anyhow!("Simulation failed: {:?}, logs: {:?}", err, logs));
         }
         
@@ -376,14 +485,16 @@ impl ExecutorLogic {
                 "Simulation successful for thread {} - consumed: {}, final: {}",
                 thread_pubkey, units_consumed, final_cu
             );
+            // Record compute units used
+            self.metrics.record_compute_units(units_consumed);
             final_cu
         } else {
             warn!("No compute units consumed in simulation, using max: {}", max_compute_units);
             max_compute_units
         };
         
-        // Rebuild transaction with optimized compute units
-        self.build_execute_transaction_with_cu(executable, optimized_cu).await
+        // Rebuild transaction with optimized compute units using SAME blockhash
+        self.build_execute_transaction_with_cu(executable, optimized_cu, Some(blockhash)).await
     }
 
     /// Build transaction with specific compute unit limit
@@ -391,6 +502,7 @@ impl ExecutorLogic {
         &self,
         executable: &ExecutableThread,
         compute_units: u32,
+        blockhash: Option<Hash>,
     ) -> Result<Transaction> {
         let thread_pubkey = &executable.thread_pubkey;
         let thread = &executable.thread;
@@ -415,8 +527,62 @@ impl ExecutorLogic {
             execute_ix,
         ];
 
-        // Build transaction
-        let recent_blockhash = self.rpc_client.get_latest_blockhash().await?;
+        // Get blockhash - use provided or fetch new
+        let recent_blockhash = match blockhash {
+            Some(hash) => hash,
+            None => self.get_transaction_blockhash(thread).await?,
+        };
+        
+        Ok(Transaction::new_signed_with_payer(
+            &ixs,
+            Some(&self.keypair.pubkey()),
+            &[&*self.keypair],
+            recent_blockhash,
+        ))
+    }
+    
+    /// Build transaction using minimal execution data and cached fiber
+    pub async fn build_execute_transaction_with_cached_fiber(
+        &self,
+        thread_pubkey: &Pubkey,
+        execution_data: &ThreadExecutionData,
+        fiber: &FiberState,
+        compute_units: u32,
+        blockhash: Option<Hash>,
+    ) -> Result<Transaction> {
+        // Build minimal Thread structure needed for instruction building
+        let thread = Thread {
+            authority: execution_data.authority,
+            nonce_account: execution_data.nonce_account,
+            exec_index: execution_data.exec_index,
+            // These fields are not used in execute instruction building but need to be filled
+            id: Vec::new(),
+            name: String::new(),
+            version: 0,
+            bump: 0,
+            created_at: 0,
+            paused: false,
+            fibers: Vec::new(),
+            last_nonce: String::new(),
+            trigger: Trigger::Now,
+            trigger_context: TriggerContext::Timestamp { prev: 0, next: 0 },
+        };
+        
+        // Build execute instruction with the reconstructed thread
+        let execute_ix = self.build_execute_instruction(thread_pubkey, &thread, fiber).await?;
+        
+        // Build instructions with specific compute budget
+        let ixs = vec![
+            ComputeBudgetInstruction::set_compute_unit_limit(compute_units),
+            execute_ix,
+        ];
+        
+        // Get blockhash - use provided or fetch new
+        let recent_blockhash = match blockhash {
+            Some(hash) => hash,
+            None => self.get_transaction_blockhash(&thread).await?,
+        };
+        
         Ok(Transaction::new_signed_with_payer(
             &ixs,
             Some(&self.keypair.pubkey()),

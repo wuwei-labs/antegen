@@ -1,19 +1,15 @@
 #[allow(deprecated)]
 use {
+    crate::utils::Explorer,
     crate::{
         client::Client, config::CliConfig, deps, errors::CliError, parser::ProgramInfo,
         print::print_style, print_status,
     },
-    antegen_sdk::state::{Thread, Trigger},
-    crate::utils::Explorer,
+    antegen_sdk::state::Trigger,
     anyhow::{Context, Result},
-    solana_sdk::{
-        commitment_config::CommitmentConfig,
-        pubkey::Pubkey,
-        system_instruction,
-    },
-    std::{fs, str::FromStr},
+    solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey},
     std::process::{Command, Stdio},
+    std::{fs, str::FromStr},
 };
 
 pub fn start(
@@ -49,7 +45,13 @@ pub fn start(
     )?;
 
     // Create Geyser Plugin Config file
-    create_geyser_plugin_config(config, enable_replay, nats_url, replay_delay_ms, forgo_commission)?;
+    create_geyser_plugin_config(
+        config,
+        enable_replay,
+        nats_url,
+        replay_delay_ms,
+        forgo_commission,
+    )?;
 
     // Start the validator
     start_test_validator(
@@ -70,9 +72,8 @@ pub fn start(
 
 fn init_thread_config(client: &Client) -> Result<()> {
     // Initialize the thread config
-    super::thread::init_config(client)
-        .context("Failed to initialize thread config")?;
-    
+    super::thread::init_config(client).context("Failed to initialize thread config")?;
+
     print_status!(
         "Thread Config ⚙️",
         "Initialized global thread configuration"
@@ -82,10 +83,6 @@ fn init_thread_config(client: &Client) -> Result<()> {
 
 fn create_test_thread(client: &Client) -> Result<()> {
     let thread_id = "test-thread".to_string();
-    
-    // Calculate thread PDA
-    let thread_pubkey = Thread::pubkey(client.payer_pubkey(), thread_id.as_bytes());
-    
     // Use an interval trigger that fires every 30 seconds
     // This will let us see the submitter waiting and then submitting
     let trigger = Trigger::Interval {
@@ -96,28 +93,16 @@ fn create_test_thread(client: &Client) -> Result<()> {
     // Create thread
     super::thread::create(client, thread_id.clone(), trigger)
         .context("Failed to create test thread")?;
-    
-    // Fund the thread with extra lamports for fee payments
-    // The thread needs lamports to pay executor and core team fees
-    let fund_ix = system_instruction::transfer(
-        &client.payer_pubkey(),
-        &thread_pubkey,
-        10_000_000, // 0.01 SOL for fee reserves
-    );
-    client.send_and_confirm(&[fund_ix], &[client.payer()])
-        .context("Failed to fund thread account")?;
-    print_status!("Funded 💰", "Thread account with 0.01 SOL for fees");
-    
+
     // Create a simple SPL Memo instruction for testing
     // This is a safe no-op that just logs a message
-    let memo_program_id = Pubkey::from_str("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
-        .unwrap();
+    let memo_program_id = Pubkey::from_str("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr").unwrap();
     let test_instruction = solana_sdk::instruction::Instruction {
         program_id: memo_program_id,
-        accounts: vec![],  // Memo program doesn't require accounts
+        accounts: vec![], // Memo program doesn't require accounts
         data: b"Thread execution test!".to_vec(),
     };
-    
+
     // Create initial fiber with test instruction
     super::thread::create_fiber(client, thread_id, 0, test_instruction)
         .context("Failed to create test fiber")?;
@@ -138,6 +123,19 @@ fn create_geyser_plugin_config(
 ) -> Result<()> {
     // Create a simple plugin config without using external crate
     #[derive(serde::Serialize)]
+    struct PrometheusConfig {
+        port: u16,
+        path: String,
+    }
+    
+    #[derive(serde::Serialize)]
+    struct MetricsConfig {
+        enabled: bool,
+        backend: String,
+        prometheus: Option<PrometheusConfig>,
+    }
+    
+    #[derive(serde::Serialize)]
     struct PluginConfig {
         name: String,
         keypath: Option<String>,
@@ -146,13 +144,13 @@ fn create_geyser_plugin_config(
         ws_url: Option<String>,
         thread_count: usize,
         transaction_timeout_threshold: u64,
-        data_dir: Option<String>,
         forgo_executor_commission: Option<bool>,
         enable_replay: Option<bool>,
         nats_url: Option<String>,
         replay_delay_ms: Option<u64>,
+        metrics: Option<MetricsConfig>,
     }
-    
+
     let geyser_config = PluginConfig {
         name: "antegen".to_string(),
         keypath: Some(config.signatory().to_owned()),
@@ -161,11 +159,18 @@ fn create_geyser_plugin_config(
         ws_url: Some("ws://localhost:8900".to_string()),
         thread_count: 10,
         transaction_timeout_threshold: 150,
-        data_dir: Some("/tmp/antegen_executor".to_string()),
         forgo_executor_commission: Some(forgo_commission),
         enable_replay: Some(enable_replay),
         nats_url: nats_url,
         replay_delay_ms: Some(replay_delay_ms),
+        metrics: Some(MetricsConfig {
+            enabled: true,
+            backend: "prometheus".to_string(),
+            prometheus: Some(PrometheusConfig {
+                port: 9090,
+                path: "/metrics".to_string(),
+            }),
+        }),
     };
 
     let content = serde_json::to_string_pretty(&geyser_config)
@@ -231,6 +236,7 @@ fn start_test_validator(
         env!("CARGO_PKG_VERSION").to_owned()
     );
     print_status!("Explorer 🔍", "{}", explorer.base());
+    print_status!("Metrics  📊", "http://localhost:9090/metrics");
     print_status!(
         "Timeout  ⏰",
         "Validator will automatically stop at {}",

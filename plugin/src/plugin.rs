@@ -52,6 +52,34 @@ impl GeyserPlugin for AntegenPlugin {
         // Create runtime here
         let runtime = build_runtime(config.clone());
 
+        // Always initialize a basic meter provider for metrics collection
+        // This ensures metrics are collected even if not exposed via HTTP
+        let registry = runtime.block_on(async {
+            crate::metrics::init_basic_meter_provider()
+                .map_err(|e| GeyserPluginError::Custom(format!("Failed to initialize meter provider: {}", e).into()))
+        })?;
+        debug!("Basic meter provider initialized with registry");
+
+        // Initialize metrics HTTP server if configured
+        if let Some(ref metrics_config) = config.metrics {
+            if metrics_config.enabled {
+                info!("=== Initializing Metrics HTTP Service ===");
+                info!("Metrics backend: {:?}", metrics_config.backend);
+                
+                let handle = runtime.handle().clone();
+                runtime.block_on(async {
+                    crate::metrics::init_metrics(metrics_config, registry, handle).await
+                        .map_err(|e| GeyserPluginError::Custom(format!("Failed to initialize metrics HTTP server: {}", e).into()))
+                })?;
+                
+                info!("=== Metrics HTTP Service Started ===");
+            } else {
+                info!("Metrics HTTP server disabled in configuration");
+            }
+        } else {
+            debug!("No metrics HTTP configuration provided");
+        }
+
         // Initialize worker mode (builder + submitter)
         let mut worker = runtime.block_on(async {
             let rpc_url = config
@@ -106,6 +134,12 @@ impl GeyserPlugin for AntegenPlugin {
     }
 
     fn on_unload(&mut self) {
+        // Shutdown metrics if enabled
+        if self.inner.as_ref().and_then(|i| i.config.metrics.as_ref()).is_some() {
+            info!("=== Shutting Down Metrics Service ===");
+            crate::metrics::shutdown();
+        }
+        
         // Clean up resources if needed
         self.inner = None;
     }

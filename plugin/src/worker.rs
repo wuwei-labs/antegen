@@ -65,10 +65,10 @@ impl PluginWorker {
         );
 
         // Create observer service with event source
-        // This returns the service and receivers for executable threads and clock updates
-        let (observer_service, thread_receiver, clock_receiver) =
+        // This returns the service and receivers for executable threads, clock updates, and account updates
+        let (observer_service, thread_receiver, clock_receiver, account_receiver) =
             ObserverService::new(event_source, observer_pubkey);
-        info!("Created observer service with thread and clock event channels");
+        info!("Created observer service with thread, clock, and account event channels");
 
         // Create submitter service with integrated executor functionality
         // Start with defaults to ensure all fields are present
@@ -88,10 +88,11 @@ impl PluginWorker {
         
         let mut submitter_service = SubmitterService::new(submitter_config).await?;
         
-        // Set both receivers from observer
+        // Set all receivers from observer
         submitter_service.set_thread_receiver(thread_receiver)?;
         submitter_service.set_clock_receiver(clock_receiver)?;
-        info!("Created submitter service with integrated executor and dual channels");
+        submitter_service.set_account_receiver(account_receiver)?;
+        info!("Created submitter service with integrated executor and all channels");
 
         info!("=== PluginWorker initialization complete ===");
 

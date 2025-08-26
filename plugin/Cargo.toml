@@ -59,10 +59,20 @@ tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 
+# Metrics dependencies (for exposing, not collecting)
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-prometheus = { version = "0.14" }
+prometheus = { version = "0.13" }
+hyper = { version = "0.14", features = ["server", "tcp", "http1"] }
+
 [build-dependencies]
 cargo_metadata = "=0.19.1"
 rustc_version = "0.4.1"
 cargo_toml = "0.15.0"
+
+[features]
+default = []
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

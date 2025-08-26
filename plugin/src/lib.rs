@@ -4,6 +4,7 @@ mod events;
 mod plugin;
 mod utils;
 mod worker;
+mod metrics;
 
 pub mod config {
     pub use crate::utils::PluginConfig;

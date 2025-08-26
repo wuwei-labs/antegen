@@ -12,14 +12,15 @@ use std::time::Duration;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 
-use antegen_thread_program::state::Thread;
+use crate::cached_rpc_client::CachedRpcClient;
 use crate::executor::ExecutorLogic;
 use crate::queue::ThreadQueue;
 use crate::replay::ReplayConsumer;
 use crate::{
-    ClockUpdate, DurableTransactionMessage, ExecutableThread, SubmitterConfig, SubmitterMode,
-    TransactionSubmitter,
+    AccountUpdate, ClockUpdate, DurableTransactionMessage, ExecutableThread, SubmitterConfig,
+    SubmitterMode, TransactionSubmitter,
 };
+use antegen_thread_program::state::Thread;
 
 /// Main submitter service that handles both local submission and NATS replay
 pub struct SubmitterService {
@@ -27,8 +28,10 @@ pub struct SubmitterService {
     mode: SubmitterMode,
     /// Core transaction submitter
     submitter: Arc<TransactionSubmitter>,
-    /// RPC client for status checks
+    /// RPC client for status checks (raw RPC for submitter)
     rpc_client: Arc<RpcClient>,
+    /// Cached RPC client for executor and queue operations
+    cached_rpc_client: Arc<CachedRpcClient>,
     /// NATS client for publishing (optional)
     nats_client: Option<async_nats::Client>,
     /// Configuration
@@ -41,6 +44,8 @@ pub struct SubmitterService {
     thread_queue: Option<ThreadQueue>,
     /// Clock update receiver (for full mode)
     clock_receiver: Option<Receiver<ClockUpdate>>,
+    /// Account update receiver (for full mode)
+    account_receiver: Option<Receiver<AccountUpdate>>,
     /// Track last processed values to avoid redundant processing
     last_processed_timestamp: i64,
     last_processed_slot: u64,
@@ -52,6 +57,17 @@ impl SubmitterService {
     pub async fn new(config: SubmitterConfig) -> Result<Self> {
         // Create RPC client
         let rpc_client = Arc::new(RpcClient::new(config.rpc_url.clone()));
+
+        // Create metrics instance that will be shared
+        let metrics = Arc::new(crate::metrics::SubmitterMetrics::default());
+
+        // Create cached RPC client with config and metrics
+        let cached_rpc_client = Arc::new(CachedRpcClient::with_metrics(
+            RpcClient::new(config.rpc_url.clone()),
+            config.cache_config.clone(),
+            metrics.clone(),
+        ));
+
         // Determine mode based on config
         let (mode, executor_logic) = if let Some(keypair_path) = &config.executor_keypair_path {
             // Full mode - load executor keypair
@@ -62,11 +78,13 @@ impl SubmitterService {
             );
             info!("Loaded executor keypair: {}", keypair.pubkey());
 
-            let executor_logic = ExecutorLogic::new(
+            let mut executor_logic = ExecutorLogic::new(
                 keypair.clone(),
-                rpc_client.clone(),
+                cached_rpc_client.clone(),
                 config.forgo_executor_commission,
             );
+            // Set the shared metrics on executor
+            executor_logic.metrics = metrics.clone();
 
             let mode = SubmitterMode::Full {
                 executor_keypair: keypair,
@@ -96,9 +114,18 @@ impl SubmitterService {
 
         // Create thread queue if in full mode
         let thread_queue = if matches!(mode, SubmitterMode::Full { .. }) {
-            info!("Initializing ephemeral thread queue with max {} concurrent threads", 
-                  config.max_concurrent_threads);
-            Some(ThreadQueue::new(config.max_concurrent_threads)?)
+            info!(
+                "Initializing ephemeral thread queue with max {} concurrent threads",
+                config.max_concurrent_threads
+            );
+            if let Some(ref executor) = executor_logic {
+                Some(ThreadQueue::with_metrics(
+                    config.max_concurrent_threads,
+                    executor.metrics.clone(),
+                )?)
+            } else {
+                Some(ThreadQueue::new(config.max_concurrent_threads)?)
+            }
         } else {
             None
         };
@@ -107,12 +134,14 @@ impl SubmitterService {
             mode,
             submitter,
             rpc_client,
+            cached_rpc_client,
             nats_client,
             config,
             replay_handle: None,
             executor_logic,
             thread_queue,
             clock_receiver: None,
+            account_receiver: None,
             last_processed_timestamp: 0,
             last_processed_slot: 0,
             last_processed_epoch: 0,
@@ -302,7 +331,7 @@ impl SubmitterService {
             }
         }
     }
-    
+
     /// Set the clock receiver (for full mode)
     pub fn set_clock_receiver(&mut self, receiver: Receiver<ClockUpdate>) -> Result<()> {
         match &self.mode {
@@ -312,6 +341,19 @@ impl SubmitterService {
             }
             SubmitterMode::ReplayOnly => {
                 Err(anyhow!("Cannot set clock receiver in replay-only mode"))
+            }
+        }
+    }
+
+    /// Set the account receiver (for full mode)
+    pub fn set_account_receiver(&mut self, receiver: Receiver<AccountUpdate>) -> Result<()> {
+        match &self.mode {
+            SubmitterMode::Full { .. } => {
+                self.account_receiver = Some(receiver);
+                Ok(())
+            }
+            SubmitterMode::ReplayOnly => {
+                Err(anyhow!("Cannot set account receiver in replay-only mode"))
             }
         }
     }
@@ -351,11 +393,18 @@ impl SubmitterService {
                 .ok_or_else(|| anyhow!("No thread receiver set for full mode"))?,
             _ => unreachable!(),
         };
-        
+
         // Get clock receiver
-        let mut clock_rx = self.clock_receiver
+        let mut clock_rx = self
+            .clock_receiver
             .take()
             .ok_or_else(|| anyhow!("No clock receiver set for full mode"))?;
+        
+        // Get account receiver
+        let mut account_rx = self
+            .account_receiver
+            .take()
+            .ok_or_else(|| anyhow!("No account receiver set for full mode"))?;
 
         info!("SUBMITTER: Entering main loop, waiting for events...");
 
@@ -370,19 +419,19 @@ impl SubmitterService {
 
                     // Schedule thread in queue
                     if let Some(queue) = &self.thread_queue {
-                        if let Err(e) = queue.schedule_thread(executable.thread_pubkey, executable.thread) {
+                        if let Err(e) = queue.schedule_thread(executable.thread_pubkey, executable.thread).await {
                             error!("SUBMITTER: Failed to schedule thread: {}", e);
                         }
                     }
                 }
-                
+
                 // Handle clock updates
                 Some(clock) = clock_rx.recv() => {
                     // Check what has changed since last processing
                     let timestamp_changed = clock.unix_timestamp != self.last_processed_timestamp;
                     let slot_changed = clock.slot != self.last_processed_slot;
                     let epoch_changed = clock.epoch != self.last_processed_epoch;
-                    
+
                     // Skip if nothing has changed
                     if !timestamp_changed && !slot_changed && !epoch_changed {
                         debug!(
@@ -391,7 +440,7 @@ impl SubmitterService {
                         );
                         continue;
                     }
-                    
+
                     debug!(
                         "SUBMITTER: Clock update - slot: {} ({}), epoch: {} ({}), timestamp: {} ({})",
                         clock.slot,
@@ -401,16 +450,16 @@ impl SubmitterService {
                         clock.unix_timestamp,
                         if timestamp_changed { "changed" } else { "unchanged" }
                     );
-                    
+
                     // Update last processed values
                     self.last_processed_timestamp = clock.unix_timestamp;
                     self.last_processed_slot = clock.slot;
                     self.last_processed_epoch = clock.epoch;
-                    
+
                     // Process only the queues for values that changed
                     if let Err(e) = self.process_ready_threads_selective(
                         clock.slot,
-                        clock.epoch, 
+                        clock.epoch,
                         clock.unix_timestamp,
                         timestamp_changed,
                         slot_changed,
@@ -419,8 +468,21 @@ impl SubmitterService {
                         error!("SUBMITTER: Failed to process ready threads on clock update: {}", e);
                     }
                 }
-                
-                // Both channels closed
+
+                // Handle account updates
+                Some(account_update) = account_rx.recv() => {
+                    debug!(
+                        "SUBMITTER: Received account update for {} at slot {}",
+                        account_update.pubkey, account_update.slot
+                    );
+                    
+                    // Update cache if the account is relevant
+                    self.cached_rpc_client
+                        .update_account_if_cached(&account_update.pubkey, account_update.account)
+                        .await;
+                }
+
+                // All channels closed
                 else => {
                     error!("SUBMITTER: All channels disconnected");
                     return Err(anyhow!("Observer channels disconnected"));
@@ -454,62 +516,97 @@ impl SubmitterService {
         }
     }
 
-    
     /// Process threads that are ready with specific clock values
-    async fn process_ready_threads_with_clock(&self, slot: u64, epoch: u64, timestamp: i64) -> Result<()> {
-        let queue = self.thread_queue.as_ref()
+    async fn process_ready_threads_with_clock(
+        &self,
+        slot: u64,
+        epoch: u64,
+        timestamp: i64,
+    ) -> Result<()> {
+        let queue = self
+            .thread_queue
+            .as_ref()
             .ok_or_else(|| anyhow!("No thread queue in full mode"))?;
-        
+
         // Clone what we need for the closure
-        let executor = self.executor_logic.as_ref()
+        let executor = self
+            .executor_logic
+            .as_ref()
             .ok_or_else(|| anyhow!("No executor logic in full mode"))?
             .clone();
         let submitter = self.submitter.clone();
         let simulate_before_submit = self.config.simulate_before_submit;
         let compute_unit_multiplier = self.config.compute_unit_multiplier;
         let max_compute_units = self.config.max_compute_units;
-        
+
         // Create the processing function that will be called for each ready thread
         let process_fn = move |thread_pubkey: Pubkey, thread: Thread| {
             let executor = executor.clone();
             let submitter = submitter.clone();
-            
+
             async move {
                 debug!("SUBMITTER: Processing thread {}", thread_pubkey);
-                
+
                 // Create ExecutableThread for compatibility
                 let executable = ExecutableThread {
                     thread_pubkey,
                     thread: thread.clone(),
                     slot,
                 };
-                
+
                 // Build transaction
                 let tx = if simulate_before_submit {
-                    debug!("SUBMITTER: Simulating transaction for thread {}", thread_pubkey);
-                    executor.simulate_and_optimize_transaction(
-                        &executable,
-                        compute_unit_multiplier,
-                        max_compute_units,
-                    ).await?
+                    debug!(
+                        "SUBMITTER: Simulating transaction for thread {}",
+                        thread_pubkey
+                    );
+                    executor
+                        .simulate_and_optimize_transaction(
+                            &executable,
+                            compute_unit_multiplier,
+                            max_compute_units,
+                        )
+                        .await?
                 } else {
-                    debug!("SUBMITTER: Building transaction for thread {} without simulation", thread_pubkey);
-                    executor.build_execute_transaction(&executable).await?
+                    debug!(
+                        "SUBMITTER: Building transaction for thread {} without simulation",
+                        thread_pubkey
+                    );
+                    executor
+                        .build_execute_transaction(&executable, None)
+                        .await?
                 };
-                
+
                 // Submit transaction
-                let signature = submitter.submit(&tx).await?;
-                
-                info!("SUBMITTER: Successfully submitted thread {} with signature {}", 
-                    thread_pubkey, signature);
-                
+                let submit_start = std::time::Instant::now();
+                let signature = match submitter.submit(&tx).await {
+                    Ok(sig) => {
+                        executor.metrics.transaction_submitted("success", None);
+                        executor
+                            .metrics
+                            .record_submission_duration(submit_start.elapsed().as_secs_f64());
+                        sig
+                    }
+                    Err(e) => {
+                        executor.metrics.transaction_submitted("failed", None);
+                        return Err(e);
+                    }
+                };
+
+                info!(
+                    "SUBMITTER: Successfully submitted thread {} with signature {}",
+                    thread_pubkey, signature
+                );
+
                 Ok(signature)
             }
         };
-        
+
         // Process all ready threads (spawns async tasks)
-        queue.process_threads(slot, epoch, timestamp, process_fn).await;
-        
+        queue
+            .process_threads(slot, epoch, timestamp, process_fn)
+            .await;
+
         Ok(())
     }
 
@@ -523,85 +620,134 @@ impl SubmitterService {
         slot_changed: bool,
         epoch_changed: bool,
     ) -> Result<()> {
-        let queue = self.thread_queue.as_ref()
+        let queue = self
+            .thread_queue
+            .as_ref()
             .ok_or_else(|| anyhow!("No thread queue in full mode"))?;
-        
+
         // Clone what we need for the closure
-        let executor = self.executor_logic.as_ref()
+        let executor = self
+            .executor_logic
+            .as_ref()
             .ok_or_else(|| anyhow!("No executor logic in full mode"))?
             .clone();
         let submitter = self.submitter.clone();
         let simulate_before_submit = self.config.simulate_before_submit;
         let compute_unit_multiplier = self.config.compute_unit_multiplier;
         let max_compute_units = self.config.max_compute_units;
-        
+
         // Create the processing function that will be called for each ready thread
         let process_fn = move |thread_pubkey: Pubkey, thread: Thread| {
             let executor = executor.clone();
             let submitter = submitter.clone();
-            
+
             async move {
                 debug!("SUBMITTER: Processing thread {}", thread_pubkey);
-                
+
                 // Create ExecutableThread for compatibility
                 let executable = ExecutableThread {
                     thread_pubkey,
                     thread: thread.clone(),
                     slot,
                 };
-                
+
                 // Build transaction
                 let tx = if simulate_before_submit {
-                    debug!("SUBMITTER: Simulating transaction for thread {}", thread_pubkey);
-                    executor.simulate_and_optimize_transaction(
-                        &executable,
-                        compute_unit_multiplier,
-                        max_compute_units,
-                    ).await?
+                    debug!(
+                        "SUBMITTER: Simulating transaction for thread {}",
+                        thread_pubkey
+                    );
+                    executor
+                        .simulate_and_optimize_transaction(
+                            &executable,
+                            compute_unit_multiplier,
+                            max_compute_units,
+                        )
+                        .await?
                 } else {
-                    debug!("SUBMITTER: Building transaction for thread {} without simulation", thread_pubkey);
-                    executor.build_execute_transaction(&executable).await?
+                    debug!(
+                        "SUBMITTER: Building transaction for thread {} without simulation",
+                        thread_pubkey
+                    );
+                    executor
+                        .build_execute_transaction(&executable, None)
+                        .await?
                 };
-                
+
                 // Submit transaction
-                let signature = submitter.submit(&tx).await?;
-                
-                info!("SUBMITTER: Successfully submitted thread {} with signature {}", 
-                    thread_pubkey, signature);
-                
+                let submit_start = std::time::Instant::now();
+                let signature = match submitter.submit(&tx).await {
+                    Ok(sig) => {
+                        executor.metrics.transaction_submitted("success", None);
+                        executor
+                            .metrics
+                            .record_submission_duration(submit_start.elapsed().as_secs_f64());
+                        sig
+                    }
+                    Err(e) => {
+                        executor.metrics.transaction_submitted("failed", None);
+                        return Err(e);
+                    }
+                };
+
+                info!(
+                    "SUBMITTER: Successfully submitted thread {} with signature {}",
+                    thread_pubkey, signature
+                );
+
                 Ok(signature)
             }
         };
-        
+
         // Only process the queues for values that actually changed
         if timestamp_changed {
-            debug!("SUBMITTER: Checking time-triggered threads (timestamp: {})", timestamp);
-            queue.process_time_queue(timestamp, process_fn.clone()).await;
+            debug!(
+                "SUBMITTER: Checking time-triggered threads (timestamp: {})",
+                timestamp
+            );
+            queue
+                .process_time_queue(timestamp, process_fn.clone())
+                .await;
         }
-        
+
         if slot_changed {
-            debug!("SUBMITTER: Checking slot-triggered threads (slot: {})", slot);
+            debug!(
+                "SUBMITTER: Checking slot-triggered threads (slot: {})",
+                slot
+            );
             queue.process_slot_queue(slot, process_fn.clone()).await;
         }
-        
+
         if epoch_changed {
-            debug!("SUBMITTER: Checking epoch-triggered threads (epoch: {})", epoch);
+            debug!(
+                "SUBMITTER: Checking epoch-triggered threads (epoch: {})",
+                epoch
+            );
             queue.process_epoch_queue(epoch, process_fn).await;
         }
-        
+
         Ok(())
     }
-    
+
     /// Update clock state (called by Observer via channel)
     pub async fn update_clock(&self, slot: u64, epoch: u64, unix_timestamp: i64) {
         // Note: We can't update executor's clock state with immutable self
         // Instead, we'll pass the clock state directly to process_ready_threads
-        debug!("SUBMITTER: Clock update - slot: {}, epoch: {}, timestamp: {}", slot, epoch, unix_timestamp);
-        
+        debug!(
+            "SUBMITTER: Clock update - slot: {}, epoch: {}, timestamp: {}",
+            slot, epoch, unix_timestamp
+        );
+
         if self.executor_logic.is_some() {
             // Process any threads that are now ready
-            if let Err(e) = self.process_ready_threads_with_clock(slot, epoch, unix_timestamp).await {
-                error!("SUBMITTER: Failed to process ready threads on clock update: {}", e);
+            if let Err(e) = self
+                .process_ready_threads_with_clock(slot, epoch, unix_timestamp)
+                .await
+            {
+                error!(
+                    "SUBMITTER: Failed to process ready threads on clock update: {}",
+                    e
+                );
             }
         }
     }

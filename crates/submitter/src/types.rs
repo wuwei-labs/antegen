@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
-use solana_sdk::signature::Keypair;
+use solana_sdk::{account::Account, signature::Keypair};
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
-use crate::{TpuConfig, SubmissionMode};
+use crate::{TpuConfig, SubmissionMode, CacheConfig};
 
 /// Operational mode for the submitter service
 pub enum SubmitterMode {
@@ -59,6 +59,10 @@ pub struct SubmitterConfig {
     // Task management configuration
     /// Maximum number of concurrent thread processing tasks
     pub max_concurrent_threads: usize,
+    
+    // Cache configuration
+    /// Configuration for RPC caching
+    pub cache_config: CacheConfig,
 }
 
 impl Default for SubmitterConfig {
@@ -78,6 +82,7 @@ impl Default for SubmitterConfig {
             compute_unit_multiplier: 1.2,   // 20% overhead
             max_compute_units: 1_400_000,
             max_concurrent_threads: 50,     // Reasonable default
+            cache_config: CacheConfig::default(),
         }
     }
 }
@@ -135,6 +140,19 @@ impl SubmitterConfig {
     }
 }
 
+/// Minimal thread data needed for execution (after fiber is fetched)
+#[derive(Debug, Clone)]
+pub struct ThreadExecutionData {
+    /// Thread authority (needed for authorization checks)
+    pub authority: solana_sdk::pubkey::Pubkey,
+    /// Nonce account if using durable transactions
+    pub nonce_account: solana_sdk::pubkey::Pubkey,
+    /// Whether the thread has a nonce account
+    pub has_nonce: bool,
+    /// Current execution index (for fiber lookup)
+    pub exec_index: u8,
+}
+
 /// Executable thread ready for processing
 #[derive(Debug, Clone)]
 pub struct ExecutableThread {
@@ -149,6 +167,14 @@ pub struct ClockUpdate {
     pub slot: u64,
     pub epoch: u64,
     pub unix_timestamp: i64,
+}
+
+/// Account update event from observer
+#[derive(Debug, Clone)]
+pub struct AccountUpdate {
+    pub pubkey: solana_sdk::pubkey::Pubkey,
+    pub account: Account,
+    pub slot: u64,
 }
 
 /// Serializable version of ExecutableThread for queue storage

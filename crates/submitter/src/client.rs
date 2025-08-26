@@ -6,7 +6,7 @@ use solana_client::{
 };
 use solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool};
 use solana_sdk::{
-    commitment_config::CommitmentConfig, signature::Signature, transaction::Transaction,
+    signature::Signature, transaction::Transaction,
 };
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -32,8 +32,6 @@ impl Default for SubmissionMode {
 /// Configuration for TPU client
 #[derive(Debug, Clone)]
 pub struct TpuConfig {
-    /// Maximum retries for TPU submission
-    pub max_retries: usize,
     /// Number of leaders to send to in parallel
     pub fanout_slots: u64,
     /// Connection pool size
@@ -45,7 +43,6 @@ pub struct TpuConfig {
 impl Default for TpuConfig {
     fn default() -> Self {
         Self {
-            max_retries: 5,
             fanout_slots: 12, // Send to 12 leader slots
             connection_pool_size: 4,
             mode: SubmissionMode::TpuWithFallback,
@@ -235,8 +232,37 @@ impl TransactionSubmitter {
             }
         }
     }
+    
+    /// Submit multiple transactions in batch
+    pub async fn submit_batch(&self, txs: &[Transaction]) -> Result<Vec<Result<Signature>>> {
+        if txs.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        let mode = *self.submission_mode.read().await;
+        info!(
+            "Batch submitting {} transactions via {:?}",
+            txs.len(),
+            mode
+        );
+        
+        match mode {
+            SubmissionMode::Tpu => self.submit_batch_via_tpu(txs).await,
+            SubmissionMode::Rpc => self.submit_batch_via_rpc(txs).await,
+            SubmissionMode::TpuWithFallback => {
+                // Try TPU first for batch
+                match self.submit_batch_via_tpu(txs).await {
+                    Ok(results) => Ok(results),
+                    Err(tpu_err) => {
+                        warn!("Batch TPU submission failed: {}, falling back to RPC", tpu_err);
+                        self.submit_batch_via_rpc(txs).await
+                    }
+                }
+            }
+        }
+    }
 
-    /// Submit transaction via TPU
+    /// Submit transaction via TPU (fire-and-forget)
     async fn submit_via_tpu(&self, tx: &Transaction) -> Result<Signature> {
         let tpu_client_guard = self.tpu_client.read().await;
         let tpu_client = tpu_client_guard
@@ -246,73 +272,104 @@ impl TransactionSubmitter {
         let signature = tx.signatures[0];
         debug!("Submitting to TPU: {}", signature);
 
-        // Send transaction to TPU leaders
+        // Send transaction to TPU leaders (single send, client handles fanout)
         let wire_transaction = bincode::serialize(tx)?;
 
         if !tpu_client
-            .send_wire_transaction(wire_transaction.clone())
+            .send_wire_transaction(wire_transaction)
             .await
         {
             return Err(anyhow!("Failed to send transaction to TPU"));
         }
 
-        // Send to multiple leaders for redundancy
-        for i in 0..self.config.max_retries {
-            debug!("TPU submission attempt {} for {}", i + 1, signature);
-
-            // Send again for redundancy
-            if !tpu_client
-                .send_wire_transaction(wire_transaction.clone())
-                .await
-            {
-                warn!("Failed to resend transaction to TPU (attempt {})", i + 1);
-            }
-
-            // Check if transaction landed
-            tokio::time::sleep(Duration::from_millis(100)).await;
-
-            // Quick check for confirmation
-            if let Ok(Some(status)) = self
-                .rpc_client
-                .get_signature_status_with_commitment(&signature, CommitmentConfig::processed())
-                .await
-            {
-                if status.is_ok() {
-                    info!("Transaction {} confirmed via TPU", signature);
-                    return Ok(signature);
-                }
-            }
-
-            // Brief delay before retry
-            tokio::time::sleep(Duration::from_millis(500 * (i as u64 + 1))).await;
-        }
-
-        // After all retries, do a final confirmation check
-        match self
-            .rpc_client
-            .get_signature_status_with_commitment(&signature, CommitmentConfig::confirmed())
-            .await?
-        {
-            Some(status) if status.is_ok() => {
-                info!("Transaction {} eventually confirmed via TPU", signature);
-                Ok(signature)
-            }
-            _ => Err(anyhow!(
-                "TPU submission failed after {} retries",
-                self.config.max_retries
-            )),
-        }
+        info!("Transaction {} sent to TPU (fire-and-forget)", signature);
+        Ok(signature)
     }
 
-    /// Submit transaction via RPC
+    /// Submit transaction via RPC with timeout protection
     async fn submit_via_rpc(&self, tx: &Transaction) -> Result<Signature> {
         debug!("Submitting via RPC");
 
-        // Use send_and_confirm for reliability
-        let signature = self.rpc_client.send_and_confirm_transaction(tx).await?;
-
-        info!("Transaction {} confirmed via RPC", signature);
-        Ok(signature)
+        // Use send_and_confirm with 30 second timeout to prevent indefinite blocking
+        match tokio::time::timeout(
+            Duration::from_secs(30),
+            self.rpc_client.send_and_confirm_transaction(tx)
+        ).await {
+            Ok(Ok(signature)) => {
+                info!("Transaction {} confirmed via RPC", signature);
+                Ok(signature)
+            }
+            Ok(Err(e)) => Err(e.into()),
+            Err(_) => Err(anyhow!("RPC submission timed out after 30 seconds"))
+        }
+    }
+    
+    /// Submit batch of transactions via TPU (fire-and-forget)
+    async fn submit_batch_via_tpu(&self, txs: &[Transaction]) -> Result<Vec<Result<Signature>>> {
+        let tpu_client_guard = self.tpu_client.read().await;
+        let tpu_client = tpu_client_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("TPU client not available"))?;
+        
+        let mut results = Vec::with_capacity(txs.len());
+        let mut wire_transactions = Vec::with_capacity(txs.len());
+        
+        // Serialize all transactions
+        for tx in txs {
+            match bincode::serialize(tx) {
+                Ok(wire_tx) => {
+                    wire_transactions.push(wire_tx);
+                    results.push(Ok(tx.signatures[0]));
+                }
+                Err(e) => {
+                    results.push(Err(anyhow!("Failed to serialize transaction: {}", e)));
+                }
+            }
+        }
+        
+        if !wire_transactions.is_empty() {
+            debug!("Batch submitting {} transactions to TPU", wire_transactions.len());
+            
+            // Send all transactions in batch (fire-and-forget, single attempt)
+            let batch_sent = tpu_client
+                .try_send_wire_transaction_batch(wire_transactions)
+                .await
+                .is_ok();
+            
+            if !batch_sent {
+                warn!("Failed to send transactions in batch to TPU");
+                // Mark all as failed
+                for result in &mut results {
+                    if result.is_ok() {
+                        *result = Err(anyhow!("Batch TPU submission failed"));
+                    }
+                }
+            } else {
+                info!("Batch of {} transactions sent to TPU (fire-and-forget)", txs.len());
+            }
+        }
+        
+        Ok(results)
+    }
+    
+    /// Submit batch of transactions via RPC
+    async fn submit_batch_via_rpc(&self, txs: &[Transaction]) -> Result<Vec<Result<Signature>>> {
+        debug!("Batch submitting {} transactions via RPC", txs.len());
+        
+        // RPC doesn't have native batch support, so we submit in parallel with controlled concurrency
+        use futures::stream::{self, StreamExt};
+        
+        const MAX_CONCURRENT_RPC: usize = 10;
+        
+        let results = stream::iter(txs.iter())
+            .map(|tx| async move {
+                self.submit_via_rpc(tx).await
+            })
+            .buffer_unordered(MAX_CONCURRENT_RPC)
+            .collect::<Vec<_>>()
+            .await;
+        
+        Ok(results)
     }
 
     /// Submit with retries (works with both TPU and RPC)

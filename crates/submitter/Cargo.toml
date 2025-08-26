@@ -36,3 +36,7 @@ antegen-thread-program = { workspace = true }
 anchor-lang = { workspace = true }
 uuid = { version = "1.0", features = ["v4"] }
 dashmap = "5.5"
+moka = { workspace = true }
+
+# Metrics (always enabled)
+opentelemetry = { workspace = true }

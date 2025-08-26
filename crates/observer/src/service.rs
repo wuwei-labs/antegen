@@ -1,13 +1,14 @@
 use anyhow::{anyhow, Result};
 use log::{debug, error, info};
 use solana_program::pubkey::Pubkey;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{channel, Sender};
 
 use crate::events::{CarbonEventSource, EventSource, GeyserEventSource, ObservedEvent};
+use crate::metrics::ObserverMetrics;
 
 // Re-export from submitter crate
-pub use antegen_submitter::{ClockUpdate, ExecutableThread};
+pub use antegen_submitter::{AccountUpdate, ClockUpdate, ExecutableThread};
 
 /// Observer service that monitors events and notifies executor
 pub struct ObserverService {
@@ -19,6 +20,10 @@ pub struct ObserverService {
     pub event_sender: Sender<ExecutableThread>,
     /// Output channel for clock updates
     pub clock_sender: Sender<ClockUpdate>,
+    /// Output channel for account updates
+    pub account_sender: Sender<AccountUpdate>,
+    /// Metrics collector
+    metrics: ObserverMetrics,
 }
 
 impl ObserverService {
@@ -44,9 +49,11 @@ impl ObserverService {
         Self,
         tokio::sync::mpsc::Receiver<ExecutableThread>,
         tokio::sync::mpsc::Receiver<ClockUpdate>,
+        tokio::sync::mpsc::Receiver<AccountUpdate>,
     ) {
         let (thread_tx, thread_rx) = channel(1000); // Large buffer to handle bursts
         let (clock_tx, clock_rx) = channel(100); // Smaller buffer for clock updates
+        let (account_tx, account_rx) = channel(1000); // Large buffer for account updates
 
         (
             Self {
@@ -54,9 +61,12 @@ impl ObserverService {
                 observer_pubkey,
                 event_sender: thread_tx,
                 clock_sender: clock_tx,
+                account_sender: account_tx,
+                metrics: ObserverMetrics::default(),
             },
             thread_rx,
             clock_rx,
+            account_rx,
         )
     }
 
@@ -119,6 +129,8 @@ impl ObserverService {
                 thread,
                 slot,
             } => {
+                let start = Instant::now();
+                
                 // Don't check trigger readiness here - let executor handle with accurate clock
                 info!(
                     "OBSERVER: Received ThreadExecutable event for thread {} at slot {} (trigger: {:?})",
@@ -126,6 +138,18 @@ impl ObserverService {
                     slot,
                     thread.trigger
                 );
+
+                // Record thread triggered metric
+                let trigger_type = match &thread.trigger {
+                    antegen_thread_program::state::Trigger::Account { .. } => "account",
+                    antegen_thread_program::state::Trigger::Cron { .. } => "cron",
+                    antegen_thread_program::state::Trigger::Now => "now",
+                    antegen_thread_program::state::Trigger::Slot { .. } => "slot",
+                    antegen_thread_program::state::Trigger::Epoch { .. } => "epoch",
+                    antegen_thread_program::state::Trigger::Interval { .. } => "interval",
+                    antegen_thread_program::state::Trigger::Timestamp { .. } => "timestamp",
+                };
+                self.metrics.thread_triggered(trigger_type);
 
                 let executable = ExecutableThread {
                     thread_pubkey,
@@ -151,6 +175,9 @@ impl ObserverService {
                     "OBSERVER->SUBMITTER: Successfully sent ExecutableThread event for thread {} to submitter",
                     thread_pubkey
                 );
+                
+                // Record trigger evaluation time
+                self.metrics.record_trigger_evaluation(start.elapsed().as_secs_f64(), trigger_type);
             }
             ObservedEvent::ClockUpdate {
                 slot,
@@ -161,6 +188,9 @@ impl ObserverService {
                     "OBSERVER: Received ClockUpdate - slot: {}, epoch: {}, timestamp: {}",
                     slot, epoch, unix_timestamp
                 );
+
+                // Record account update metric (clock is a special account)
+                self.metrics.account_update_processed("clock");
 
                 // Forward clock update to submitter
                 let clock_update = ClockUpdate {
@@ -182,8 +212,42 @@ impl ObserverService {
                     slot
                 );
             }
+            ObservedEvent::AccountUpdate {
+                pubkey,
+                account,
+                slot,
+            } => {
+                debug!(
+                    "OBSERVER: Received AccountUpdate for {} at slot {}",
+                    pubkey, slot
+                );
+
+                // Record account update metric
+                self.metrics.account_update_processed("account");
+
+                // Forward account update to submitter
+                let account_update = AccountUpdate {
+                    pubkey,
+                    account,
+                    slot,
+                };
+
+                debug!(
+                    "OBSERVER: Forwarding AccountUpdate to submitter - pubkey: {}",
+                    pubkey
+                );
+                if let Err(e) = self.account_sender.send(account_update).await {
+                    error!("OBSERVER: Failed to send account update to submitter: {}", e);
+                    return Err(anyhow!("Submitter account channel closed"));
+                }
+                debug!(
+                    "OBSERVER->SUBMITTER: Successfully sent AccountUpdate for {}",
+                    pubkey
+                );
+            }
             _ => {
-                debug!("OBSERVER: Ignoring other event type");
+                debug!("OBSERVER: Processing ThreadUpdate or other event type");
+                self.metrics.account_update_processed("other");
             }
         }
 

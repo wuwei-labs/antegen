@@ -34,3 +34,6 @@ bincode = { workspace = true }
 
 # Import types from submitter
 antegen-submitter = { workspace = true }
+
+# Metrics (always enabled)
+opentelemetry = { workspace = true }

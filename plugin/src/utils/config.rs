@@ -23,6 +23,7 @@ pub struct PluginConfig {
     pub enable_replay: Option<bool>,
     pub nats_url: Option<String>,
     pub replay_delay_ms: Option<u64>,
+    pub metrics: Option<crate::metrics::MetricsConfig>,
 }
 
 impl Default for PluginConfig {
@@ -39,6 +40,7 @@ impl Default for PluginConfig {
             enable_replay: None,
             nats_url: None,
             replay_delay_ms: None,
+            metrics: None,
         }
     }
 }
