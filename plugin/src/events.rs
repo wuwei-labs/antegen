@@ -3,7 +3,6 @@ use agave_geyser_plugin_interface::geyser_plugin_interface::{
 };
 use solana_program::pubkey::Pubkey;
 use solana_sdk::account::Account;
-use log::debug;
 
 /// Convert Geyser account info to a standard Solana account
 /// No parsing - just pass through all accounts to observer
@@ -21,13 +20,7 @@ pub fn replica_account_to_account(
             msg: format!("Failed to parse owner pubkey: {}", e),
         })?;
     
-    debug!(
-        "Converting account {} (owner: {}, lamports: {}, data_len: {})",
-        account_pubkey,
-        owner_pubkey,
-        account_info.lamports,
-        account_info.data.len()
-    );
+    // Convert account
     
     // Create standard account
     let account = Account {

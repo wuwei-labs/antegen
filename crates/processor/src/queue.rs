@@ -24,6 +24,7 @@
 //! execution channel → spawn_execution_tasks() → thread_executor()
 //! ```
 
+use crate::clock::SharedClock;
 use crate::metrics::ProcessorMetrics;
 use antegen_thread_program::state::{Thread, Trigger, TriggerContext};
 use anyhow::Result;
@@ -102,6 +103,7 @@ enum SchedulerCommand {
     CheckSingleTrigger {
         trigger_type: TriggerType,
         current_value: u64,
+        timestamp: i64,
     },
     /// Shutdown the scheduler
     Shutdown,
@@ -111,6 +113,7 @@ enum SchedulerCommand {
 struct ExecutableThread {
     thread_pubkey: Pubkey,
     thread: Thread,
+    trigger_timestamp: i64,  // Blockchain time when trigger fired
 }
 
 // ============================================================================
@@ -190,6 +193,7 @@ impl Scheduler {
         queue: &mut BinaryHeap<Reverse<ScheduledThread>>,
         max_value: u64,
         execution_sender: &Sender<ExecutableThread>,
+        trigger_timestamp: i64,
     ) {
         while let Some(&Reverse(ref entry)) = queue.peek() {
             if entry.trigger_value > max_value {
@@ -200,6 +204,7 @@ impl Scheduler {
             let _ = execution_sender.send(ExecutableThread {
                 thread_pubkey: scheduled.thread_pubkey,
                 thread: scheduled.thread,
+                trigger_timestamp,
             });
         }
     }
@@ -212,30 +217,33 @@ impl Scheduler {
             &mut self.time_queue,
             timestamp_u64,
             &self.execution_sender,
+            timestamp,
         );
         
         Self::move_triggered_threads(
             &mut self.slot_queue,
             slot,
             &self.execution_sender,
+            timestamp,
         );
         
         Self::move_triggered_threads(
             &mut self.epoch_queue,
             epoch,
             &self.execution_sender,
+            timestamp,
         );
     }
 
     /// Evaluate a specific queue and move ready threads to execution
-    fn evaluate_single_trigger(&mut self, trigger_type: TriggerType, current_value: u64) {
+    fn evaluate_single_trigger(&mut self, trigger_type: TriggerType, current_value: u64, timestamp: i64) {
         let queue = match trigger_type {
             TriggerType::Time => &mut self.time_queue,
             TriggerType::Slot => &mut self.slot_queue,
             TriggerType::Epoch => &mut self.epoch_queue,
         };
         
-        Self::move_triggered_threads(queue, current_value, &self.execution_sender);
+        Self::move_triggered_threads(queue, current_value, &self.execution_sender, timestamp);
     }
 
     /// Main scheduler loop - processes commands and manages priority queues
@@ -251,8 +259,8 @@ impl Scheduler {
                 SchedulerCommand::CheckAllTriggers { timestamp, slot, epoch } => {
                     scheduler.evaluate_all_triggers(timestamp, slot, epoch);
                 }
-                SchedulerCommand::CheckSingleTrigger { trigger_type, current_value } => {
-                    scheduler.evaluate_single_trigger(trigger_type, current_value);
+                SchedulerCommand::CheckSingleTrigger { trigger_type, current_value, timestamp } => {
+                    scheduler.evaluate_single_trigger(trigger_type, current_value, timestamp);
                 }
                 SchedulerCommand::Shutdown => {
                     info!("QUEUE: Scheduler shutting down");
@@ -278,13 +286,15 @@ pub struct ThreadQueue {
     executing_tasks: Arc<DashMap<Pubkey, JoinHandle<()>>>,
     /// Limit concurrent executions (default: 50)
     concurrency_limiter: Arc<Semaphore>,
+    /// Shared blockchain clock
+    clock: SharedClock,
     /// Optional metrics collection
     metrics: Option<Arc<ProcessorMetrics>>,
 }
 
 impl ThreadQueue {
     /// Create a new thread queue with specified concurrency limit
-    pub fn new(max_concurrent_threads: usize) -> Result<Self> {
+    pub fn new(max_concurrent_threads: usize, clock: SharedClock) -> Result<Self> {
         let (scheduler_sender, scheduler_receiver) = unbounded();
         let (execution_sender, execution_receiver) = unbounded();
 
@@ -298,6 +308,7 @@ impl ThreadQueue {
             execution_receiver,
             executing_tasks: Arc::new(DashMap::new()),
             concurrency_limiter: Arc::new(Semaphore::new(max_concurrent_threads)),
+            clock,
             metrics: None,
         })
     }
@@ -305,9 +316,10 @@ impl ThreadQueue {
     /// Create a new thread queue with metrics
     pub fn with_metrics(
         max_concurrent_threads: usize,
+        clock: SharedClock,
         metrics: Arc<ProcessorMetrics>,
     ) -> Result<Self> {
-        let mut queue = Self::new(max_concurrent_threads)?;
+        let mut queue = Self::new(max_concurrent_threads, clock)?;
         queue.metrics = Some(metrics);
         Ok(queue)
     }
@@ -337,125 +349,143 @@ impl ThreadQueue {
         Ok(())
     }
 
-    /// Spawn execution tasks for all threads in the execution channel
-    pub async fn spawn_execution_tasks<F, Fut>(&self, thread_executor: F)
+    /// Continuously spawn execution tasks for threads in the execution channel (event-driven)
+    pub async fn spawn_execution_tasks_continuous<F, Fut>(&self, thread_executor: F)
     where
         F: Fn(Pubkey, Thread) -> Fut + Send + Sync + 'static + Clone,
         Fut: std::future::Future<Output = Result<Signature>> + Send + 'static,
     {
-        // Drain execution channel and spawn tasks
-        while let Ok(executable) = self.execution_receiver.try_recv() {
-            let thread_pubkey = executable.thread_pubkey;
-            let thread = executable.thread;
-
-            // Skip if already executing
-            if self.executing_tasks.contains_key(&thread_pubkey) {
-                debug!("QUEUE: Thread {} already being processed, skipping", thread_pubkey);
-                continue;
+        let receiver = self.execution_receiver.clone();
+        let executing_tasks = self.executing_tasks.clone();
+        let concurrency_limiter = self.concurrency_limiter.clone();
+        let metrics = self.metrics.clone();
+        let clock = self.clock.clone();
+        
+        // Use blocking task to handle channel iterator (truly event-driven)
+        tokio::task::spawn_blocking(move || {
+            // Use iter() which blocks on each item - this is truly event-driven!
+            for executable in receiver.iter() {
+                let thread_pubkey = executable.thread_pubkey;
+                let thread = executable.thread.clone();
+                let trigger_timestamp = executable.trigger_timestamp;
+                
+                // Skip if already executing
+                if executing_tasks.contains_key(&thread_pubkey) {
+                    debug!("QUEUE: Thread {} already being processed, skipping", thread_pubkey);
+                    continue;
+                }
+                
+                info!("QUEUE: Moving thread {} to execution at blockchain time {} (trigger: {:?})", 
+                      thread_pubkey, 
+                      trigger_timestamp,
+                      thread.trigger);
+                
+                // Clone for the spawned task
+                let executing_tasks_clone = executing_tasks.clone();
+                let concurrency_limiter_clone = concurrency_limiter.clone();
+                let metrics_clone = metrics.clone();
+                let executor_clone = thread_executor.clone();
+                let clock_clone = clock.clone();
+                
+                // Need to spawn async task from blocking context
+                let handle = tokio::runtime::Handle::current();
+                let task = handle.spawn(async move {
+                    let blockchain_time = clock_clone.get_timestamp().await;
+                    info!("QUEUE: Task spawned for thread {} at blockchain time {}", 
+                        thread_pubkey, blockchain_time);
+                    
+                    // Wait for execution slot
+                    info!("QUEUE: Acquiring permit for thread {}", thread_pubkey);
+                    let _permit = match concurrency_limiter_clone.acquire().await {
+                        Ok(permit) => {
+                            info!("QUEUE: Acquired permit for thread {}", thread_pubkey);
+                            permit
+                        },
+                        Err(_) => {
+                            warn!("Failed to acquire semaphore permit for thread {}", thread_pubkey);
+                            return;
+                        }
+                    };
+                    
+                    let exec_time = clock_clone.get_timestamp().await;
+                    info!("QUEUE: Starting execution for thread {} at blockchain time {} (slots: {})",
+                          thread_pubkey, 
+                          exec_time,
+                          concurrency_limiter_clone.available_permits());
+                    
+                    // Execute thread - task handles all retries internally
+                    match executor_clone(thread_pubkey, thread).await {
+                        Ok(signature) => {
+                            info!("Thread {} executed: {}", thread_pubkey, signature);
+                        }
+                        Err(e) => {
+                            warn!("QUEUE: Thread {} failed after all retries: {}",
+                                  thread_pubkey, e);
+                        }
+                    }
+                    
+                    // Remove from executing set
+                    executing_tasks_clone.remove(&thread_pubkey);
+                    
+                    // Update metrics
+                    if let Some(ref m) = metrics_clone {
+                        let executing_count = executing_tasks_clone.len() as u64;
+                        m.set_queue_size(executing_count, None);
+                    }
+                });
+                
+                // Track the executing task
+                executing_tasks.insert(thread_pubkey, task);
             }
-
-            info!("QUEUE: Processing ready thread {} (trigger: {:?})", 
-                  thread_pubkey, thread.trigger);
-
-            // Clone for the spawned task
-            let executing_tasks = self.executing_tasks.clone();
-            let concurrency_limiter = self.concurrency_limiter.clone();
-            let metrics = self.metrics.clone();
-            let executor = thread_executor.clone();
-
-            // Spawn processing task
-            let task = tokio::spawn(async move {
-                // Wait for execution slot
-                let _permit = match concurrency_limiter.acquire().await {
-                    Ok(permit) => permit,
-                    Err(_) => {
-                        warn!("Failed to acquire semaphore permit for thread {}", thread_pubkey);
-                        return;
-                    }
-                };
-
-                info!("QUEUE: Execution started for thread {} (available slots: {})",
-                      thread_pubkey, concurrency_limiter.available_permits());
-
-                // Execute thread - task handles all retries internally
-                match executor(thread_pubkey, thread).await {
-                    Ok(signature) => {
-                        info!("QUEUE: Thread {} succeeded with signature {}",
-                              thread_pubkey, signature);
-                    }
-                    Err(e) => {
-                        warn!("QUEUE: Thread {} failed after all retries: {}",
-                              thread_pubkey, e);
-                    }
-                }
-
-                // Remove from executing set
-                executing_tasks.remove(&thread_pubkey);
-
-                // Update metrics
-                if let Some(ref m) = metrics {
-                    let executing_count = executing_tasks.len() as u64;
-                    m.set_queue_size(executing_count, None);
-                }
-            });
-
-            // Track the executing task
-            self.executing_tasks.insert(thread_pubkey, task);
-        }
+            
+            warn!("QUEUE: Execution receiver closed, stopping execution processor");
+        });
     }
+    
 
-    /// Check a specific trigger type and execute any ready threads
-    pub async fn check_and_execute_single_trigger<F, Fut>(
+    /// Check a specific trigger type (threads will be executed automatically by continuous task)
+    pub async fn check_single_trigger(
         &self,
         trigger_type: TriggerType,
         current_value: u64,
-        thread_executor: F,
-    )
-    where
-        F: Fn(Pubkey, Thread) -> Fut + Send + Sync + 'static + Clone,
-        Fut: std::future::Future<Output = Result<Signature>> + Send + 'static,
-    {
+    ) {
         info!("QUEUE: Checking {:?} trigger for threads <= {}", trigger_type, current_value);
 
+        // Get current blockchain timestamp for the trigger
+        let timestamp = self.clock.get_timestamp().await;
+
         // Request scheduler to evaluate this trigger type
+        // Any threads that meet criteria will be sent to execution channel
+        // and automatically picked up by the continuous execution task
         if let Err(e) = self.scheduler_sender.send(SchedulerCommand::CheckSingleTrigger {
             trigger_type,
             current_value,
+            timestamp,
         }) {
             warn!("Failed to send trigger check to scheduler: {}", e);
-            return;
         }
-
-        // Spawn tasks for any threads moved to execution channel
-        self.spawn_execution_tasks(thread_executor).await;
     }
 
-    /// Check all trigger types and execute any ready threads
-    pub async fn check_and_execute_all_triggers<F, Fut>(
+    /// Check all trigger types (threads will be executed automatically by continuous task)
+    pub async fn check_all_triggers(
         &self,
         current_slot: u64,
         current_epoch: u64,
         current_timestamp: i64,
-        thread_executor: F,
-    ) where
-        F: Fn(Pubkey, Thread) -> Fut + Send + Sync + 'static + Clone,
-        Fut: std::future::Future<Output = Result<Signature>> + Send + 'static,
-    {
+    ) {
         info!("QUEUE: Checking all triggers - timestamp: {}, slot: {}, epoch: {}",
               current_timestamp, current_slot, current_epoch);
 
         // Request scheduler to evaluate all trigger types
+        // Any threads that meet criteria will be sent to execution channel
+        // and automatically picked up by the continuous execution task
         if let Err(e) = self.scheduler_sender.send(SchedulerCommand::CheckAllTriggers {
             timestamp: current_timestamp,
             slot: current_slot,
             epoch: current_epoch,
         }) {
             warn!("Failed to send trigger check to scheduler: {}", e);
-            return;
         }
-
-        // Spawn tasks for any threads moved to execution channel
-        self.spawn_execution_tasks(thread_executor).await;
     }
 }
 

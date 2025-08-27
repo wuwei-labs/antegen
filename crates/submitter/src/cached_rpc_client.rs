@@ -56,28 +56,74 @@ impl CachedRpcClient {
         &self.inner
     }
 
-    /// Get account with caching
+    /// Get account with caching and retry logic for race conditions
     pub async fn get_account(&self, pubkey: &Pubkey) -> Result<Account> {
+        use log::warn;
+        use std::cmp;
+        use tokio::time::sleep;
+        
         // Check cache first
         if let Some(account) = self.account_cache.get(pubkey).await {
-            debug!("Account cache hit for {}", pubkey);
+            // Cache hit
             if let Some(ref metrics) = self.metrics {
                 metrics.cache_hit("account");
             }
             return Ok(account);
         }
 
-        // Cache miss - fetch and cache
-        debug!("Account cache miss for {}, fetching from RPC", pubkey);
+        // Cache miss - fetch with retry logic
+        // Cache miss - fetch from RPC
         if let Some(ref metrics) = self.metrics {
             metrics.cache_miss("account");
-            metrics.rpc_request("get_account");
         }
 
-        let account = self.inner.get_account(pubkey).await?;
-        self.account_cache.insert(*pubkey, account.clone()).await;
-
-        Ok(account)
+        let mut attempt = 0;
+        let mut delay = Duration::from_millis(500);
+        let max_delay = Duration::from_secs(5);
+        let start_time = std::time::Instant::now();
+        let mut last_log = std::time::Instant::now();
+        
+        loop {
+            attempt += 1;
+            
+            if let Some(ref metrics) = self.metrics {
+                metrics.rpc_request("get_account");
+            }
+            
+            match self.inner.get_account(pubkey).await {
+                Ok(account) => {
+                    if attempt > 1 {
+                        debug!("Successfully fetched account {} on attempt {} (waited ~{:.1}s total)",
+                            pubkey, attempt, 
+                            start_time.elapsed().as_secs_f32());
+                    }
+                    self.account_cache.insert(*pubkey, account.clone()).await;
+                    return Ok(account);
+                }
+                Err(e) => {
+                    let error_str = e.to_string();
+                    
+                    // Check if it's an account not found error (expected during race conditions)
+                    if error_str.contains("AccountNotFound") || error_str.contains("could not find account") {
+                        if last_log.elapsed() > Duration::from_secs(30) {
+                            // Log progress every 30 seconds
+                            debug!("Still waiting for account {} to exist (elapsed: {:.0}s)...",
+                                pubkey, start_time.elapsed().as_secs());
+                            last_log = std::time::Instant::now();
+                        }
+                    } else {
+                        // For non-AccountNotFound errors, fail after first attempt
+                        // These are likely network or RPC errors that won't resolve with retries
+                        warn!("RPC error fetching account {}: {}", pubkey, e);
+                        return Err(e.into());
+                    }
+                    
+                    sleep(delay).await;
+                    // Exponential backoff with cap at max_delay
+                    delay = cmp::min(delay * 2, max_delay);
+                }
+            }
+        }
     }
 
     /// Get thread config with caching
@@ -99,16 +145,15 @@ impl CachedRpcClient {
             .map_err(|e| anyhow::anyhow!("Failed to deserialize fiber: {}", e))
     }
 
+
     /// Invalidate specific account
     pub async fn invalidate_account(&self, pubkey: &Pubkey) {
         self.account_cache.invalidate(pubkey).await;
-        debug!("Invalidated account cache for {}", pubkey);
     }
 
     /// Clear all caches
     pub async fn clear_all_caches(&self) {
         self.account_cache.invalidate_all();
-        debug!("Cleared all caches");
     }
 
     /// Update account in cache selectively based on account type
@@ -152,7 +197,7 @@ impl CachedRpcClient {
                 metrics.cache_hit("account_update");
             }
         } else {
-            debug!("Skipping cache for uncached account {}", pubkey);
+            // Skip uncached account
         }
     }
 
@@ -175,7 +220,7 @@ impl CachedRpcClient {
 
         // Fetch uncached accounts in batch
         if !uncached_pubkeys.is_empty() {
-            debug!("Fetching {} uncached accounts", uncached_pubkeys.len());
+            // Fetch uncached accounts
             if let Some(ref metrics) = self.metrics {
                 metrics.rpc_request("get_multiple_accounts");
             }

@@ -88,12 +88,9 @@ impl SubmissionService {
         // Initialize NATS client if configured
         let nats_client = if config.replay_config.enable_replay {
             if let Some(ref nats_url) = config.replay_config.nats_url {
-                info!("Connecting to NATS at {}", nats_url);
+                // Connect to NATS
                 match async_nats::connect(nats_url).await {
-                    Ok(client) => {
-                        info!("Connected to NATS successfully");
-                        Some(client)
-                    }
+                    Ok(client) => Some(client),
                     Err(e) => {
                         warn!("Failed to connect to NATS: {}, replay disabled", e);
                         None
@@ -125,7 +122,7 @@ impl SubmissionService {
             .await
             .context("Failed to connect to RPC server")?;
 
-        info!("RPC connection established, completing initialization");
+        // RPC connection established
 
         // Try to create TPU client if configured
         if let Some(ref tpu_config) = self.config.tpu_config {
@@ -135,7 +132,7 @@ impl SubmissionService {
             ) {
                 match self.create_tpu_client(tpu_config).await {
                     Ok(client) => {
-                        info!("TPU client initialized successfully");
+                        // TPU client initialized
                         *self.tpu_client.write().await = Some(Arc::new(client));
                         *self.submission_mode.write().await = tpu_config.mode;
                     }
@@ -146,7 +143,7 @@ impl SubmissionService {
                 }
             }
         } else {
-            info!("TPU disabled by configuration, using RPC only");
+            // TPU disabled by configuration
         }
 
         // Start replay consumer if configured
@@ -200,6 +197,8 @@ impl SubmissionService {
                 blockhash,
             );
             
+            info!("SUBMITTER: Starting simulation at {}",
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
             let (optimized_cu, _logs) = self.simulate_and_optimize_transaction(
                 &initial_tx,
                 thread_pubkey.unwrap(),
@@ -207,6 +206,8 @@ impl SubmissionService {
                 1_400_000,  // Default max CU
                 None,  // No min context slot
             ).await?;
+            info!("SUBMITTER: Simulation complete, CU: {} at {}",
+                optimized_cu, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
             
             // Rebuild with optimized CU
             let mut final_instructions = vec![
@@ -242,11 +243,7 @@ impl SubmissionService {
     async fn submit_transaction(&self, tx: &Transaction) -> Result<Signature> {
         let mode = *self.submission_mode.read().await;
 
-        info!(
-            "Submitting transaction with {} instruction(s) via {:?}",
-            tx.message.instructions.len(),
-            mode
-        );
+        // Submit transaction
 
         match mode {
             SubmissionMode::Tpu => self.submit_via_tpu(tx).await,
@@ -268,7 +265,7 @@ impl SubmissionService {
         }
 
         let mode = *self.submission_mode.read().await;
-        info!("Batch submitting {} transactions via {:?}", txs.len(), mode);
+        // Batch submitting transactions
 
         match mode {
             SubmissionMode::Tpu => self.submit_batch_via_tpu(txs).await,
@@ -339,7 +336,7 @@ impl SubmissionService {
 
     /// Get blockhash from nonce account
     pub async fn get_nonce_blockhash(&self, nonce_pubkey: &Pubkey) -> Result<Hash> {
-        info!("Fetching nonce account blockhash for {}", nonce_pubkey);
+        // Fetch nonce account blockhash
         
         // Always bypass cache for nonce accounts since they can be advanced
         let account = self.cached_rpc.bypass().get_account(nonce_pubkey).await?;
@@ -350,7 +347,7 @@ impl SubmissionService {
             .map_err(|e| anyhow!("Failed to extract nonce data: {}", e))?;
         
         let blockhash = nonce_data.blockhash();
-        info!("Successfully fetched nonce blockhash: {} for account {}", blockhash, nonce_pubkey);
+        // Got nonce blockhash
         Ok(blockhash)
     }
 
@@ -481,7 +478,7 @@ impl SubmissionService {
         }
 
         *self.submission_mode.write().await = mode;
-        info!("Submission mode updated to: {:?}", mode);
+        // Submission mode updated
         Ok(())
     }
 
@@ -500,18 +497,12 @@ impl SubmissionService {
 
         let rpc = self.cached_rpc.bypass();
 
-        info!(
-            "Waiting for RPC server to become available at {}...",
-            rpc.url()
-        );
+        // Wait for RPC to become available
 
         loop {
             match rpc.get_health().await {
                 Ok(_) => {
-                    info!(
-                        "RPC server is available (took {:.1}s)",
-                        start.elapsed().as_secs_f32()
-                    );
+                    // RPC server available
                     return Ok(());
                 }
                 Err(e) => {
@@ -528,11 +519,7 @@ impl SubmissionService {
             }
 
             if last_log.elapsed() > Duration::from_secs(30) {
-                info!(
-                    "Still waiting for RPC server (elapsed: {:.0}s of max {}s)...",
-                    start.elapsed().as_secs(),
-                    max_wait.as_secs()
-                );
+                // Still waiting for RPC
                 last_log = Instant::now();
             }
 
@@ -552,7 +539,7 @@ impl SubmissionService {
             .replace("https://", "wss://")
             .replace("8899", "8900");
 
-        info!("Creating TPU client with websocket: {}", ws_url);
+        // Creating TPU client
 
         let tpu_client_config = TpuClientConfig {
             fanout_slots: config.fanout_slots,
@@ -574,7 +561,7 @@ impl SubmissionService {
             .await
             {
                 Ok(client) => {
-                    info!("TPU client created successfully on attempt {}", attempts);
+                    // TPU client created
                     return Ok(client);
                 }
                 Err(e) => {
@@ -604,7 +591,7 @@ impl SubmissionService {
             .ok_or_else(|| anyhow!("TPU client not available"))?;
 
         let signature = tx.signatures[0];
-        debug!("Submitting to TPU: {}", signature);
+        // Submit to TPU
 
         let wire_transaction = bincode::serialize(tx)?;
 
@@ -612,7 +599,7 @@ impl SubmissionService {
             return Err(anyhow!("Failed to send transaction to TPU"));
         }
 
-        info!("Transaction {} sent to TPU (fire-and-forget)", signature);
+        // Sent to TPU
 
         if let Some(ref metrics) = Some(&self.metrics) {
             metrics.transaction_submitted("tpu");
@@ -622,7 +609,7 @@ impl SubmissionService {
     }
 
     async fn submit_via_rpc(&self, tx: &Transaction) -> Result<Signature> {
-        debug!("Submitting via RPC");
+        // Submit via RPC
 
         let rpc = self.cached_rpc.bypass();
 
@@ -633,7 +620,7 @@ impl SubmissionService {
         .await
         {
             Ok(Ok(signature)) => {
-                info!("Transaction {} confirmed via RPC", signature);
+                // Transaction confirmed
 
                 if let Some(ref metrics) = Some(&self.metrics) {
                     metrics.transaction_submitted("rpc");
@@ -686,7 +673,7 @@ impl SubmissionService {
                     }
                 }
             } else {
-                info!("Batch of {} transactions sent to TPU", txs.len());
+                // Batch sent to TPU
 
                 if let Some(ref metrics) = Some(&self.metrics) {
                     metrics.batch_submitted("tpu", txs.len());
@@ -698,7 +685,7 @@ impl SubmissionService {
     }
 
     async fn submit_batch_via_rpc(&self, txs: &[Transaction]) -> Result<Vec<Result<Signature>>> {
-        debug!("Batch submitting {} transactions via RPC", txs.len());
+        // Batch submit via RPC
 
         use futures::stream::{self, StreamExt};
 
@@ -718,7 +705,7 @@ impl SubmissionService {
     }
 
     async fn start_replay_consumer(&self, nats_client: async_nats::Client) -> Result<()> {
-        info!("Starting replay consumer");
+        // Start replay consumer
 
         let mut consumer = ReplayConsumer::new(
             nats_client,

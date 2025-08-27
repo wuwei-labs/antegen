@@ -1,3 +1,4 @@
+pub mod clock;
 pub mod executor;
 pub mod metrics;
 pub mod parser;

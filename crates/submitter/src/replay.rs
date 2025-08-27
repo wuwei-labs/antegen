@@ -98,10 +98,10 @@ impl ReplayConsumer {
         let tx_msg: DurableTransactionMessage = serde_json::from_slice(&msg.payload)?;
         
         debug!("Received durable transaction: {} (age: {}ms)", 
-               tx_msg.original_signature, tx_msg.age_ms());
+               tx_msg.original_signature, tx_msg.age_ms_system_time());
         
         // Check if transaction is expired
-        if tx_msg.is_expired(self.config.replay_max_age_ms) {
+        if tx_msg.is_expired_system_time(self.config.replay_max_age_ms) {
             info!("Transaction {} is expired, skipping", tx_msg.original_signature);
             if let Err(e) = msg.ack().await {
                 error!("Failed to ack expired message: {}", e);
@@ -119,8 +119,8 @@ impl ReplayConsumer {
         }
         
         // Wait for replay delay if this is the first retry
-        if tx_msg.retry_count == 0 && tx_msg.age_ms() < self.config.replay_delay_ms {
-            let remaining_delay = self.config.replay_delay_ms - tx_msg.age_ms();
+        if tx_msg.retry_count == 0 && tx_msg.age_ms_system_time() < self.config.replay_delay_ms {
+            let remaining_delay = self.config.replay_delay_ms - tx_msg.age_ms_system_time();
             debug!("Waiting {}ms before replaying transaction {}", 
                    remaining_delay, tx_msg.original_signature);
             tokio::time::sleep(Duration::from_millis(remaining_delay)).await;

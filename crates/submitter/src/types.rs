@@ -79,22 +79,33 @@ impl DurableTransactionMessage {
         thread_pubkey: String,
         original_signature: String,
         executor_pubkey: String,
+        blockchain_timestamp: i64,
     ) -> Self {
         Self {
             base64_transaction,
             thread_pubkey,
             original_signature,
-            submitted_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            submitted_at: blockchain_timestamp as u64,
             executor_pubkey,
             retry_count: 0,
         }
     }
     
-    /// Check if transaction is too old to replay
-    pub fn is_expired(&self, max_age_ms: u64) -> bool {
+    /// Check if transaction is too old to replay (based on blockchain time)
+    pub fn is_expired(&self, max_age_ms: u64, current_blockchain_time: i64) -> bool {
+        let now = current_blockchain_time as u64;
+        (now - self.submitted_at) * 1000 > max_age_ms
+    }
+    
+    /// Get age in milliseconds (based on blockchain time)
+    pub fn age_ms(&self, current_blockchain_time: i64) -> u64 {
+        let now = current_blockchain_time as u64;
+        (now - self.submitted_at) * 1000
+    }
+    
+    /// Check if transaction is too old to replay (using system time for backward compat)
+    /// This is used by the replay consumer which doesn't have access to blockchain time
+    pub fn is_expired_system_time(&self, max_age_ms: u64) -> bool {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -102,8 +113,9 @@ impl DurableTransactionMessage {
         (now - self.submitted_at) * 1000 > max_age_ms
     }
     
-    /// Get age in milliseconds
-    pub fn age_ms(&self) -> u64 {
+    /// Get age in milliseconds (using system time for backward compat)
+    /// This is used by the replay consumer which doesn't have access to blockchain time
+    pub fn age_ms_system_time(&self) -> u64 {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

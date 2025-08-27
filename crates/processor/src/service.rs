@@ -1,7 +1,7 @@
 use anchor_lang::AccountDeserialize;
 use anyhow::{anyhow, Result};
-use crossbeam::channel::{Receiver, RecvTimeoutError};
-use log::{debug, error, info, warn};
+use crossbeam::channel::Receiver;
+use log::{error, info, warn};
 use solana_sdk::{
     pubkey::Pubkey,
     signature::{read_keypair_file, Keypair},
@@ -9,6 +9,7 @@ use solana_sdk::{
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::clock::SharedClock;
 use crate::parser::{classify_account, AccountType};
 use crate::executor::ExecutorLogic;
 use crate::queue::{ThreadQueue, TriggerType};
@@ -22,6 +23,9 @@ use antegen_submitter::{
 pub struct ProcessorService {
     /// Configuration
     config: ProcessorConfig,
+    /// Shared blockchain clock
+    #[allow(dead_code)]
+    clock: SharedClock,
     /// Unified submission service for all RPC/TPU operations
     submission_service: Arc<SubmissionService>,
     /// Executor logic for building transactions
@@ -70,27 +74,33 @@ impl ProcessorService {
             ).await?
         );
         
-        // Initialize submission service (wait for RPC and create TPU client)
-        submission_service.initialize().await?;
+        // Skip initialization here - will be done when service starts running
+        // submission_service.initialize().await?;
         
-        // Create executor logic
+        // Create shared blockchain clock
+        let clock = SharedClock::new();
+        
+        // Create executor logic with shared clock
         let executor_logic = Arc::new(ExecutorLogic::new(
             executor_keypair.clone(),
             submission_service.cached_rpc().clone(),
+            clock.clone(),
             config.forgo_executor_commission,
             processor_metrics.clone(),
         ));
         
-        // Create thread queue with metrics
+        // Create thread queue with metrics and shared clock
         let thread_queue = Arc::new(
             ThreadQueue::with_metrics(
                 config.max_concurrent_threads,
+                clock.clone(),
                 processor_metrics.clone(),
             )?
         );
         
         Ok(Self {
             config,
+            clock,
             submission_service,
             executor_logic,
             thread_queue,
@@ -100,7 +110,7 @@ impl ProcessorService {
         })
     }
     
-    /// Start a task to process threads as they become ready
+    /// Start a task to continuously process threads as they become ready (event-driven)
     fn start_thread_processing<F, Fut>(&self, processor_fn: F)
     where
         F: Fn(Pubkey, antegen_thread_program::state::Thread) -> Fut + Send + Sync + 'static + Clone,
@@ -108,33 +118,36 @@ impl ProcessorService {
     {
         let queue = self.thread_queue.clone();
         tokio::spawn(async move {
-            queue.spawn_execution_tasks(processor_fn).await;
+            // Event-driven: blocks waiting for threads to execute
+            queue.spawn_execution_tasks_continuous(processor_fn).await;
         });
     }
     
-    /// Main processing loop
+    /// Main processing loop (event-driven)
     pub async fn run(self) -> Result<()> {
-        info!("Starting processor service");
+        // Initialize submission service (wait for RPC and create TPU client)
+        self.submission_service.initialize().await?;
         
         // Note: Replay consumer is started automatically by SubmissionService during initialization
         
-        // Start processing threads as they become ready
+        // Start the continuous event-driven thread processor
         let processor_fn = self.create_processor_fn();
         self.start_thread_processing(processor_fn);
         
-        // Main loop processing account updates
+        // Event-driven main loop - wrap blocking recv() in spawn_blocking
         loop {
-            match self.account_receiver.recv_timeout(Duration::from_secs(1)) {
+            let receiver = self.account_receiver.clone();
+            let account_update = tokio::task::spawn_blocking(move || {
+                receiver.recv()
+            }).await?;
+            
+            match account_update {
                 Ok(account_update) => {
                     if let Err(e) = self.process_account_update(account_update).await {
                         error!("Error processing account update: {}", e);
                     }
                 }
-                Err(RecvTimeoutError::Timeout) => {
-                    // Periodic health check or metrics update
-                    debug!("No account updates received in the last second");
-                }
-                Err(RecvTimeoutError::Disconnected) => {
+                Err(_) => {
                     warn!("Account receiver disconnected, shutting down");
                     break;
                 }
@@ -142,7 +155,7 @@ impl ProcessorService {
         }
         
         // Shutdown
-        info!("Shutting down processor service");
+        info!("Processor service shutting down");
         // ThreadQueue and SubmissionService will be dropped and cleaned up automatically
         
         Ok(())
@@ -159,21 +172,19 @@ impl ProcessorService {
         // Classify and process the account
         match classify_account(&account_update.pubkey, &account_update.account) {
             AccountType::Clock { unix_timestamp, slot, epoch } => {
-                debug!("Clock update: slot={}, epoch={}, timestamp={}", slot, epoch, unix_timestamp);
+                info!("PROCESSOR: Clock update - slot: {}, epoch: {}, time: {}", slot, epoch, unix_timestamp);
                 
                 // Update executor clock
                 self.executor_logic.update_clock(slot, epoch, unix_timestamp).await;
                 
-                // Check timestamp-based triggers
-                let processor_fn = self.create_processor_fn();
-                self.thread_queue.check_and_execute_single_trigger(
+                // Check timestamp-based triggers (execution happens automatically)
+                self.thread_queue.check_single_trigger(
                     TriggerType::Time,
                     unix_timestamp as u64,
-                    processor_fn,
                 ).await;
             }
             AccountType::Thread(thread) => {
-                debug!("Thread update: {}", account_update.pubkey);
+                // Thread already logged in parser
                 
                 // Schedule thread for processing
                 if let Err(e) = self.thread_queue.schedule_thread(
@@ -185,7 +196,7 @@ impl ProcessorService {
             }
             AccountType::Other => {
                 // Other accounts are already cached if needed
-                debug!("Other account update: {}", account_update.pubkey);
+                // Other account
             }
         }
         
@@ -205,7 +216,9 @@ impl ProcessorService {
             let executor_keypair = executor_keypair.clone();
             
             Box::pin(async move {
-                info!("Processing thread {}", thread_pubkey);
+                let blockchain_time = executor.current_timestamp().await;
+                info!("PROCESSOR: Starting thread execution for {} at blockchain time {}",
+                    thread_pubkey, blockchain_time);
                 
                 // Build instructions
                 let executable = ExecutableThread {

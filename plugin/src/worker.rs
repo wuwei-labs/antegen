@@ -2,7 +2,7 @@ use antegen_adapter::{EventSource, ObservedEvent, AdapterService};
 use antegen_processor::ProcessorService;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use log::{debug, error, info};
+use log::{error, info};
 use solana_program::pubkey::Pubkey;
 use solana_sdk::{
     signature::read_keypair_file,
@@ -63,81 +63,79 @@ impl PluginWorker {
             keypair_path, observer_pubkey
         );
 
-        // Create observer service with event source
+        // Create adapter service with event source
         // This returns the service and single account receiver
-        let (observer_service, account_receiver) =
-            ObserverService::new(event_source, observer_pubkey);
-        info!("Created observer service with single account channel");
+        let (adapter_service, account_receiver) =
+            AdapterService::new(event_source, observer_pubkey);
+        info!("Created adapter service with single account channel");
 
-        // Create submitter service with integrated executor functionality
-        // Start with defaults to ensure all fields are present
-        let mut submitter_config = antegen_submitter::SubmitterConfig::default();
+        // Create processor service with integrated executor functionality
+        let mut processor_config = antegen_processor::ProcessorConfig::default();
         
         // Override specific fields for plugin operation
-        submitter_config.executor_keypair_path = Some(keypair_path.clone()); // Enable full mode
-        submitter_config.rpc_url = rpc_url.clone();
-        submitter_config.forgo_executor_commission = forgo_executor_commission;
-        submitter_config.enable_replay = enable_replay;
-        submitter_config.nats_url = nats_url;
-        submitter_config.replay_delay_ms = replay_delay_ms.unwrap_or(30_000); // Default 30s
-        submitter_config.replay_max_age_ms = 3600_000; // 1 hour
-        submitter_config.replay_max_attempts = 3;
-        // Keep defaults for: simulate_before_submit, compute_unit_multiplier, 
-        // max_compute_units, max_concurrent_threads, tpu_config, submission_mode
+        processor_config.executor_keypair_path = keypair_path.clone();
+        processor_config.rpc_url = rpc_url.clone();
+        processor_config.forgo_executor_commission = forgo_executor_commission;
         
-        let mut submitter_service = SubmitterService::new(submitter_config).await?;
+        // Configure replay if enabled
+        if enable_replay {
+            processor_config.replay_config.enable_replay = true;
+            processor_config.replay_config.nats_url = nats_url;
+            processor_config.replay_config.replay_delay_ms = replay_delay_ms.unwrap_or(30_000); // Default 30s
+            processor_config.replay_config.replay_max_age_ms = 3600_000; // 1 hour
+            processor_config.replay_config.replay_max_attempts = 3;
+        }
         
-        // Set single account receiver from observer
-        submitter_service.set_account_receiver(account_receiver)?;
-        info!("Created submitter service with integrated executor and account channel");
+        let processor_service = ProcessorService::new(processor_config, account_receiver).await?;
+        info!("Created processor service with integrated executor and account channel");
 
         info!("=== PluginWorker initialization complete ===");
 
         Ok(Self {
             event_sender: observed_tx,
-            observer_service: Some(observer_service),
-            submitter_service: Some(submitter_service),
+            adapter_service: Some(adapter_service),
+            processor_service: Some(processor_service),
         })
     }
 
-    /// Start the observer and submitter services
+    /// Start the adapter and processor services
     pub fn start(&mut self, runtime: Handle) -> Result<()> {
         info!("=== Starting Worker Services ===");
 
         // Take ownership of the services
-        let mut observer_service = self
-            .observer_service
+        let mut adapter_service = self
+            .adapter_service
             .take()
-            .ok_or_else(|| anyhow!("Observer service already started"))?;
-        let submitter_service = self
-            .submitter_service
+            .ok_or_else(|| anyhow!("Adapter service already started"))?;
+        let processor_service = self
+            .processor_service
             .take()
-            .ok_or_else(|| anyhow!("Submitter service already started"))?;
+            .ok_or_else(|| anyhow!("Processor service already started"))?;
 
-        info!("Spawning observer service task...");
+        info!("Spawning adapter service task...");
 
-        // Spawn observer service
+        // Spawn adapter service
         runtime.spawn(async move {
-            info!("OBSERVER: Task started, entering event loop");
-            match observer_service.run().await {
-                Ok(()) => info!("OBSERVER: Service completed normally"),
-                Err(e) => error!("OBSERVER: Service stopped with error: {}", e),
+            info!("ADAPTER: Task started, entering event loop");
+            match adapter_service.run().await {
+                Ok(()) => info!("ADAPTER: Service completed normally"),
+                Err(e) => error!("ADAPTER: Service stopped with error: {}", e),
             }
-            info!("OBSERVER: Task exiting");
+            info!("ADAPTER: Task exiting");
         });
 
-        info!("Spawning submitter service task (with integrated executor)...");
+        info!("Spawning processor service task (with integrated executor)...");
 
-        // Spawn submitter service (now includes executor logic)
-        let mut submitter_service = submitter_service;
+        // Spawn processor service (now includes executor logic)
+        let processor_service = processor_service;
         
         runtime.spawn(async move {
-            info!("SUBMITTER: Task started in full mode, entering event loop");
-            match submitter_service.run().await {
-                Ok(()) => info!("SUBMITTER: Service completed normally"),
-                Err(e) => error!("SUBMITTER: Service stopped with error: {}", e),
+            info!("PROCESSOR: Task started in full mode, entering event loop");
+            match processor_service.run().await {
+                Ok(()) => info!("PROCESSOR: Service completed normally"),
+                Err(e) => error!("PROCESSOR: Service stopped with error: {}", e),
             }
-            info!("SUBMITTER: Task exiting");
+            // Processor exiting
         });
 
         info!("=== Worker Services Started ===");
@@ -152,12 +150,7 @@ impl PluginWorker {
         account: solana_sdk::account::Account,
         slot: u64,
     ) -> Result<()> {
-        debug!(
-            "Forwarding AccountUpdate event to observer: pubkey={}, slot={}, data_len={}",
-            pubkey,
-            slot,
-            account.data.len()
-        );
+        // Forward account update
 
         let event = ObservedEvent::Account {
             pubkey,

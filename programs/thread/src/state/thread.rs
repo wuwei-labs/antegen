@@ -226,6 +226,57 @@ impl Thread {
             self.exec_index = self.fibers.first().copied().unwrap_or(0);
         }
     }
+
+    /// Get the fiber PDA for the current exec_index
+    pub fn fiber(&self, thread_pubkey: &Pubkey) -> Pubkey {
+        self.fiber_at_index(thread_pubkey, self.exec_index)
+    }
+
+    /// Get the fiber PDA for a specific index
+    pub fn fiber_at_index(&self, thread_pubkey: &Pubkey, index: u8) -> Pubkey {
+        Pubkey::find_program_address(
+            &[b"thread_fiber", thread_pubkey.as_ref(), &[index]],
+            &crate::ID,
+        )
+        .0
+    }
+
+    /// Get the next fiber PDA (for the next exec_index in the sequence)
+    pub fn next_fiber(&self, thread_pubkey: &Pubkey) -> Pubkey {
+        // Calculate next index based on fibers sequence
+        let next_index = if self.fibers.is_empty() {
+            0
+        } else if let Some(current_pos) = self.fibers.iter().position(|&x| x == self.exec_index) {
+            let next_pos = (current_pos + 1) % self.fibers.len();
+            self.fibers[next_pos]
+        } else {
+            self.fibers.first().copied().unwrap_or(0)
+        };
+
+        self.fiber_at_index(thread_pubkey, next_index)
+    }
+
+    /// Check if thread is ready to execute based on trigger context
+    pub fn is_ready(&self, current_slot: u64, current_timestamp: i64) -> bool {
+        match &self.trigger_context {
+            TriggerContext::Timestamp { next, .. } => current_timestamp >= *next,
+            TriggerContext::Block { next, .. } => {
+                match &self.trigger {
+                    Trigger::Slot { .. } => current_slot >= *next,
+                    Trigger::Epoch { .. } => {
+                        // For epoch triggers, we'd need epoch info
+                        // This is a simplified check
+                        false
+                    }
+                    _ => false,
+                }
+            }
+            TriggerContext::Account { .. } => {
+                // Account triggers are handled by the observer
+                false
+            }
+        }
+    }
 }
 
 impl TryFrom<Vec<u8>> for Thread {
