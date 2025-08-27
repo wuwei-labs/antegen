@@ -183,6 +183,8 @@ pub struct Thread {
     #[max_len(50)]
     pub fibers: Vec<u8>,
     pub exec_index: u8,
+    /// Total number of executions across all fibers
+    pub exec_count: u64,
 
     pub nonce_account: Pubkey,
     #[max_len(44)]

@@ -22,15 +22,7 @@ codegen-units = 1
 
 [workspace]
 resolver = "2"
-members = [
-    "cli",
-    "crates/observer",
-    "crates/cron",
-    "crates/submitter",
-    "plugin",
-    "programs/thread",
-    "sdk",
-]
+members = ["cli", "crates/*", "plugin", "programs/thread", "sdk"]
 
 [workspace.package]
 version = "3.0.0"
@@ -45,9 +37,10 @@ keywords = ["solana"]
 
 [workspace.dependencies]
 solana-cron = { path = "crates/cron" }
-antegen-observer = { path = "crates/observer" }
-antegen-submitter = { path = "crates/submitter" }
+antegen-adapter = { path = "crates/adapter" }
+antegen-processor = { path = "crates/processor" }
 antegen-sdk = { path = "sdk" }
+antegen-submitter = { path = "crates/submitter" }
 antegen-thread-program = { path = "programs/thread", features = [
     "no-entrypoint",
 ] }
@@ -71,6 +64,8 @@ byte-unit = { version = "4.0.18" }
 bzip2 = { version = "0.5.0" }
 chrono = { version = "0.4.39", default-features = false, features = ["alloc"] }
 clap = { version = "4.5.23", features = ["derive"] }
+crossbeam = { version = "0.8" }
+dashmap = { version = "5.5" }
 dirs-next = { version = "2.0.0" }
 futures = { version = "0.3.31" }
 hex = { version = "0.4.3" }
@@ -121,3 +116,10 @@ winnow = { version = "0.4.1" }
 moka = { version = "0.12", features = ["future"] }
 opentelemetry = { version = "0.21", features = ["metrics"] }
 opentelemetry_sdk = { version = "0.21", features = ["rt-tokio", "metrics"] }
+opentelemetry-prometheus = { version = "0.14" }
+prometheus = { version = "0.13" }
+hyper = { version = "0.14", features = ["server", "tcp", "http1"] }
+uuid = { version = "1.0", features = ["v4"] }
+rustc_version = { version = "0.4.1" }
+cargo_toml = { version = "0.15.0" }
+cargo_metadata = { version = "0.19.1" }

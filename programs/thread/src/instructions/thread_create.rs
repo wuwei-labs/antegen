@@ -152,6 +152,7 @@ pub fn thread_create(
     thread.fibers = Vec::new(); // No fibers initially, use fiber_create to add them
 
     thread.exec_index = 0;
+    thread.exec_count = 0; // Initialize execution counter
 
     // Transfer SOL from payer to the thread.
     transfer(

@@ -1,30 +1,12 @@
-use antegen_thread_program::state::Thread;
 use solana_program::pubkey::Pubkey;
 use solana_sdk::account::Account;
 
 /// Events that can be observed from event sources
+/// Simplified to just account updates - all processing logic moved to submitter
 #[derive(Debug, Clone)]
 pub enum ObservedEvent {
-    /// Thread became executable
-    ThreadExecutable {
-        thread_pubkey: Pubkey,
-        thread: Thread,
-        slot: u64,
-    },
-    /// Thread was updated
-    ThreadUpdate {
-        thread_pubkey: Pubkey,
-        thread: Thread,
-        slot: u64,
-    },
-    /// Clock update
-    ClockUpdate {
-        slot: u64,
-        epoch: u64,
-        unix_timestamp: i64,
-    },
-    /// Account update (generic)
-    AccountUpdate {
+    /// Account update (includes Clock, Thread, and all other accounts)
+    Account {
         pubkey: Pubkey,
         account: Account,
         slot: u64,
@@ -37,7 +19,7 @@ pub enum EventSourceConfig {
     /// Geyser plugin event source (receives updates from plugin)
     Geyser {
         /// Channel to receive updates from Geyser plugin
-        receiver: tokio::sync::mpsc::Receiver<ObservedEvent>,
+        receiver: crossbeam::channel::Receiver<ObservedEvent>,
     },
     /// Carbon indexer event source
     Carbon {

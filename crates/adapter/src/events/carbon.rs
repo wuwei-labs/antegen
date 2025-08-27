@@ -1,18 +1,24 @@
-use async_trait::async_trait;
 use anyhow::Result;
-use solana_program::pubkey::Pubkey;
-use tokio::sync::mpsc::Receiver;
-use std::collections::HashSet;
+use async_trait::async_trait;
+use crossbeam::channel::{Receiver, TryRecvError};
 use log::{debug, info};
+use solana_program::pubkey::Pubkey;
+use std::collections::HashSet;
 
 use crate::events::{EventSource, ObservedEvent};
 
 /// Event source that receives events from Carbon indexer
 /// Carbon handles the complexity of different sources (RPC, Geyser, etc.)
+///
+/// By default, receives events for ALL threads. When specific threads are
+/// subscribed via subscribe_thread(), it switches to selective filtering mode
+/// and only passes through events for subscribed threads.
 pub struct CarbonEventSource {
     /// Receiver for events from Carbon pipeline
     receiver: Receiver<ObservedEvent>,
     /// Threads we're interested in
+    /// - Empty set = monitor all threads (default behavior)
+    /// - Non-empty set = only monitor threads in this set (selective mode)
     subscribed_threads: HashSet<Pubkey>,
     /// Current slot
     current_slot: u64,
@@ -29,7 +35,7 @@ impl CarbonEventSource {
             running: false,
         }
     }
-    
+
     /// Create from Carbon pipeline configuration
     /// Carbon handles:
     /// - RPC polling
@@ -39,19 +45,19 @@ impl CarbonEventSource {
     /// - Update filtering
     pub async fn from_carbon_config(config: CarbonConfig) -> Result<Self> {
         info!("Initializing Carbon event source with config: {:?}", config);
-        
+
         // In a real implementation, this would:
         // 1. Initialize Carbon pipeline with the config
         // 2. Set up decoders for Thread and Builder accounts
         // 3. Create channel for receiving decoded events
         // 4. Start the Carbon pipeline
-        
+
         // Carbon is initialized externally and sends events through the channel
-        let (_tx, rx) = tokio::sync::mpsc::channel(1000);
-        
+        let (_tx, rx) = crossbeam::channel::unbounded();
+
         // Carbon would be configured to send ObservedEvent to tx
         // based on its pipeline processing
-        
+
         Ok(Self::new(rx))
     }
 }
@@ -64,67 +70,65 @@ impl EventSource for CarbonEventSource {
         // Carbon pipeline would be started here
         Ok(())
     }
-    
+
     async fn stop(&mut self) -> Result<()> {
         info!("Stopping Carbon event source");
         self.running = false;
         // Carbon pipeline would be stopped here
         Ok(())
     }
-    
+
     async fn next_event(&mut self) -> Result<Option<ObservedEvent>> {
         if !self.running {
             return Ok(None);
         }
-        
+
         // Receive events from Carbon pipeline
         match self.receiver.try_recv() {
             Ok(event) => {
-                // Update current slot from clock events
-                if let ObservedEvent::ClockUpdate { slot, .. } = &event {
-                    self.current_slot = *slot;
+                // Update current slot from account events
+                let ObservedEvent::Account { slot, pubkey, .. } = &event;
+                self.current_slot = *slot;
+
+                // Filter based on subscriptions (only if selective filtering is enabled)
+                // By default, we're interested in all threads
+                if !self.subscribed_threads.is_empty() && !self.subscribed_threads.contains(pubkey)
+                {
+                    debug!("Filtering out unsubscribed account: {}", pubkey);
+                    return Ok(None);
                 }
-                
-                // Filter based on subscriptions
-                match &event {
-                    ObservedEvent::ThreadExecutable { thread_pubkey, .. } |
-                    ObservedEvent::ThreadUpdate { thread_pubkey, .. } => {
-                        if !self.subscribed_threads.is_empty() 
-                            && !self.subscribed_threads.contains(thread_pubkey) {
-                            debug!("Filtering out unsubscribed thread: {}", thread_pubkey);
-                            return Ok(None);
-                        }
-                    }
-                    _ => {}
-                }
-                
+
                 Ok(Some(event))
             }
-            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => Ok(None),
-            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                Err(anyhow::anyhow!("Carbon channel disconnected"))
-            }
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => Err(anyhow::anyhow!("Carbon channel disconnected")),
         }
     }
-    
+
     async fn subscribe_thread(&mut self, thread_pubkey: Pubkey) -> Result<()> {
-        info!("Subscribing to thread: {}", thread_pubkey);
+        info!("Subscribing to specific thread: {}", thread_pubkey);
+        // Enable selective filtering by adding to the set
+        // If the set is empty, we receive all threads by default
         self.subscribed_threads.insert(thread_pubkey);
         // Could notify Carbon to start monitoring this specific account
         Ok(())
     }
-    
+
     async fn unsubscribe_thread(&mut self, thread_pubkey: Pubkey) -> Result<()> {
         info!("Unsubscribing from thread: {}", thread_pubkey);
         self.subscribed_threads.remove(&thread_pubkey);
+        // If the set becomes empty after removal, we go back to receiving all threads
+        if self.subscribed_threads.is_empty() {
+            debug!("No specific subscriptions - receiving all threads");
+        }
         // Could notify Carbon to stop monitoring this specific account
         Ok(())
     }
-    
+
     async fn get_current_slot(&self) -> Result<u64> {
         Ok(self.current_slot)
     }
-    
+
     fn name(&self) -> &str {
         "CarbonEventSource"
     }
@@ -153,7 +157,5 @@ pub enum CarbonSourceType {
     /// Use Geyser plugin
     Geyser,
     /// Use WebSocket subscriptions
-    WebSocket {
-        ws_url: String,
-    },
+    WebSocket { ws_url: String },
 }

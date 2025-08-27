@@ -20,8 +20,8 @@ name = "antegen_plugin"
 
 [dependencies]
 solana-cron = { workspace = true }
-antegen-observer = { workspace = true }
-antegen-submitter = { workspace = true }
+antegen-adapter = { workspace = true }
+antegen-processor = { workspace = true }
 antegen-thread-program = { workspace = true }
 
 anchor-lang = { workspace = true }
@@ -36,6 +36,7 @@ base64 = { workspace = true }
 bs58 = { workspace = true }
 bugsnag = { workspace = true }
 chrono = { workspace = true }
+crossbeam = { workspace = true }
 futures = { workspace = true }
 lazy_static = { workspace = true }
 libsql = { workspace = true }
@@ -62,14 +63,14 @@ tokio = { workspace = true }
 # Metrics dependencies (for exposing, not collecting)
 opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
-opentelemetry-prometheus = { version = "0.14" }
-prometheus = { version = "0.13" }
-hyper = { version = "0.14", features = ["server", "tcp", "http1"] }
+opentelemetry-prometheus = { workspace = true }
+prometheus = { workspace = true }
+hyper = { workspace = true }
 
 [build-dependencies]
-cargo_metadata = "=0.19.1"
-rustc_version = "0.4.1"
-cargo_toml = "0.15.0"
+cargo_metadata = { workspace = true }
+rustc_version = { workspace = true }
+cargo_toml = { workspace = true }
 
 [features]
 default = []

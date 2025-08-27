@@ -23,7 +23,7 @@ anchor-lang = { workspace = true }
 chrono = { workspace = true }
 nom = { workspace = true }
 once_cell = { workspace = true }
-opentelemetry = { version = "0.21", optional = true }
+opentelemetry = { workspace = true, optional = true }
 
 [features]
 default = []

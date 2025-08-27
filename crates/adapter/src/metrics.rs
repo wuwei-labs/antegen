@@ -1,11 +1,11 @@
-/// Observer metrics for monitoring thread discovery and triggering
+/// Adapter metrics for monitoring data source integration
 use opentelemetry::{
     global,
     metrics::{Counter, Histogram, Unit, UpDownCounter},
     KeyValue,
 };
 
-pub struct ObserverMetrics {
+pub struct AdapterMetrics {
     // Thread tracking
     pub threads_active: UpDownCounter<i64>,
     pub threads_triggered: Counter<u64>,
@@ -19,9 +19,9 @@ pub struct ObserverMetrics {
     pub trigger_evaluation_duration: Histogram<f64>,
 }
 
-impl Default for ObserverMetrics {
+impl Default for AdapterMetrics {
     fn default() -> Self {
-        let meter = global::meter("antegen_observer");
+        let meter = global::meter("antegen_adapter");
         
         Self {
             threads_active: meter
@@ -59,7 +59,7 @@ impl Default for ObserverMetrics {
     }
 }
 
-impl ObserverMetrics {
+impl AdapterMetrics {
     /// Update the number of active threads
     pub fn set_active_threads(&self, count: u64) {
         // Set to new value by calculating delta

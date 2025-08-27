@@ -1,233 +1,289 @@
-use anyhow::{anyhow, Result};
-use log::{debug, error, info, warn};
-use solana_client::nonblocking::rpc_client::RpcClient;
+use anyhow::{anyhow, Context, Result};
+use log::{debug, info, warn};
+use solana_client::{
+    nonblocking::rpc_client::RpcClient, nonblocking::tpu_client::TpuClient,
+    tpu_client::TpuClientConfig,
+    rpc_config::{RpcSimulateTransactionAccountsConfig, RpcSimulateTransactionConfig},
+};
+use solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool};
+use solana_account_decoder::UiAccountEncoding;
 use solana_sdk::{
+    commitment_config::CommitmentConfig,
+    compute_budget::ComputeBudgetInstruction,
+    hash::Hash,
+    instruction::Instruction,
     pubkey::Pubkey,
-    signature::{read_keypair_file, Signature},
-    signer::Signer,
+    signature::Signature,
+    signature::Keypair,
     transaction::Transaction,
 };
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::mpsc::Receiver;
+use std::{cmp, sync::Arc, time::{Duration, Instant}};
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
-use crate::cached_rpc_client::CachedRpcClient;
-use crate::executor::ExecutorLogic;
-use crate::queue::ThreadQueue;
-use crate::replay::ReplayConsumer;
 use crate::{
-    AccountUpdate, ClockUpdate, DurableTransactionMessage, ExecutableThread, SubmitterConfig,
-    SubmitterMode, TransactionSubmitter,
+    CacheConfig, CachedRpcClient, DurableTransactionMessage, ReplayConfig, ReplayConsumer,
+    SubmissionMode, SubmitterMetrics, TpuConfig,
 };
-use antegen_thread_program::state::Thread;
 
-/// Main submitter service that handles both local submission and NATS replay
-pub struct SubmitterService {
-    /// Operational mode
-    mode: SubmitterMode,
-    /// Core transaction submitter
-    submitter: Arc<TransactionSubmitter>,
-    /// RPC client for status checks (raw RPC for submitter)
-    rpc_client: Arc<RpcClient>,
-    /// Cached RPC client for executor and queue operations
-    cached_rpc_client: Arc<CachedRpcClient>,
-    /// NATS client for publishing (optional)
-    nats_client: Option<async_nats::Client>,
-    /// Configuration
-    config: SubmitterConfig,
-    /// Replay consumer handle (when enabled)
-    replay_handle: Option<JoinHandle<Result<()>>>,
-    /// Executor logic (only in full mode)
-    executor_logic: Option<ExecutorLogic>,
-    /// Thread queue (only in full mode)
-    thread_queue: Option<ThreadQueue>,
-    /// Clock update receiver (for full mode)
-    clock_receiver: Option<Receiver<ClockUpdate>>,
-    /// Account update receiver (for full mode)
-    account_receiver: Option<Receiver<AccountUpdate>>,
-    /// Track last processed values to avoid redundant processing
-    last_processed_timestamp: i64,
-    last_processed_slot: u64,
-    last_processed_epoch: u64,
+/// Configuration for the submission service
+#[derive(Debug, Clone)]
+pub struct SubmissionConfig {
+    /// Cache configuration
+    pub cache_config: CacheConfig,
+    /// TPU configuration (optional)
+    pub tpu_config: Option<TpuConfig>,
+    /// Replay configuration
+    pub replay_config: ReplayConfig,
 }
 
-impl SubmitterService {
-    /// Create a new submitter service (auto-detects mode from config)
-    pub async fn new(config: SubmitterConfig) -> Result<Self> {
-        // Create RPC client
-        let rpc_client = Arc::new(RpcClient::new(config.rpc_url.clone()));
+impl Default for SubmissionConfig {
+    fn default() -> Self {
+        Self {
+            cache_config: CacheConfig::default(),
+            tpu_config: Some(TpuConfig::default()),
+            replay_config: ReplayConfig::default(),
+        }
+    }
+}
 
-        // Create metrics instance that will be shared
-        let metrics = Arc::new(crate::metrics::SubmitterMetrics::default());
+/// Unified service for all transaction submission and RPC operations
+pub struct SubmissionService {
+    /// Cached RPC client (single instance for all RPC operations)
+    cached_rpc: Arc<CachedRpcClient>,
+    /// TPU client for direct submission to leaders
+    tpu_client: RwLock<Option<Arc<TpuClient<QuicPool, QuicConnectionManager, QuicConfig>>>>,
+    /// Current submission mode
+    submission_mode: RwLock<SubmissionMode>,
+    /// NATS client for durable transactions
+    nats_client: Option<async_nats::Client>,
+    /// Replay consumer handle
+    replay_handle: RwLock<Option<JoinHandle<Result<()>>>>,
+    /// Metrics collector
+    metrics: Arc<SubmitterMetrics>,
+    /// Configuration
+    config: SubmissionConfig,
+}
 
-        // Create cached RPC client with config and metrics
-        let cached_rpc_client = Arc::new(CachedRpcClient::with_metrics(
-            RpcClient::new(config.rpc_url.clone()),
+impl SubmissionService {
+    /// Create a new submission service
+    pub async fn new(
+        rpc_url: String,
+        config: SubmissionConfig,
+        metrics: Option<Arc<SubmitterMetrics>>,
+    ) -> Result<Self> {
+        // Create single RPC client wrapped in CachedRpcClient
+        let rpc_client = RpcClient::new(rpc_url);
+        let metrics = metrics.unwrap_or_else(|| Arc::new(SubmitterMetrics::default()));
+
+        let cached_rpc = Arc::new(CachedRpcClient::with_metrics(
+            rpc_client,
             config.cache_config.clone(),
             metrics.clone(),
         ));
 
-        // Determine mode based on config
-        let (mode, executor_logic) = if let Some(keypair_path) = &config.executor_keypair_path {
-            // Full mode - load executor keypair
-            info!("Initializing in FULL mode with executor functionality");
-            let keypair = Arc::new(
-                read_keypair_file(keypair_path)
-                    .map_err(|e| anyhow!("Failed to read keypair file: {}", e))?,
-            );
-            info!("Loaded executor keypair: {}", keypair.pubkey());
+        // Initialize submission mode (will be updated after connection)
+        let submission_mode = RwLock::new(SubmissionMode::Rpc);
 
-            let mut executor_logic = ExecutorLogic::new(
-                keypair.clone(),
-                cached_rpc_client.clone(),
-                config.forgo_executor_commission,
-            );
-            // Set the shared metrics on executor
-            executor_logic.metrics = metrics.clone();
-
-            let mode = SubmitterMode::Full {
-                executor_keypair: keypair,
-                thread_receiver: None, // Will be set later via set_thread_receiver
-            };
-
-            (mode, Some(executor_logic))
-        } else {
-            // Replay-only mode
-            info!("Initializing in REPLAY-ONLY mode");
-            (SubmitterMode::ReplayOnly, None)
-        };
-
-        // Create the core transaction submitter with TPU config
-        let submitter = Arc::new(
-            TransactionSubmitter::new(rpc_client.clone(), config.tpu_config.clone()).await?,
-        );
-
-        // Connect to NATS if configured
-        let nats_client = if let Some(nats_url) = &config.nats_url {
-            info!("Connecting to NATS server: {}", nats_url);
-            Some(async_nats::connect(nats_url).await?)
-        } else {
-            info!("No NATS URL configured, skipping NATS connection");
-            None
-        };
-
-        // Create thread queue if in full mode
-        let thread_queue = if matches!(mode, SubmitterMode::Full { .. }) {
-            info!(
-                "Initializing ephemeral thread queue with max {} concurrent threads",
-                config.max_concurrent_threads
-            );
-            if let Some(ref executor) = executor_logic {
-                Some(ThreadQueue::with_metrics(
-                    config.max_concurrent_threads,
-                    executor.metrics.clone(),
-                )?)
+        // Initialize NATS client if configured
+        let nats_client = if config.replay_config.enable_replay {
+            if let Some(ref nats_url) = config.replay_config.nats_url {
+                info!("Connecting to NATS at {}", nats_url);
+                match async_nats::connect(nats_url).await {
+                    Ok(client) => {
+                        info!("Connected to NATS successfully");
+                        Some(client)
+                    }
+                    Err(e) => {
+                        warn!("Failed to connect to NATS: {}, replay disabled", e);
+                        None
+                    }
+                }
             } else {
-                Some(ThreadQueue::new(config.max_concurrent_threads)?)
+                warn!("Replay enabled but no NATS URL configured");
+                None
             }
         } else {
             None
         };
 
         Ok(Self {
-            mode,
-            submitter,
-            rpc_client,
-            cached_rpc_client,
+            cached_rpc,
+            tpu_client: RwLock::new(None),
+            submission_mode,
             nats_client,
+            replay_handle: RwLock::new(None),
+            metrics,
             config,
-            replay_handle: None,
-            executor_logic,
-            thread_queue,
-            clock_receiver: None,
-            account_receiver: None,
-            last_processed_timestamp: 0,
-            last_processed_slot: 0,
-            last_processed_epoch: 0,
         })
     }
 
-    /// Start the service (including optional replay consumer)
-    pub async fn start(&mut self) -> Result<()> {
-        info!(
-            "Starting submitter service (replay: {})",
-            self.config.enable_replay
-        );
+    /// Initialize the service (wait for RPC and create TPU client)
+    pub async fn initialize(&self) -> Result<()> {
+        // Wait for RPC to be available
+        self.wait_for_rpc_availability(Duration::from_secs(300))
+            .await
+            .context("Failed to connect to RPC server")?;
 
-        // Start replay consumer if enabled and NATS is available
-        if self.config.enable_replay {
-            if let Some(nats_client) = &self.nats_client {
-                info!("Starting replay consumer");
-                let mut replay_consumer = ReplayConsumer::new(
-                    nats_client.clone(),
-                    self.submitter.clone(),
-                    self.rpc_client.clone(),
-                    self.config.clone(),
-                )
-                .await?;
+        info!("RPC connection established, completing initialization");
 
-                let handle = tokio::spawn(async move { replay_consumer.run().await });
-
-                self.replay_handle = Some(handle);
-                info!("Replay consumer started");
-            } else {
-                warn!("Replay enabled but no NATS client available");
+        // Try to create TPU client if configured
+        if let Some(ref tpu_config) = self.config.tpu_config {
+            if matches!(
+                tpu_config.mode,
+                SubmissionMode::Tpu | SubmissionMode::TpuWithFallback
+            ) {
+                match self.create_tpu_client(tpu_config).await {
+                    Ok(client) => {
+                        info!("TPU client initialized successfully");
+                        *self.tpu_client.write().await = Some(Arc::new(client));
+                        *self.submission_mode.write().await = tpu_config.mode;
+                    }
+                    Err(e) => {
+                        warn!("Failed to create TPU client: {}, using RPC only", e);
+                        *self.submission_mode.write().await = SubmissionMode::Rpc;
+                    }
+                }
             }
+        } else {
+            info!("TPU disabled by configuration, using RPC only");
+        }
+
+        // Start replay consumer if configured
+        if let Some(ref nats_client) = self.nats_client {
+            self.start_replay_consumer(nats_client.clone()).await?;
         }
 
         Ok(())
     }
 
-    /// Start replay consumer without requiring mutable self (for Arc usage)
-    pub async fn start_replay_consumer(
-        &self,
-    ) -> Result<Option<tokio::task::JoinHandle<Result<()>>>> {
-        info!(
-            "Starting submitter service (replay: {})",
-            self.config.enable_replay
-        );
-
-        // Start replay consumer if enabled and NATS is available
-        if self.config.enable_replay {
-            if let Some(nats_client) = &self.nats_client {
-                info!("Starting replay consumer");
-                let mut replay_consumer = ReplayConsumer::new(
-                    nats_client.clone(),
-                    self.submitter.clone(),
-                    self.rpc_client.clone(),
-                    self.config.clone(),
-                )
-                .await?;
-
-                let handle = tokio::spawn(async move { replay_consumer.run().await });
-
-                info!("Replay consumer started");
-                return Ok(Some(handle));
-            } else {
-                warn!("Replay enabled but no NATS client available");
-            }
-        }
-
-        Ok(None)
+    /// Get the cached RPC client
+    pub fn cached_rpc(&self) -> &Arc<CachedRpcClient> {
+        &self.cached_rpc
     }
 
-    /// Submit a transaction (primary interface used by executor)
-    pub async fn submit(&self, tx: &Transaction) -> Result<Signature> {
-        // Submit the transaction
-        let signature = self.submitter.submit(tx).await?;
-
-        // If this is a durable transaction and NATS is available, publish for replay
-        if self.submitter.is_durable_transaction(tx) {
-            if self.nats_client.is_some() {
-                if let Err(e) = self.publish_for_replay(tx, &signature).await {
-                    // Log error but don't fail the submission
-                    error!("Failed to publish durable transaction to NATS: {}", e);
+    /// Submit a transaction using configured mode with automatic simulation
+    pub async fn submit_with_options(
+        &self, 
+        instructions: Vec<Instruction>,
+        payer: &Pubkey,
+        signers: &[&Keypair],
+        simulate: bool,
+        thread_pubkey: Option<&Pubkey>,
+    ) -> Result<Signature> {
+        // Get blockhash
+        let blockhash = if let Some(nonce_ix) = instructions.first() {
+            // Check if this is a durable transaction with nonce
+            if nonce_ix.program_id == solana_sdk::system_program::ID 
+                && !nonce_ix.data.is_empty() 
+                && nonce_ix.data[0] == 4 {
+                // Extract nonce account from first instruction
+                if let Some(nonce_pubkey) = nonce_ix.accounts.first() {
+                    self.get_nonce_blockhash(&nonce_pubkey.pubkey).await?
+                } else {
+                    self.cached_rpc.bypass().get_latest_blockhash().await?
                 }
+            } else {
+                self.cached_rpc.bypass().get_latest_blockhash().await?
             }
+        } else {
+            self.cached_rpc.bypass().get_latest_blockhash().await?
+        };
+
+        // Build transaction with optional simulation
+        let tx = if simulate && thread_pubkey.is_some() {
+            // Simulate and optimize
+            let initial_tx = Transaction::new_signed_with_payer(
+                &instructions,
+                Some(payer),
+                signers,
+                blockhash,
+            );
+            
+            let (optimized_cu, _logs) = self.simulate_and_optimize_transaction(
+                &initial_tx,
+                thread_pubkey.unwrap(),
+                1.2,  // Default multiplier
+                1_400_000,  // Default max CU
+                None,  // No min context slot
+            ).await?;
+            
+            // Rebuild with optimized CU
+            let mut final_instructions = vec![
+                ComputeBudgetInstruction::set_compute_unit_limit(optimized_cu),
+            ];
+            final_instructions.extend(instructions);
+            
+            Transaction::new_signed_with_payer(
+                &final_instructions,
+                Some(payer),
+                signers,
+                blockhash,
+            )
+        } else {
+            // No simulation, just build transaction
+            Transaction::new_signed_with_payer(
+                &instructions,
+                Some(payer),
+                signers,
+                blockhash,
+            )
+        };
+        
+        self.submit_transaction(&tx).await
+    }
+    
+    /// Submit a pre-built transaction (legacy method)
+    pub async fn submit(&self, tx: &Transaction) -> Result<Signature> {
+        self.submit_transaction(tx).await
+    }
+    
+    /// Internal submit method
+    async fn submit_transaction(&self, tx: &Transaction) -> Result<Signature> {
+        let mode = *self.submission_mode.read().await;
+
+        info!(
+            "Submitting transaction with {} instruction(s) via {:?}",
+            tx.message.instructions.len(),
+            mode
+        );
+
+        match mode {
+            SubmissionMode::Tpu => self.submit_via_tpu(tx).await,
+            SubmissionMode::Rpc => self.submit_via_rpc(tx).await,
+            SubmissionMode::TpuWithFallback => match self.submit_via_tpu(tx).await {
+                Ok(sig) => Ok(sig),
+                Err(tpu_err) => {
+                    warn!("TPU submission failed: {}, falling back to RPC", tpu_err);
+                    self.submit_via_rpc(tx).await
+                }
+            },
+        }
+    }
+
+    /// Submit multiple transactions in batch
+    pub async fn submit_batch(&self, txs: &[Transaction]) -> Result<Vec<Result<Signature>>> {
+        if txs.is_empty() {
+            return Ok(Vec::new());
         }
 
-        Ok(signature)
+        let mode = *self.submission_mode.read().await;
+        info!("Batch submitting {} transactions via {:?}", txs.len(), mode);
+
+        match mode {
+            SubmissionMode::Tpu => self.submit_batch_via_tpu(txs).await,
+            SubmissionMode::Rpc => self.submit_batch_via_rpc(txs).await,
+            SubmissionMode::TpuWithFallback => match self.submit_batch_via_tpu(txs).await {
+                Ok(results) => Ok(results),
+                Err(tpu_err) => {
+                    warn!(
+                        "Batch TPU submission failed: {}, falling back to RPC",
+                        tpu_err
+                    );
+                    self.submit_batch_via_rpc(txs).await
+                }
+            },
+        }
     }
 
     /// Submit with retries
@@ -236,535 +292,460 @@ impl SubmitterService {
         tx: &Transaction,
         max_retries: u32,
     ) -> Result<Signature> {
-        // Submit the transaction with retries
-        let signature = self.submitter.submit_with_retries(tx, max_retries).await?;
+        let mut attempts = 0;
+        let mut last_error = None;
 
-        // If this is a durable transaction and NATS is available, publish for replay
-        if self.submitter.is_durable_transaction(tx) {
-            if self.nats_client.is_some() {
-                if let Err(e) = self.publish_for_replay(tx, &signature).await {
-                    // Log error but don't fail the submission
-                    error!("Failed to publish durable transaction to NATS: {}", e);
+        while attempts < max_retries {
+            match self.submit(tx).await {
+                Ok(sig) => return Ok(sig),
+                Err(e) => {
+                    attempts += 1;
+                    warn!("Submission attempt {} failed: {}", attempts, e);
+                    last_error = Some(e);
+
+                    if attempts < max_retries {
+                        tokio::time::sleep(Duration::from_millis(1000 * attempts as u64)).await;
+                    }
                 }
             }
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            anyhow!(
+                "Failed to submit transaction after {} attempts",
+                max_retries
+            )
+        }))
+    }
+
+    /// Publish a durable transaction to NATS for replay
+    pub async fn publish_durable_transaction(&self, msg: DurableTransactionMessage) -> Result<()> {
+        if let Some(ref nats_client) = self.nats_client {
+            let payload = serde_json::to_vec(&msg)?;
+            nats_client
+                .publish("antegen.durable_txs", payload.into())
+                .await?;
+            debug!(
+                "Published durable transaction for thread {}",
+                msg.thread_pubkey
+            );
+
+            if let Some(ref metrics) = Some(&self.metrics) {
+                metrics.durable_tx_published();
+            }
+        }
+        Ok(())
+    }
+
+    /// Get blockhash from nonce account
+    pub async fn get_nonce_blockhash(&self, nonce_pubkey: &Pubkey) -> Result<Hash> {
+        info!("Fetching nonce account blockhash for {}", nonce_pubkey);
+        
+        // Always bypass cache for nonce accounts since they can be advanced
+        let account = self.cached_rpc.bypass().get_account(nonce_pubkey).await?;
+        debug!("Nonce account data length: {}", account.data.len());
+        
+        // Use proper nonce utilities to extract data
+        let nonce_data = solana_rpc_client_nonce_utils::data_from_account(&account)
+            .map_err(|e| anyhow!("Failed to extract nonce data: {}", e))?;
+        
+        let blockhash = nonce_data.blockhash();
+        info!("Successfully fetched nonce blockhash: {} for account {}", blockhash, nonce_pubkey);
+        Ok(blockhash)
+    }
+
+    /// Simulate transaction and optimize compute units
+    pub async fn simulate_and_optimize_transaction(
+        &self,
+        tx: &Transaction,
+        thread_pubkey: &Pubkey,
+        cu_multiplier: f64,
+        max_compute_units: u32,
+        min_context_slot: Option<u64>,
+    ) -> Result<(u32, Vec<String>)> {
+        // Start timing simulation
+        let sim_start = Instant::now();
+        
+        self.metrics.rpc_request("_simulate_transaction");
+        let sim_result = match self.cached_rpc.bypass().simulate_transaction_with_config(
+            tx,
+            RpcSimulateTransactionConfig {
+                sig_verify: false,
+                replace_recent_blockhash: true,
+                commitment: Some(CommitmentConfig::processed()),
+                accounts: Some(RpcSimulateTransactionAccountsConfig {
+                    encoding: Some(UiAccountEncoding::Base64Zstd),
+                    addresses: vec![thread_pubkey.to_string()],
+                }),
+                min_context_slot,
+                ..Default::default()
+            },
+        ).await {
+            Ok(result) => result,
+            Err(err) => {
+                // Check for min context slot error
+                let error_str = err.to_string();
+                if error_str.contains("Minimum context slot has not been reached") 
+                    || error_str.contains("MinContextSlotNotReached")
+                    || error_str.contains("-32016") {
+                    debug!("RPC not caught up to slot {:?}, will retry", min_context_slot);
+                    return Err(anyhow!("RPC not caught up to slot {:?}", min_context_slot));
+                }
+                return Err(anyhow!("Simulation failed: {}", err));
+            }
+        };
+        
+        // Record simulation duration
+        let duration = sim_start.elapsed();
+        self.metrics.submission_latency.record(duration.as_millis() as f64, &[]);
+        
+        // Check for simulation errors
+        if let Some(err) = sim_result.value.err {
+            let logs = sim_result.value.logs.clone().unwrap_or_default();
+            warn!("Simulation failed for thread {}: {:?}", thread_pubkey, err);
+            return Err(anyhow!("Simulation failed: {:?}, logs: {:?}", err, logs));
+        }
+        
+        // Verify thread account was returned
+        let _thread_account = sim_result.value.accounts
+            .and_then(|accounts| accounts.get(0).cloned().flatten())
+            .ok_or_else(|| anyhow!("No thread account in simulation response"))?;
+        
+        // Calculate optimized compute units with multiplier
+        let optimized_cu = if let Some(units_consumed) = sim_result.value.units_consumed {
+            let with_multiplier = (units_consumed as f64 * cu_multiplier) as u32;
+            let final_cu = cmp::min(with_multiplier, max_compute_units);
+            debug!(
+                "Simulation successful for thread {} - consumed: {}, final: {}",
+                thread_pubkey, units_consumed, final_cu
+            );
+            final_cu
+        } else {
+            warn!("No compute units consumed in simulation, using max: {}", max_compute_units);
+            max_compute_units
+        };
+        
+        let logs = sim_result.value.logs.unwrap_or_default();
+        Ok((optimized_cu, logs))
+    }
+
+    /// Build optimized transaction with proper compute budget
+    pub fn build_transaction_with_compute_budget(
+        &self,
+        instructions: Vec<Instruction>,
+        payer: &Pubkey,
+        _blockhash: Hash,
+        compute_units: Option<u32>,
+    ) -> Transaction {
+        let mut final_instructions = vec![];
+        
+        // Add compute budget instruction if specified
+        if let Some(cu) = compute_units {
+            final_instructions.push(
+                ComputeBudgetInstruction::set_compute_unit_limit(cu)
+            );
+        }
+        
+        // Add the actual instructions
+        final_instructions.extend(instructions);
+        
+        Transaction::new_with_payer(
+            &final_instructions,
+            Some(payer),
+        )
+    }
+
+    /// Check if transaction uses durable nonce
+    pub fn is_durable_transaction(&self, tx: &Transaction) -> bool {
+        tx.message.instructions.iter().any(|ix| {
+            ix.program_id_index < tx.message.account_keys.len() as u8
+                && tx.message.account_keys[ix.program_id_index as usize]
+                    == solana_sdk::system_program::ID
+                && !ix.data.is_empty()
+                && ix.data[0] == 4 // advance_nonce_account instruction discriminator
+        })
+    }
+
+    /// Get current submission mode
+    pub async fn get_mode(&self) -> SubmissionMode {
+        *self.submission_mode.read().await
+    }
+
+    /// Update submission mode
+    pub async fn set_mode(&self, mode: SubmissionMode) -> Result<()> {
+        if matches!(mode, SubmissionMode::Tpu | SubmissionMode::TpuWithFallback) {
+            let tpu_client_guard = self.tpu_client.read().await;
+            if tpu_client_guard.is_none() {
+                return Err(anyhow!("Cannot set TPU mode: TPU client not available"));
+            }
+        }
+
+        *self.submission_mode.write().await = mode;
+        info!("Submission mode updated to: {:?}", mode);
+        Ok(())
+    }
+
+    /// Check if TPU client is available
+    pub async fn has_tpu_client(&self) -> bool {
+        self.tpu_client.read().await.is_some()
+    }
+
+    // ===== Private helper methods =====
+
+    async fn wait_for_rpc_availability(&self, max_wait: Duration) -> Result<()> {
+        let start = Instant::now();
+        let mut delay = Duration::from_secs(1);
+        let max_delay = Duration::from_secs(30);
+        let mut last_log = Instant::now();
+
+        let rpc = self.cached_rpc.bypass();
+
+        info!(
+            "Waiting for RPC server to become available at {}...",
+            rpc.url()
+        );
+
+        loop {
+            match rpc.get_health().await {
+                Ok(_) => {
+                    info!(
+                        "RPC server is available (took {:.1}s)",
+                        start.elapsed().as_secs_f32()
+                    );
+                    return Ok(());
+                }
+                Err(e) => {
+                    debug!("RPC not ready yet: {}", e);
+                }
+            }
+
+            if start.elapsed() > max_wait {
+                return Err(anyhow!(
+                    "RPC server at {} failed to become available after {} seconds",
+                    rpc.url(),
+                    max_wait.as_secs()
+                ));
+            }
+
+            if last_log.elapsed() > Duration::from_secs(30) {
+                info!(
+                    "Still waiting for RPC server (elapsed: {:.0}s of max {}s)...",
+                    start.elapsed().as_secs(),
+                    max_wait.as_secs()
+                );
+                last_log = Instant::now();
+            }
+
+            tokio::time::sleep(delay).await;
+            delay = (delay * 2).min(max_delay);
+        }
+    }
+
+    async fn create_tpu_client(
+        &self,
+        config: &TpuConfig,
+    ) -> Result<TpuClient<QuicPool, QuicConnectionManager, QuicConfig>> {
+        let rpc = self.cached_rpc.bypass();
+        let rpc_url = rpc.url();
+        let ws_url = rpc_url
+            .replace("http://", "ws://")
+            .replace("https://", "wss://")
+            .replace("8899", "8900");
+
+        info!("Creating TPU client with websocket: {}", ws_url);
+
+        let tpu_client_config = TpuClientConfig {
+            fanout_slots: config.fanout_slots,
+            ..TpuClientConfig::default()
+        };
+
+        let mut attempts = 0;
+        let max_attempts = 3;
+
+        loop {
+            attempts += 1;
+
+            match TpuClient::new(
+                "antegen-submitter",
+                rpc.clone(),
+                &ws_url,
+                tpu_client_config.clone(),
+            )
+            .await
+            {
+                Ok(client) => {
+                    info!("TPU client created successfully on attempt {}", attempts);
+                    return Ok(client);
+                }
+                Err(e) => {
+                    if attempts >= max_attempts {
+                        return Err(anyhow!(
+                            "Failed to create TPU client after {} attempts: {}",
+                            max_attempts,
+                            e
+                        ));
+                    }
+
+                    let delay = Duration::from_secs(attempts as u64);
+                    warn!(
+                        "TPU client creation failed (attempt {}/{}): {}, retrying in {:?}...",
+                        attempts, max_attempts, e, delay
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        }
+    }
+
+    async fn submit_via_tpu(&self, tx: &Transaction) -> Result<Signature> {
+        let tpu_client_guard = self.tpu_client.read().await;
+        let tpu_client = tpu_client_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("TPU client not available"))?;
+
+        let signature = tx.signatures[0];
+        debug!("Submitting to TPU: {}", signature);
+
+        let wire_transaction = bincode::serialize(tx)?;
+
+        if !tpu_client.send_wire_transaction(wire_transaction).await {
+            return Err(anyhow!("Failed to send transaction to TPU"));
+        }
+
+        info!("Transaction {} sent to TPU (fire-and-forget)", signature);
+
+        if let Some(ref metrics) = Some(&self.metrics) {
+            metrics.transaction_submitted("tpu");
         }
 
         Ok(signature)
     }
 
-    /// Publish a durable transaction to NATS for potential replay
-    async fn publish_for_replay(&self, tx: &Transaction, signature: &Signature) -> Result<()> {
-        let nats_client = self
-            .nats_client
-            .as_ref()
-            .ok_or_else(|| anyhow!("No NATS client"))?;
+    async fn submit_via_rpc(&self, tx: &Transaction) -> Result<Signature> {
+        debug!("Submitting via RPC");
 
-        // Serialize transaction to base64
-        use base64::Engine;
-        let tx_bytes = bincode::serialize(tx)?;
-        let base64_tx = base64::engine::general_purpose::STANDARD.encode(&tx_bytes);
+        let rpc = self.cached_rpc.bypass();
 
-        // Extract thread pubkey from transaction (this is a simplification)
-        // In reality, we'd need to parse the thread execution instruction
-        let thread_pubkey = if let Some(account) = tx.message.account_keys.get(2) {
-            account.to_string()
-        } else {
-            "unknown".to_string()
-        };
+        match tokio::time::timeout(
+            Duration::from_secs(30),
+            rpc.send_and_confirm_transaction(tx),
+        )
+        .await
+        {
+            Ok(Ok(signature)) => {
+                info!("Transaction {} confirmed via RPC", signature);
 
-        // Create message
-        let message = DurableTransactionMessage::new(
-            base64_tx,
-            thread_pubkey,
-            signature.to_string(),
-            tx.message
-                .account_keys
-                .first()
-                .map(|k| k.to_string())
-                .unwrap_or_else(|| "unknown".to_string()),
-        );
-
-        // Publish to NATS
-        let subject = "antegen.durable_txs";
-        let payload = serde_json::to_vec(&message)?;
-
-        nats_client
-            .publish(subject, payload.into())
-            .await
-            .map_err(|e| anyhow!("Failed to publish to NATS: {}", e))?;
-
-        debug!(
-            "Published durable transaction {} to NATS for replay",
-            signature
-        );
-        Ok(())
-    }
-
-    /// Shutdown the service gracefully
-    pub async fn shutdown(&mut self) -> Result<()> {
-        info!("Shutting down submitter service");
-
-        // Stop replay consumer if running
-        if let Some(handle) = self.replay_handle.take() {
-            info!("Stopping replay consumer");
-            handle.abort();
-
-            // Wait a bit for cleanup
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        }
-
-        info!("Submitter service shutdown complete");
-        Ok(())
-    }
-
-    /// Set the thread receiver (for full mode)
-    pub fn set_thread_receiver(&mut self, receiver: Receiver<ExecutableThread>) -> Result<()> {
-        match &mut self.mode {
-            SubmitterMode::Full {
-                thread_receiver, ..
-            } => {
-                *thread_receiver = Some(receiver);
-                Ok(())
-            }
-            SubmitterMode::ReplayOnly => {
-                Err(anyhow!("Cannot set thread receiver in replay-only mode"))
-            }
-        }
-    }
-
-    /// Set the clock receiver (for full mode)
-    pub fn set_clock_receiver(&mut self, receiver: Receiver<ClockUpdate>) -> Result<()> {
-        match &self.mode {
-            SubmitterMode::Full { .. } => {
-                self.clock_receiver = Some(receiver);
-                Ok(())
-            }
-            SubmitterMode::ReplayOnly => {
-                Err(anyhow!("Cannot set clock receiver in replay-only mode"))
-            }
-        }
-    }
-
-    /// Set the account receiver (for full mode)
-    pub fn set_account_receiver(&mut self, receiver: Receiver<AccountUpdate>) -> Result<()> {
-        match &self.mode {
-            SubmitterMode::Full { .. } => {
-                self.account_receiver = Some(receiver);
-                Ok(())
-            }
-            SubmitterMode::ReplayOnly => {
-                Err(anyhow!("Cannot set account receiver in replay-only mode"))
-            }
-        }
-    }
-
-    /// Main run loop
-    pub async fn run(&mut self) -> Result<()> {
-        match &self.mode {
-            SubmitterMode::Full { .. } => {
-                info!("SUBMITTER: Starting in FULL mode with executor functionality");
-                self.run_full_mode().await
-            }
-            SubmitterMode::ReplayOnly => {
-                info!("SUBMITTER: Starting in REPLAY-ONLY mode");
-                self.run_replay_only().await
-            }
-        }
-    }
-
-    /// Run in full mode with executor functionality
-    async fn run_full_mode(&mut self) -> Result<()> {
-        // Initialize the submitter (wait for RPC and setup TPU)
-        info!("SUBMITTER: Initializing connection to RPC server...");
-        self.submitter.initialize().await?;
-        info!("SUBMITTER: Initialization complete, RPC and TPU connections established");
-
-        // Start replay consumer if enabled
-        if self.config.enable_replay {
-            self.start().await?;
-        }
-
-        // Get thread receiver
-        let mut thread_rx = match &mut self.mode {
-            SubmitterMode::Full {
-                thread_receiver, ..
-            } => thread_receiver
-                .take()
-                .ok_or_else(|| anyhow!("No thread receiver set for full mode"))?,
-            _ => unreachable!(),
-        };
-
-        // Get clock receiver
-        let mut clock_rx = self
-            .clock_receiver
-            .take()
-            .ok_or_else(|| anyhow!("No clock receiver set for full mode"))?;
-        
-        // Get account receiver
-        let mut account_rx = self
-            .account_receiver
-            .take()
-            .ok_or_else(|| anyhow!("No account receiver set for full mode"))?;
-
-        info!("SUBMITTER: Entering main loop, waiting for events...");
-
-        loop {
-            tokio::select! {
-                // Handle thread events
-                Some(executable) = thread_rx.recv() => {
-                    debug!(
-                        "SUBMITTER: Received executable thread {} from observer",
-                        executable.thread_pubkey
-                    );
-
-                    // Schedule thread in queue
-                    if let Some(queue) = &self.thread_queue {
-                        if let Err(e) = queue.schedule_thread(executable.thread_pubkey, executable.thread).await {
-                            error!("SUBMITTER: Failed to schedule thread: {}", e);
-                        }
-                    }
+                if let Some(ref metrics) = Some(&self.metrics) {
+                    metrics.transaction_submitted("rpc");
                 }
-
-                // Handle clock updates
-                Some(clock) = clock_rx.recv() => {
-                    // Check what has changed since last processing
-                    let timestamp_changed = clock.unix_timestamp != self.last_processed_timestamp;
-                    let slot_changed = clock.slot != self.last_processed_slot;
-                    let epoch_changed = clock.epoch != self.last_processed_epoch;
-
-                    // Skip if nothing has changed
-                    if !timestamp_changed && !slot_changed && !epoch_changed {
-                        debug!(
-                            "SUBMITTER: Skipping duplicate clock update - slot: {}, epoch: {}, timestamp: {}",
-                            clock.slot, clock.epoch, clock.unix_timestamp
-                        );
-                        continue;
-                    }
-
-                    debug!(
-                        "SUBMITTER: Clock update - slot: {} ({}), epoch: {} ({}), timestamp: {} ({})",
-                        clock.slot,
-                        if slot_changed { "changed" } else { "unchanged" },
-                        clock.epoch,
-                        if epoch_changed { "changed" } else { "unchanged" },
-                        clock.unix_timestamp,
-                        if timestamp_changed { "changed" } else { "unchanged" }
-                    );
-
-                    // Update last processed values
-                    self.last_processed_timestamp = clock.unix_timestamp;
-                    self.last_processed_slot = clock.slot;
-                    self.last_processed_epoch = clock.epoch;
-
-                    // Process only the queues for values that changed
-                    if let Err(e) = self.process_ready_threads_selective(
-                        clock.slot,
-                        clock.epoch,
-                        clock.unix_timestamp,
-                        timestamp_changed,
-                        slot_changed,
-                        epoch_changed
-                    ).await {
-                        error!("SUBMITTER: Failed to process ready threads on clock update: {}", e);
-                    }
-                }
-
-                // Handle account updates
-                Some(account_update) = account_rx.recv() => {
-                    debug!(
-                        "SUBMITTER: Received account update for {} at slot {}",
-                        account_update.pubkey, account_update.slot
-                    );
-                    
-                    // Update cache if the account is relevant
-                    self.cached_rpc_client
-                        .update_account_if_cached(&account_update.pubkey, account_update.account)
-                        .await;
-                }
-
-                // All channels closed
-                else => {
-                    error!("SUBMITTER: All channels disconnected");
-                    return Err(anyhow!("Observer channels disconnected"));
-                }
-            }
-        }
-    }
-
-    /// Run in replay-only mode
-    async fn run_replay_only(&mut self) -> Result<()> {
-        if !self.config.enable_replay {
-            return Err(anyhow!("Replay not enabled in configuration"));
-        }
-
-        // Initialize the submitter (wait for RPC, even in replay mode we need RPC to submit)
-        info!("SUBMITTER: Initializing connection to RPC server...");
-        self.submitter.initialize().await?;
-        info!("SUBMITTER: Initialization complete, RPC connection established");
-
-        // Start replay consumer
-        self.start().await?;
-
-        info!("SUBMITTER: Running in replay-only mode, processing NATS messages...");
-
-        // Keep the service running
-        loop {
-            tokio::time::sleep(Duration::from_secs(10)).await;
-
-            // Could add health checks or status reporting here
-            debug!("SUBMITTER: Replay service running...");
-        }
-    }
-
-    /// Process threads that are ready with specific clock values
-    async fn process_ready_threads_with_clock(
-        &self,
-        slot: u64,
-        epoch: u64,
-        timestamp: i64,
-    ) -> Result<()> {
-        let queue = self
-            .thread_queue
-            .as_ref()
-            .ok_or_else(|| anyhow!("No thread queue in full mode"))?;
-
-        // Clone what we need for the closure
-        let executor = self
-            .executor_logic
-            .as_ref()
-            .ok_or_else(|| anyhow!("No executor logic in full mode"))?
-            .clone();
-        let submitter = self.submitter.clone();
-        let simulate_before_submit = self.config.simulate_before_submit;
-        let compute_unit_multiplier = self.config.compute_unit_multiplier;
-        let max_compute_units = self.config.max_compute_units;
-
-        // Create the processing function that will be called for each ready thread
-        let process_fn = move |thread_pubkey: Pubkey, thread: Thread| {
-            let executor = executor.clone();
-            let submitter = submitter.clone();
-
-            async move {
-                debug!("SUBMITTER: Processing thread {}", thread_pubkey);
-
-                // Create ExecutableThread for compatibility
-                let executable = ExecutableThread {
-                    thread_pubkey,
-                    thread: thread.clone(),
-                    slot,
-                };
-
-                // Build transaction
-                let tx = if simulate_before_submit {
-                    debug!(
-                        "SUBMITTER: Simulating transaction for thread {}",
-                        thread_pubkey
-                    );
-                    executor
-                        .simulate_and_optimize_transaction(
-                            &executable,
-                            compute_unit_multiplier,
-                            max_compute_units,
-                        )
-                        .await?
-                } else {
-                    debug!(
-                        "SUBMITTER: Building transaction for thread {} without simulation",
-                        thread_pubkey
-                    );
-                    executor
-                        .build_execute_transaction(&executable, None)
-                        .await?
-                };
-
-                // Submit transaction
-                let submit_start = std::time::Instant::now();
-                let signature = match submitter.submit(&tx).await {
-                    Ok(sig) => {
-                        executor.metrics.transaction_submitted("success", None);
-                        executor
-                            .metrics
-                            .record_submission_duration(submit_start.elapsed().as_secs_f64());
-                        sig
-                    }
-                    Err(e) => {
-                        executor.metrics.transaction_submitted("failed", None);
-                        return Err(e);
-                    }
-                };
-
-                info!(
-                    "SUBMITTER: Successfully submitted thread {} with signature {}",
-                    thread_pubkey, signature
-                );
 
                 Ok(signature)
             }
-        };
+            Ok(Err(e)) => Err(e.into()),
+            Err(_) => Err(anyhow!("RPC submission timed out after 30 seconds")),
+        }
+    }
 
-        // Process all ready threads (spawns async tasks)
-        queue
-            .process_threads(slot, epoch, timestamp, process_fn)
+    async fn submit_batch_via_tpu(&self, txs: &[Transaction]) -> Result<Vec<Result<Signature>>> {
+        let tpu_client_guard = self.tpu_client.read().await;
+        let tpu_client = tpu_client_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("TPU client not available"))?;
+
+        let mut results = Vec::with_capacity(txs.len());
+        let mut wire_transactions = Vec::with_capacity(txs.len());
+
+        for tx in txs {
+            match bincode::serialize(tx) {
+                Ok(wire_tx) => {
+                    wire_transactions.push(wire_tx);
+                    results.push(Ok(tx.signatures[0]));
+                }
+                Err(e) => {
+                    results.push(Err(anyhow!("Failed to serialize transaction: {}", e)));
+                }
+            }
+        }
+
+        if !wire_transactions.is_empty() {
+            debug!(
+                "Batch submitting {} transactions to TPU",
+                wire_transactions.len()
+            );
+
+            let batch_sent = tpu_client
+                .try_send_wire_transaction_batch(wire_transactions)
+                .await
+                .is_ok();
+
+            if !batch_sent {
+                warn!("Failed to send transactions in batch to TPU");
+                for result in &mut results {
+                    if result.is_ok() {
+                        *result = Err(anyhow!("Batch TPU submission failed"));
+                    }
+                }
+            } else {
+                info!("Batch of {} transactions sent to TPU", txs.len());
+
+                if let Some(ref metrics) = Some(&self.metrics) {
+                    metrics.batch_submitted("tpu", txs.len());
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn submit_batch_via_rpc(&self, txs: &[Transaction]) -> Result<Vec<Result<Signature>>> {
+        debug!("Batch submitting {} transactions via RPC", txs.len());
+
+        use futures::stream::{self, StreamExt};
+
+        const MAX_CONCURRENT_RPC: usize = 10;
+
+        let results = stream::iter(txs.iter())
+            .map(|tx| async move { self.submit_via_rpc(tx).await })
+            .buffer_unordered(MAX_CONCURRENT_RPC)
+            .collect::<Vec<_>>()
             .await;
 
+        if let Some(ref metrics) = Some(&self.metrics) {
+            metrics.batch_submitted("rpc", txs.len());
+        }
+
+        Ok(results)
+    }
+
+    async fn start_replay_consumer(&self, nats_client: async_nats::Client) -> Result<()> {
+        info!("Starting replay consumer");
+
+        let mut consumer = ReplayConsumer::new(
+            nats_client,
+            Arc::new(self.clone()), // We'll need to implement Clone
+            self.cached_rpc.clone(),
+            self.config.replay_config.clone(),
+        )
+        .await?;
+
+        let handle = tokio::spawn(async move { consumer.run().await });
+
+        *self.replay_handle.write().await = Some(handle);
         Ok(())
     }
+}
 
-    /// Process threads selectively based on what clock values changed
-    async fn process_ready_threads_selective(
-        &self,
-        slot: u64,
-        epoch: u64,
-        timestamp: i64,
-        timestamp_changed: bool,
-        slot_changed: bool,
-        epoch_changed: bool,
-    ) -> Result<()> {
-        let queue = self
-            .thread_queue
-            .as_ref()
-            .ok_or_else(|| anyhow!("No thread queue in full mode"))?;
-
-        // Clone what we need for the closure
-        let executor = self
-            .executor_logic
-            .as_ref()
-            .ok_or_else(|| anyhow!("No executor logic in full mode"))?
-            .clone();
-        let submitter = self.submitter.clone();
-        let simulate_before_submit = self.config.simulate_before_submit;
-        let compute_unit_multiplier = self.config.compute_unit_multiplier;
-        let max_compute_units = self.config.max_compute_units;
-
-        // Create the processing function that will be called for each ready thread
-        let process_fn = move |thread_pubkey: Pubkey, thread: Thread| {
-            let executor = executor.clone();
-            let submitter = submitter.clone();
-
-            async move {
-                debug!("SUBMITTER: Processing thread {}", thread_pubkey);
-
-                // Create ExecutableThread for compatibility
-                let executable = ExecutableThread {
-                    thread_pubkey,
-                    thread: thread.clone(),
-                    slot,
-                };
-
-                // Build transaction
-                let tx = if simulate_before_submit {
-                    debug!(
-                        "SUBMITTER: Simulating transaction for thread {}",
-                        thread_pubkey
-                    );
-                    executor
-                        .simulate_and_optimize_transaction(
-                            &executable,
-                            compute_unit_multiplier,
-                            max_compute_units,
-                        )
-                        .await?
-                } else {
-                    debug!(
-                        "SUBMITTER: Building transaction for thread {} without simulation",
-                        thread_pubkey
-                    );
-                    executor
-                        .build_execute_transaction(&executable, None)
-                        .await?
-                };
-
-                // Submit transaction
-                let submit_start = std::time::Instant::now();
-                let signature = match submitter.submit(&tx).await {
-                    Ok(sig) => {
-                        executor.metrics.transaction_submitted("success", None);
-                        executor
-                            .metrics
-                            .record_submission_duration(submit_start.elapsed().as_secs_f64());
-                        sig
-                    }
-                    Err(e) => {
-                        executor.metrics.transaction_submitted("failed", None);
-                        return Err(e);
-                    }
-                };
-
-                info!(
-                    "SUBMITTER: Successfully submitted thread {} with signature {}",
-                    thread_pubkey, signature
-                );
-
-                Ok(signature)
-            }
-        };
-
-        // Only process the queues for values that actually changed
-        if timestamp_changed {
-            debug!(
-                "SUBMITTER: Checking time-triggered threads (timestamp: {})",
-                timestamp
-            );
-            queue
-                .process_time_queue(timestamp, process_fn.clone())
-                .await;
-        }
-
-        if slot_changed {
-            debug!(
-                "SUBMITTER: Checking slot-triggered threads (slot: {})",
-                slot
-            );
-            queue.process_slot_queue(slot, process_fn.clone()).await;
-        }
-
-        if epoch_changed {
-            debug!(
-                "SUBMITTER: Checking epoch-triggered threads (epoch: {})",
-                epoch
-            );
-            queue.process_epoch_queue(epoch, process_fn).await;
-        }
-
-        Ok(())
-    }
-
-    /// Update clock state (called by Observer via channel)
-    pub async fn update_clock(&self, slot: u64, epoch: u64, unix_timestamp: i64) {
-        // Note: We can't update executor's clock state with immutable self
-        // Instead, we'll pass the clock state directly to process_ready_threads
-        debug!(
-            "SUBMITTER: Clock update - slot: {}, epoch: {}, timestamp: {}",
-            slot, epoch, unix_timestamp
-        );
-
-        if self.executor_logic.is_some() {
-            // Process any threads that are now ready
-            if let Err(e) = self
-                .process_ready_threads_with_clock(slot, epoch, unix_timestamp)
-                .await
-            {
-                error!(
-                    "SUBMITTER: Failed to process ready threads on clock update: {}",
-                    e
-                );
-            }
-        }
-    }
-
-    /// Get service status
-    pub fn is_replay_enabled(&self) -> bool {
-        self.config.enable_replay
-    }
-
-    pub fn has_nats_connection(&self) -> bool {
-        self.nats_client.is_some()
-    }
-
-    pub fn mode_name(&self) -> &str {
-        match &self.mode {
-            SubmitterMode::Full { .. } => "Full",
-            SubmitterMode::ReplayOnly => "ReplayOnly",
+// Implement Clone for SubmissionService (needed for replay consumer)
+impl Clone for SubmissionService {
+    fn clone(&self) -> Self {
+        Self {
+            cached_rpc: self.cached_rpc.clone(),
+            tpu_client: RwLock::new(None), // Don't clone TPU client
+            submission_mode: RwLock::new(SubmissionMode::Rpc), // Reset to RPC
+            nats_client: self.nats_client.clone(),
+            replay_handle: RwLock::new(None), // Don't clone handle
+            metrics: self.metrics.clone(),
+            config: self.config.clone(),
         }
     }
 }

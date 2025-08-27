@@ -1,11 +1,10 @@
 use {
-    crate::{config::PluginConfig, events::AccountUpdateEvent, worker::PluginWorker},
+    crate::{config::PluginConfig, events::replica_account_to_account, worker::PluginWorker},
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         GeyserPlugin, GeyserPluginError, ReplicaAccountInfo, ReplicaAccountInfoVersions,
         Result as PluginResult, SlotStatus,
     },
     log::{debug, error, info},
-    solana_program::pubkey::Pubkey,
     std::{fmt::Debug, sync::Arc},
     tokio::runtime::{Builder, Runtime},
 };
@@ -185,35 +184,25 @@ impl GeyserPlugin for AntegenPlugin {
                 write_version: account_info.write_version,
             },
         };
-        let account_pubkey = Pubkey::try_from(account_info.pubkey).unwrap();
-        let event = AccountUpdateEvent::try_from(account_info);
+        
+        // Convert to standard account
+        let account_result = replica_account_to_account(account_info);
 
         // Process event on tokio task.
         inner.clone().spawn(|inner| async move {
             // Only process account updates if we're past the startup phase.
             if !is_startup {
-                // Account updates could be sent to worker if needed
-                // For now, we only care about specific events below
+                // Skip startup accounts
+                return Ok(());
             }
 
-            // Parse and process specific update events.
-            if let Ok(event) = event {
-                match event {
-                    AccountUpdateEvent::Clock { clock } => {
-                        // Get current block height
-                        let block_height = inner.block_height.load(std::sync::atomic::Ordering::SeqCst);
-                        // Send to worker for processing with block height
-                        inner.worker.send_clock_event(clock, slot, block_height).await.ok();
-                    }
-                    AccountUpdateEvent::Thread { thread } => {
-                        // Send to worker for processing
-                        inner
-                            .worker
-                            .send_thread_event(thread, account_pubkey, slot)
-                            .await
-                            .ok();
-                    }
-                }
+            // Forward all accounts to worker
+            if let Ok((pubkey, account)) = account_result {
+                inner
+                    .worker
+                    .send_account_event(pubkey, account, slot)
+                    .await
+                    .ok();
             }
             Ok(())
         });

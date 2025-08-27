@@ -1,42 +1,15 @@
 use crate::metrics::SubmitterMetrics;
-use anchor_lang::prelude::*;
-use antegen_thread_program::state::{FiberState, ThreadConfig};
+use anchor_lang::{prelude::*, Discriminator};
+use antegen_thread_program::state::{FiberState, Thread, ThreadConfig};
 use anyhow::Result;
 use log::debug;
 use moka::future::Cache;
-use solana_client::{
-    nonblocking::rpc_client::RpcClient,
-    rpc_config::RpcSimulateTransactionConfig,
-    rpc_response::{Response, RpcSimulateTransactionResult},
-};
-use solana_sdk::{
-    account::Account,
-    commitment_config::CommitmentConfig,
-    hash::Hash,
-    pubkey::Pubkey,
-    signature::Signature,
-    transaction::{Transaction, TransactionError},
-};
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::{account::Account, pubkey::Pubkey};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Configuration for the cached RPC client
-#[derive(Debug, Clone)]
-pub struct CacheConfig {
-    /// TTL for account cache in seconds  
-    pub account_ttl_secs: u64,
-    /// Maximum number of cached accounts
-    pub max_cached_accounts: u64,
-}
-
-impl Default for CacheConfig {
-    fn default() -> Self {
-        Self {
-            account_ttl_secs: 48 * 3600,  // 48 hours - safe with observer updates
-            max_cached_accounts: 10000,   // Increased limit with longer TTL
-        }
-    }
-}
+use crate::types::CacheConfig;
 
 
 /// RPC client wrapper with caching capabilities
@@ -78,12 +51,9 @@ impl CachedRpcClient {
         client
     }
 
-    /// Get latest blockhash (no caching for transaction uniqueness)
-    pub async fn get_latest_blockhash(&self) -> Result<Hash> {
-        if let Some(ref metrics) = self.metrics {
-            metrics.rpc_request("get_latest_blockhash");
-        }
-        Ok(self.inner.get_latest_blockhash().await?)
+    /// Get the inner RPC client for direct, non-cached operations
+    pub fn bypass(&self) -> &Arc<RpcClient> {
+        &self.inner
     }
 
     /// Get account with caching
@@ -110,7 +80,7 @@ impl CachedRpcClient {
         Ok(account)
     }
 
-    /// Get thread config with caching (uses regular account cache)
+    /// Get thread config with caching
     pub async fn get_thread_config(&self) -> Result<ThreadConfig> {
         let config_pubkey =
             Pubkey::find_program_address(&[b"thread_config"], &antegen_thread_program::ID).0;
@@ -122,7 +92,7 @@ impl CachedRpcClient {
         Ok(config)
     }
 
-    /// Get fiber state (uses account cache)
+    /// Get fiber state with caching
     pub async fn get_fiber_state(&self, fiber_pubkey: &Pubkey) -> Result<FiberState> {
         let account = self.get_account(fiber_pubkey).await?;
         FiberState::try_deserialize(&mut account.data.as_slice())
@@ -141,91 +111,49 @@ impl CachedRpcClient {
         debug!("Cleared all caches");
     }
 
-    /// Update account in cache
-    /// We update unconditionally to ensure fresh data is always available
-    pub async fn update_account_if_cached(&self, pubkey: &Pubkey, account: Account) {
-        // Update the account cache with fresh data from observer
-        self.account_cache.insert(*pubkey, account).await;
-        debug!("Updated account cache for {} from observer", pubkey);
+    /// Update account in cache selectively based on account type
+    /// - Always cache: Clock sysvar and Thread accounts
+    /// - Conditionally cache: Everything else only if already in cache
+    pub async fn update_account_selectively(&self, pubkey: &Pubkey, account: Account) {
+        // Always cache Clock sysvar
+        if *pubkey == solana_sdk::sysvar::clock::ID {
+            self.account_cache.insert(*pubkey, account).await;
+            debug!("Cached Clock sysvar update");
+            
+            if let Some(ref metrics) = self.metrics {
+                metrics.cache_hit("clock_update");
+            }
+            return;
+        }
         
-        if let Some(ref metrics) = self.metrics {
-            metrics.cache_hit("account_update");
+        // Check if it's a Thread account (not fiber/config)
+        if account.owner == antegen_thread_program::ID && account.data.len() > 8 {
+            let discriminator = &account.data[0..8];
+            
+            // Only cache Thread accounts, not FiberState or ThreadConfig
+            if discriminator == Thread::DISCRIMINATOR {
+                self.account_cache.insert(*pubkey, account).await;
+                debug!("Cached Thread account {}", pubkey);
+                
+                if let Some(ref metrics) = self.metrics {
+                    metrics.cache_hit("thread_update");
+                }
+                return;
+            }
         }
-    }
-
-    // ===== Pass-through methods (no caching) =====
-
-    /// Send transaction (no caching)
-    pub async fn send_transaction(&self, transaction: &Transaction) -> Result<Signature> {
-        if let Some(ref metrics) = self.metrics {
-            metrics.rpc_request("send_transaction");
+        
+        // For all other accounts (including fibers/configs), only update if already cached
+        // This preserves accounts that were fetched on-demand
+        if self.account_cache.contains_key(pubkey) {
+            self.account_cache.insert(*pubkey, account).await;
+            debug!("Updated existing cached account {}", pubkey);
+            
+            if let Some(ref metrics) = self.metrics {
+                metrics.cache_hit("account_update");
+            }
+        } else {
+            debug!("Skipping cache for uncached account {}", pubkey);
         }
-        Ok(self.inner.send_transaction(transaction).await?)
-    }
-
-    /// Send and confirm transaction (no caching)
-    pub async fn send_and_confirm_transaction(
-        &self,
-        transaction: &Transaction,
-    ) -> Result<Signature> {
-        if let Some(ref metrics) = self.metrics {
-            metrics.rpc_request("send_and_confirm_transaction");
-        }
-        Ok(self.inner.send_and_confirm_transaction(transaction).await?)
-    }
-
-    /// Simulate transaction (no caching)
-    pub async fn simulate_transaction_with_config(
-        &self,
-        transaction: &Transaction,
-        config: RpcSimulateTransactionConfig,
-    ) -> Result<Response<RpcSimulateTransactionResult>> {
-        if let Some(ref metrics) = self.metrics {
-            metrics.rpc_request("simulate_transaction");
-        }
-        Ok(self
-            .inner
-            .simulate_transaction_with_config(transaction, config)
-            .await?)
-    }
-
-    /// Get signature status (no caching)  
-    pub async fn get_signature_status(
-        &self,
-        signature: &Signature,
-    ) -> Result<Option<Result<(), TransactionError>>> {
-        if let Some(ref metrics) = self.metrics {
-            metrics.rpc_request("get_signature_status");
-        }
-        Ok(self.inner.get_signature_status(signature).await?)
-    }
-
-    /// Get signature status with commitment (no caching)
-    pub async fn get_signature_status_with_commitment(
-        &self,
-        signature: &Signature,
-        commitment: CommitmentConfig,
-    ) -> Result<Option<Result<(), TransactionError>>> {
-        if let Some(ref metrics) = self.metrics {
-            metrics.rpc_request("get_signature_status");
-        }
-        Ok(self
-            .inner
-            .get_signature_status_with_commitment(signature, commitment)
-            .await?)
-    }
-
-    /// Get health (no caching)
-    pub async fn get_health(&self) -> Result<()> {
-        Ok(self.inner.get_health().await?)
-    }
-
-    /// Get slot with commitment (no caching)
-    pub async fn get_slot_with_commitment(&self, commitment: CommitmentConfig) -> Result<u64> {
-        if let Some(ref metrics) = self.metrics {
-            metrics.rpc_request("get_slot");
-        }
-        Ok(self.inner.get_slot_with_commitment(commitment).await?)
     }
 
     /// Get multiple accounts with caching
@@ -266,10 +194,5 @@ impl CachedRpcClient {
         }
 
         Ok(results)
-    }
-
-    /// Get the underlying RPC URL
-    pub fn url(&self) -> String {
-        self.inner.url().to_string()
     }
 }

@@ -1,9 +1,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use crossbeam::channel::{Receiver, TryRecvError};
 use log::{debug, error, info};
 use solana_program::pubkey::Pubkey;
 use std::collections::HashSet;
-use tokio::sync::mpsc::Receiver;
 
 use crate::events::{EventSource, ObservedEvent};
 
@@ -52,43 +52,22 @@ impl EventSource for GeyserEventSource {
             Ok(event) => {
                 // Log the received event
                 match &event {
-                    ObservedEvent::ThreadExecutable { thread_pubkey, slot, .. } => {
-                        info!("GEYSER_SOURCE: Received ThreadExecutable event from Geyser plugin: thread={}, slot={}", thread_pubkey, slot);
-                    }
-                    ObservedEvent::ThreadUpdate { thread_pubkey, slot, .. } => {
-                        info!("GEYSER_SOURCE: Received ThreadUpdate event from Geyser plugin: thread={}, slot={}", thread_pubkey, slot);
-                    }
-                    ObservedEvent::ClockUpdate { slot, epoch, unix_timestamp } => {
-                        info!("GEYSER_SOURCE: Received ClockUpdate event from Geyser plugin: slot={}, epoch={}, timestamp={}", slot, epoch, unix_timestamp);
-                        self.current_slot = *slot;
-                    }
-                    ObservedEvent::AccountUpdate { pubkey, slot, .. } => {
-                        debug!("Received AccountUpdate event from Geyser: account={}, slot={}", pubkey, slot);
-                    }
-                }
-
-                // Filter thread events based on subscriptions
-                match &event {
-                    ObservedEvent::ThreadExecutable { thread_pubkey, .. }
-                    | ObservedEvent::ThreadUpdate { thread_pubkey, .. } => {
-                        if !self.subscribed_threads.is_empty()
-                            && !self.subscribed_threads.contains(thread_pubkey)
-                        {
-                            info!("GEYSER_SOURCE: Filtering out unsubscribed thread: {} (subscribed threads: {})", thread_pubkey, self.subscribed_threads.len());
-                            return Ok(None);
+                    ObservedEvent::Account { pubkey, slot, .. } => {
+                        debug!("GEYSER_SOURCE: Received account update: pubkey={}, slot={}", pubkey, slot);
+                        // Update current slot if it's newer
+                        if *slot > self.current_slot {
+                            self.current_slot = *slot;
                         }
-                        info!("GEYSER_SOURCE: Thread {} passed subscription filter, forwarding to observer", thread_pubkey);
                     }
-                    _ => {}
                 }
 
                 Ok(Some(event))
             }
-            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+            Err(TryRecvError::Empty) => {
                 // No events available right now
                 Ok(None)
             }
-            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+            Err(TryRecvError::Disconnected) => {
                 error!("GEYSER_SOURCE: Channel disconnected!");
                 Err(anyhow::anyhow!("Geyser channel disconnected"))
             }

@@ -9,34 +9,39 @@ license = { workspace = true }
 edition = { workspace = true }
 readme = { workspace = true }
 keywords = { workspace = true }
-description = "Antegen transaction submitter with TPU client support and optional replay feature"
+description = "Antegen transaction submission library with RPC, TPU, and replay support"
 
 [dependencies]
-solana-account-decoder = { workspace = true }
+# Solana dependencies
 solana-sdk = { workspace = true }
 solana-client = { workspace = true }
-solana-connection-cache = { workspace = true }
 solana-quic-client = { workspace = true }
-solana-tpu-client = { workspace = true }
-solana-program = { workspace = true }
+solana-rpc-client-nonce-utils = { workspace = true }
+solana-account-decoder = { workspace = true }
 
-tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
-log = { workspace = true }
-anyhow = { workspace = true }
-async-trait = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-async-nats = { workspace = true }
-futures = { workspace = true }
-chrono = { workspace = true }
-base64 = { workspace = true }
-bincode = { workspace = true }
-antegen-sdk = { workspace = true }
-antegen-thread-program = { workspace = true }
+# Anchor for account deserialization
 anchor-lang = { workspace = true }
-uuid = { version = "1.0", features = ["v4"] }
-dashmap = "5.5"
+antegen-thread-program = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Utilities
+anyhow = { workspace = true }
+log = { workspace = true }
+bincode = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+futures = { workspace = true }
+
+# Caching
 moka = { workspace = true }
 
-# Metrics (always enabled)
+# NATS for replay functionality
+async-nats = { workspace = true }
+
+# Metrics
 opentelemetry = { workspace = true }
+opentelemetry-prometheus = { workspace = true }
+prometheus = { workspace = true }

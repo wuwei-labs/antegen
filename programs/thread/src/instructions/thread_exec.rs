@@ -132,6 +132,7 @@ pub fn thread_exec(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<(
     // Update fiber tracking
     fiber.last_executed = clock.unix_timestamp;
     fiber.execution_count += 1;
+    thread.exec_count += 1; // Increment thread-level execution counter
     thread.exec_index = (thread.exec_index + 1) % thread.fibers.len() as u8;
 
     Ok(())

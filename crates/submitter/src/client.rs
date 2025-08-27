@@ -5,76 +5,40 @@ use solana_client::{
     tpu_client::TpuClientConfig,
 };
 use solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool};
-use solana_sdk::{
-    signature::Signature, transaction::Transaction,
-};
+use solana_sdk::{signature::Signature, transaction::Transaction};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-/// Submission mode for transactions
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SubmissionMode {
-    /// Use TPU client for submission
-    Tpu,
-    /// Use RPC for submission  
-    Rpc,
-    /// Try TPU first, fallback to RPC
-    TpuWithFallback,
-}
-
-impl Default for SubmissionMode {
-    fn default() -> Self {
-        SubmissionMode::TpuWithFallback
-    }
-}
-
-/// Configuration for TPU client
-#[derive(Debug, Clone)]
-pub struct TpuConfig {
-    /// Number of leaders to send to in parallel
-    pub fanout_slots: u64,
-    /// Connection pool size
-    pub connection_pool_size: usize,
-    /// Submission mode
-    pub mode: SubmissionMode,
-}
-
-impl Default for TpuConfig {
-    fn default() -> Self {
-        Self {
-            fanout_slots: 12, // Send to 12 leader slots
-            connection_pool_size: 4,
-            mode: SubmissionMode::TpuWithFallback,
-        }
-    }
-}
+use crate::types::{SubmissionMode, TpuConfig};
 
 /// Wait for RPC server to become available
-async fn wait_for_rpc_availability(
-    rpc_client: &RpcClient,
-    max_wait: Duration,
-) -> Result<()> {
+async fn wait_for_rpc_availability(rpc_client: &RpcClient, max_wait: Duration) -> Result<()> {
     let start = Instant::now();
     let mut delay = Duration::from_secs(1);
     let max_delay = Duration::from_secs(30);
     let mut last_log = Instant::now();
-    
-    info!("Waiting for RPC server to become available at {}...", rpc_client.url());
-    
+
+    info!(
+        "Waiting for RPC server to become available at {}...",
+        rpc_client.url()
+    );
+
     loop {
         // Try to connect to RPC
         match rpc_client.get_health().await {
             Ok(_) => {
-                info!("RPC server is available (took {:.1}s)", 
-                    start.elapsed().as_secs_f32());
+                info!(
+                    "RPC server is available (took {:.1}s)",
+                    start.elapsed().as_secs_f32()
+                );
                 return Ok(());
             }
             Err(e) => {
                 debug!("RPC not ready yet: {}", e);
             }
         }
-        
+
         // Check timeout
         if start.elapsed() > max_wait {
             return Err(anyhow!(
@@ -83,15 +47,17 @@ async fn wait_for_rpc_availability(
                 max_wait.as_secs()
             ));
         }
-        
+
         // Log progress every 30 seconds
         if last_log.elapsed() > Duration::from_secs(30) {
-            info!("Still waiting for RPC server (elapsed: {:.0}s of max {}s)...",
+            info!(
+                "Still waiting for RPC server (elapsed: {:.0}s of max {}s)...",
                 start.elapsed().as_secs(),
-                max_wait.as_secs());
+                max_wait.as_secs()
+            );
             last_log = Instant::now();
         }
-        
+
         // Wait with exponential backoff
         tokio::time::sleep(delay).await;
         delay = (delay * 2).min(max_delay);
@@ -110,11 +76,11 @@ impl TransactionSubmitter {
     /// Create a new transaction submitter (non-blocking, requires initialize() to be called)
     pub async fn new(rpc_client: Arc<RpcClient>, tpu_config: Option<TpuConfig>) -> Result<Self> {
         let config = tpu_config.unwrap_or_default();
-        
+
         // Don't wait for RPC or create TPU client here - defer to initialize()
         // Start in RPC-only mode until we verify connectivity
         let submission_mode = RwLock::new(SubmissionMode::Rpc);
-        
+
         Ok(Self {
             rpc_client,
             tpu_client: RwLock::new(None),
@@ -122,15 +88,16 @@ impl TransactionSubmitter {
             submission_mode,
         })
     }
-    
+
     /// Complete initialization by waiting for RPC and creating TPU client
     pub async fn initialize(&self) -> Result<()> {
         // Wait for RPC to be available (max 5 minutes)
-        wait_for_rpc_availability(&self.rpc_client, Duration::from_secs(300)).await
+        wait_for_rpc_availability(&self.rpc_client, Duration::from_secs(300))
+            .await
             .context("Failed to connect to RPC server")?;
-        
+
         info!("RPC connection established, completing initialization");
-        
+
         // Now try to create TPU client if configured
         if matches!(
             self.config.mode,
@@ -151,7 +118,7 @@ impl TransactionSubmitter {
             info!("TPU disabled by configuration, using RPC only");
             *self.submission_mode.write().await = self.config.mode;
         }
-        
+
         Ok(())
     }
 
@@ -174,33 +141,40 @@ impl TransactionSubmitter {
             fanout_slots: config.fanout_slots,
             ..TpuClientConfig::default()
         };
-        
+
         // Try up to 3 times with delays
         let mut attempts = 0;
         let max_attempts = 3;
-        
+
         loop {
             attempts += 1;
-            
+
             match TpuClient::new(
                 "antegen-submitter",
                 rpc_client.clone(),
                 &ws_url,
-                tpu_client_config.clone()
-            ).await {
+                tpu_client_config.clone(),
+            )
+            .await
+            {
                 Ok(client) => {
                     info!("TPU client created successfully on attempt {}", attempts);
                     return Ok(client);
                 }
                 Err(e) => {
                     if attempts >= max_attempts {
-                        return Err(anyhow!("Failed to create TPU client after {} attempts: {}", 
-                            max_attempts, e));
+                        return Err(anyhow!(
+                            "Failed to create TPU client after {} attempts: {}",
+                            max_attempts,
+                            e
+                        ));
                     }
-                    
+
                     let delay = Duration::from_secs(attempts as u64);
-                    warn!("TPU client creation failed (attempt {}/{}): {}, retrying in {:?}...",
-                        attempts, max_attempts, e, delay);
+                    warn!(
+                        "TPU client creation failed (attempt {}/{}): {}, retrying in {:?}...",
+                        attempts, max_attempts, e, delay
+                    );
                     tokio::time::sleep(delay).await;
                 }
             }
@@ -232,20 +206,16 @@ impl TransactionSubmitter {
             }
         }
     }
-    
+
     /// Submit multiple transactions in batch
     pub async fn submit_batch(&self, txs: &[Transaction]) -> Result<Vec<Result<Signature>>> {
         if txs.is_empty() {
             return Ok(Vec::new());
         }
-        
+
         let mode = *self.submission_mode.read().await;
-        info!(
-            "Batch submitting {} transactions via {:?}",
-            txs.len(),
-            mode
-        );
-        
+        info!("Batch submitting {} transactions via {:?}", txs.len(), mode);
+
         match mode {
             SubmissionMode::Tpu => self.submit_batch_via_tpu(txs).await,
             SubmissionMode::Rpc => self.submit_batch_via_rpc(txs).await,
@@ -254,7 +224,10 @@ impl TransactionSubmitter {
                 match self.submit_batch_via_tpu(txs).await {
                     Ok(results) => Ok(results),
                     Err(tpu_err) => {
-                        warn!("Batch TPU submission failed: {}, falling back to RPC", tpu_err);
+                        warn!(
+                            "Batch TPU submission failed: {}, falling back to RPC",
+                            tpu_err
+                        );
                         self.submit_batch_via_rpc(txs).await
                     }
                 }
@@ -275,10 +248,7 @@ impl TransactionSubmitter {
         // Send transaction to TPU leaders (single send, client handles fanout)
         let wire_transaction = bincode::serialize(tx)?;
 
-        if !tpu_client
-            .send_wire_transaction(wire_transaction)
-            .await
-        {
+        if !tpu_client.send_wire_transaction(wire_transaction).await {
             return Err(anyhow!("Failed to send transaction to TPU"));
         }
 
@@ -287,33 +257,35 @@ impl TransactionSubmitter {
     }
 
     /// Submit transaction via RPC with timeout protection
-    async fn submit_via_rpc(&self, tx: &Transaction) -> Result<Signature> {
+    pub async fn submit_via_rpc(&self, tx: &Transaction) -> Result<Signature> {
         debug!("Submitting via RPC");
 
         // Use send_and_confirm with 30 second timeout to prevent indefinite blocking
         match tokio::time::timeout(
             Duration::from_secs(30),
-            self.rpc_client.send_and_confirm_transaction(tx)
-        ).await {
+            self.rpc_client.send_and_confirm_transaction(tx),
+        )
+        .await
+        {
             Ok(Ok(signature)) => {
                 info!("Transaction {} confirmed via RPC", signature);
                 Ok(signature)
             }
             Ok(Err(e)) => Err(e.into()),
-            Err(_) => Err(anyhow!("RPC submission timed out after 30 seconds"))
+            Err(_) => Err(anyhow!("RPC submission timed out after 30 seconds")),
         }
     }
-    
+
     /// Submit batch of transactions via TPU (fire-and-forget)
     async fn submit_batch_via_tpu(&self, txs: &[Transaction]) -> Result<Vec<Result<Signature>>> {
         let tpu_client_guard = self.tpu_client.read().await;
         let tpu_client = tpu_client_guard
             .as_ref()
             .ok_or_else(|| anyhow!("TPU client not available"))?;
-        
+
         let mut results = Vec::with_capacity(txs.len());
         let mut wire_transactions = Vec::with_capacity(txs.len());
-        
+
         // Serialize all transactions
         for tx in txs {
             match bincode::serialize(tx) {
@@ -326,16 +298,19 @@ impl TransactionSubmitter {
                 }
             }
         }
-        
+
         if !wire_transactions.is_empty() {
-            debug!("Batch submitting {} transactions to TPU", wire_transactions.len());
-            
+            debug!(
+                "Batch submitting {} transactions to TPU",
+                wire_transactions.len()
+            );
+
             // Send all transactions in batch (fire-and-forget, single attempt)
             let batch_sent = tpu_client
                 .try_send_wire_transaction_batch(wire_transactions)
                 .await
                 .is_ok();
-            
+
             if !batch_sent {
                 warn!("Failed to send transactions in batch to TPU");
                 // Mark all as failed
@@ -345,30 +320,31 @@ impl TransactionSubmitter {
                     }
                 }
             } else {
-                info!("Batch of {} transactions sent to TPU (fire-and-forget)", txs.len());
+                info!(
+                    "Batch of {} transactions sent to TPU (fire-and-forget)",
+                    txs.len()
+                );
             }
         }
-        
+
         Ok(results)
     }
-    
+
     /// Submit batch of transactions via RPC
     async fn submit_batch_via_rpc(&self, txs: &[Transaction]) -> Result<Vec<Result<Signature>>> {
         debug!("Batch submitting {} transactions via RPC", txs.len());
-        
+
         // RPC doesn't have native batch support, so we submit in parallel with controlled concurrency
         use futures::stream::{self, StreamExt};
-        
+
         const MAX_CONCURRENT_RPC: usize = 10;
-        
+
         let results = stream::iter(txs.iter())
-            .map(|tx| async move {
-                self.submit_via_rpc(tx).await
-            })
+            .map(|tx| async move { self.submit_via_rpc(tx).await })
             .buffer_unordered(MAX_CONCURRENT_RPC)
             .collect::<Vec<_>>()
             .await;
-        
+
         Ok(results)
     }
 

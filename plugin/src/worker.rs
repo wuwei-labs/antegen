@@ -1,34 +1,33 @@
-use antegen_observer::{EventSource, ObservedEvent, ObserverService};
-use antegen_submitter::SubmitterService;
-use antegen_thread_program::state::Thread;
+use antegen_adapter::{EventSource, ObservedEvent, AdapterService};
+use antegen_processor::ProcessorService;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use log::{debug, error, info};
-use solana_program::{clock::Clock, pubkey::Pubkey};
+use solana_program::pubkey::Pubkey;
 use solana_sdk::{
     signature::read_keypair_file,
     signer::{keypair::Keypair, Signer},
 };
 use std::fmt::Debug;
 use tokio::runtime::Handle;
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use crossbeam::channel::{bounded, Receiver, Sender, TryRecvError};
 
-/// Worker that runs observer and submitter services in the plugin
+/// Worker that runs adapter and processor services in the plugin
 pub struct PluginWorker {
-    /// Channel to send ObservedEvents from Geyser to Observer
+    /// Channel to send ObservedEvents from Geyser to Adapter
     event_sender: Sender<ObservedEvent>,
-    /// Observer service (owned until start is called)
-    observer_service: Option<ObserverService>,
-    /// Submitter service for transaction submission and executor logic
-    submitter_service: Option<SubmitterService>,
+    /// Adapter service (owned until start is called)
+    adapter_service: Option<AdapterService>,
+    /// Processor service for thread processing and execution
+    processor_service: Option<ProcessorService>,
 }
 
 impl Debug for PluginWorker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PluginWorker")
             .field("event_sender", &"Sender<ObservedEvent>")
-            .field("observer_service", &self.observer_service.is_some())
-            .field("submitter_service", &self.submitter_service.is_some())
+            .field("adapter_service", &self.adapter_service.is_some())
+            .field("processor_service", &self.processor_service.is_some())
             .finish()
     }
 }
@@ -48,7 +47,7 @@ impl PluginWorker {
         info!("WS URL: {}", ws_url);
 
         // Channel 1: Geyser -> Observer (observed events)
-        let (observed_tx, observed_rx) = mpsc::channel(1000);
+        let (observed_tx, observed_rx) = bounded(1000);
         info!("Created observed event channel (Geyser->Observer) with capacity 1000");
 
         // Create Geyser data source that receives observed events
@@ -65,10 +64,10 @@ impl PluginWorker {
         );
 
         // Create observer service with event source
-        // This returns the service and receivers for executable threads, clock updates, and account updates
-        let (observer_service, thread_receiver, clock_receiver, account_receiver) =
+        // This returns the service and single account receiver
+        let (observer_service, account_receiver) =
             ObserverService::new(event_source, observer_pubkey);
-        info!("Created observer service with thread, clock, and account event channels");
+        info!("Created observer service with single account channel");
 
         // Create submitter service with integrated executor functionality
         // Start with defaults to ensure all fields are present
@@ -88,11 +87,9 @@ impl PluginWorker {
         
         let mut submitter_service = SubmitterService::new(submitter_config).await?;
         
-        // Set all receivers from observer
-        submitter_service.set_thread_receiver(thread_receiver)?;
-        submitter_service.set_clock_receiver(clock_receiver)?;
+        // Set single account receiver from observer
         submitter_service.set_account_receiver(account_receiver)?;
-        info!("Created submitter service with integrated executor and all channels");
+        info!("Created submitter service with integrated executor and account channel");
 
         info!("=== PluginWorker initialization complete ===");
 
@@ -147,83 +144,8 @@ impl PluginWorker {
         Ok(())
     }
 
-    /// Send thread event from Geyser to observer
-    pub async fn send_thread_event(
-        &self,
-        thread: Thread,
-        thread_pubkey: Pubkey,
-        slot: u64,
-    ) -> Result<()> {
-        info!(
-            "GEYSER->OBSERVER: Thread event for {} at slot {}",
-            thread_pubkey, slot
-        );
-
-        // Skip paused threads
-        if thread.paused {
-            info!(
-                "GEYSER->OBSERVER: Thread {} is paused, skipping",
-                thread_pubkey
-            );
-            return Ok(());
-        }
-
-        // Send thread as executable to observer
-        let event = ObservedEvent::ThreadExecutable {
-            thread_pubkey,
-            thread: thread.clone(),
-            slot,
-        };
-
-        info!(
-            "GEYSER->OBSERVER: Sending ThreadExecutable event for {}",
-            thread_pubkey
-        );
-        match self.event_sender.send(event).await {
-            Ok(()) => {
-                info!(
-                    "GEYSER->OBSERVER: Successfully sent thread event for {}",
-                    thread_pubkey
-                );
-            }
-            Err(e) => {
-                error!("GEYSER->OBSERVER: Failed to send thread event: {}", e);
-                return Err(anyhow!("Failed to send thread event: {}", e));
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Send clock update to observer (which will forward to executor)
-    pub async fn send_clock_event(
-        &self,
-        clock: Clock,
-        slot: u64,
-        _block_height: u64,
-    ) -> Result<()> {
-        // Send clock update as an ObservedEvent
-        let event = ObservedEvent::ClockUpdate {
-            slot,
-            epoch: clock.epoch,
-            unix_timestamp: clock.unix_timestamp,
-        };
-
-        debug!("GEYSER->OBSERVER: Sending clock event slot={}", slot);
-        match self.event_sender.send(event).await {
-            Ok(()) => {
-                debug!("GEYSER->OBSERVER: Clock event sent successfully");
-            }
-            Err(e) => {
-                error!("GEYSER->OBSERVER: Failed to send clock event: {}", e);
-                return Err(anyhow!("Failed to send clock event: {}", e));
-            }
-        }
-
-        Ok(())
-    }
-
     /// Send account update from Geyser to observer
+    /// All accounts are forwarded - observer just passes them through to submitter
     pub async fn send_account_event(
         &self,
         pubkey: Pubkey,
@@ -237,13 +159,15 @@ impl PluginWorker {
             account.data.len()
         );
 
-        let event = ObservedEvent::AccountUpdate {
+        let event = ObservedEvent::Account {
             pubkey,
             account,
             slot,
         };
 
-        self.event_sender.send(event).await?;
+        // Use crossbeam's synchronous send
+        self.event_sender.send(event)
+            .map_err(|e| anyhow!("Failed to send account event: {}", e))?;
         Ok(())
     }
 }
@@ -285,8 +209,8 @@ impl EventSource for GeyserPluginEventSource {
         // Non-blocking receive
         match self.receiver.try_recv() {
             Ok(event) => Ok(Some(event)),
-            Err(mpsc::error::TryRecvError::Empty) => Ok(None),
-            Err(mpsc::error::TryRecvError::Disconnected) => {
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => {
                 error!("Event channel disconnected");
                 self.running = false;
                 Ok(None)

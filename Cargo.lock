@@ -391,6 +391,32 @@ name = "antegen"
 version = "3.0.0"
 
 [[package]]
+name = "antegen-adapter"
+version = "3.0.0"
+dependencies = [
+ "anchor-lang",
+ "antegen-processor",
+ "antegen-thread-program",
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "bincode",
+ "chrono",
+ "crossbeam",
+ "hex",
+ "log 0.4.25",
+ "opentelemetry",
+ "serde",
+ "serde_json",
+ "solana-account-decoder",
+ "solana-client",
+ "solana-program",
+ "solana-rpc-client-nonce-utils",
+ "solana-sdk",
+ "tokio",
+]
+
+[[package]]
 name = "antegen-cli"
 version = "3.0.0"
 dependencies = [
@@ -428,38 +454,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "antegen-observer"
-version = "3.0.0"
-dependencies = [
- "anchor-lang",
- "antegen-submitter",
- "antegen-thread-program",
- "anyhow",
- "async-nats",
- "async-trait",
- "bincode",
- "chrono",
- "hex",
- "log 0.4.25",
- "opentelemetry",
- "serde",
- "serde_json",
- "solana-account-decoder",
- "solana-client",
- "solana-program",
- "solana-rpc-client-nonce-utils",
- "solana-sdk",
- "tokio",
-]
-
-[[package]]
 name = "antegen-plugin"
 version = "3.0.0"
 dependencies = [
  "agave-geyser-plugin-interface",
  "anchor-lang",
- "antegen-observer",
- "antegen-submitter",
+ "antegen-adapter",
+ "antegen-processor",
  "antegen-thread-program",
  "anyhow",
  "async-nats",
@@ -472,6 +473,7 @@ dependencies = [
  "cargo_metadata",
  "cargo_toml 0.15.3",
  "chrono",
+ "crossbeam",
  "futures",
  "hyper 0.14.32",
  "lazy_static",
@@ -504,6 +506,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "antegen-processor"
+version = "3.0.0"
+dependencies = [
+ "anchor-lang",
+ "antegen-sdk",
+ "antegen-submitter",
+ "antegen-thread-program",
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "base64 0.22.1",
+ "bincode",
+ "chrono",
+ "crossbeam",
+ "dashmap",
+ "futures",
+ "log 0.4.25",
+ "opentelemetry",
+ "serde",
+ "serde_json",
+ "solana-account-decoder",
+ "solana-client",
+ "solana-connection-cache",
+ "solana-program",
+ "solana-quic-client",
+ "solana-rpc-client-nonce-utils",
+ "solana-sdk",
+ "solana-tpu-client",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "antegen-sdk"
 version = "3.0.0"
 dependencies = [
@@ -520,30 +555,25 @@ name = "antegen-submitter"
 version = "3.0.0"
 dependencies = [
  "anchor-lang",
- "antegen-sdk",
  "antegen-thread-program",
  "anyhow",
  "async-nats",
- "async-trait",
  "base64 0.22.1",
  "bincode",
- "chrono",
- "dashmap",
  "futures",
  "log 0.4.25",
  "moka",
  "opentelemetry",
+ "opentelemetry-prometheus",
+ "prometheus",
  "serde",
  "serde_json",
  "solana-account-decoder",
  "solana-client",
- "solana-connection-cache",
- "solana-program",
  "solana-quic-client",
+ "solana-rpc-client-nonce-utils",
  "solana-sdk",
- "solana-tpu-client",
  "tokio",
- "uuid",
 ]
 
 [[package]]
@@ -1579,6 +1609,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1137cd7e7fc0fb5d3c5a8678be38ec56e819125d8d7907411fe24ccb943faca8"
+dependencies = [
+ "crossbeam-channel",
+ "crossbeam-deque",
+ "crossbeam-epoch",
+ "crossbeam-queue",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1602,6 +1645,15 @@ name = "crossbeam-epoch"
 version = "0.9.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-queue"
+version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f58bbc28f91df819d0aa2a2c00cd19754769c2fad90579b3592b1c9ba7a3115"
 dependencies = [
  "crossbeam-utils",
 ]

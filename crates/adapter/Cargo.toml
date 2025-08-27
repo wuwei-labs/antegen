@@ -1,5 +1,5 @@
 [package]
-name = "antegen-observer"
+name = "antegen-adapter"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -9,7 +9,7 @@ license = { workspace = true }
 edition = { workspace = true }
 readme = { workspace = true }
 keywords = { workspace = true }
-description = "Antegen observer for monitoring and claiming thread execution"
+description = "Antegen adapter - integration layer for Geyser, Carbon, and other data sources"
 
 [dependencies]
 antegen-thread-program = { workspace = true, features = ["cpi"] }
@@ -31,9 +31,10 @@ chrono = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 hex = { workspace = true }
 bincode = { workspace = true }
+crossbeam = { workspace = true }
 
-# Import types from submitter
-antegen-submitter = { workspace = true }
+# Import types from processor
+antegen-processor = { workspace = true }
 
 # Metrics (always enabled)
 opentelemetry = { workspace = true }

@@ -4,27 +4,28 @@ use anyhow::{Result, anyhow};
 use log::{info, warn, error, debug};
 use futures::StreamExt;
 use async_nats::jetstream::consumer::PullConsumer;
-use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{signature::Signature, transaction::Transaction};
 
-use crate::{TransactionSubmitter, SubmitterConfig, DurableTransactionMessage};
+use crate::{CachedRpcClient, DurableTransactionMessage};
+use crate::service::SubmissionService;
+use crate::types::ReplayConfig;
 
 /// Consumes durable transactions from NATS and replays them if needed
 pub struct ReplayConsumer {
     nats_client: async_nats::Client,
     consumer: PullConsumer,
-    submitter: Arc<TransactionSubmitter>,
-    rpc_client: Arc<RpcClient>,
-    config: SubmitterConfig,
+    submission_service: Arc<SubmissionService>,
+    cached_rpc: Arc<CachedRpcClient>,
+    config: ReplayConfig,
 }
 
 impl ReplayConsumer {
     /// Create a new replay consumer
     pub async fn new(
         nats_client: async_nats::Client,
-        submitter: Arc<TransactionSubmitter>,
-        rpc_client: Arc<RpcClient>,
-        config: SubmitterConfig,
+        submission_service: Arc<SubmissionService>,
+        cached_rpc: Arc<CachedRpcClient>,
+        config: ReplayConfig,
     ) -> Result<Self> {
         let jetstream = async_nats::jetstream::new(nats_client.clone());
         
@@ -60,8 +61,8 @@ impl ReplayConsumer {
         Ok(Self {
             nats_client,
             consumer,
-            submitter,
-            rpc_client,
+            submission_service,
+            cached_rpc,
             config,
         })
     }
@@ -177,7 +178,7 @@ impl ReplayConsumer {
     async fn check_transaction_status(&self, signature_str: &str) -> Result<bool> {
         let signature = signature_str.parse::<Signature>()?;
         
-        match self.rpc_client.get_signature_status(&signature).await? {
+        match self.cached_rpc.bypass().get_signature_status(&signature).await? {
             Some(status) => Ok(status.is_ok()),
             None => Ok(false), // Transaction not found
         }
@@ -194,7 +195,7 @@ impl ReplayConsumer {
               tx_msg.original_signature, tx_msg.thread_pubkey);
         
         // Submit the transaction
-        self.submitter.submit(&tx).await
+        self.submission_service.submit(&tx).await
     }
     
     /// Republish transaction for retry

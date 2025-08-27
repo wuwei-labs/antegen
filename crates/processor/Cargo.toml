@@ -1,0 +1,46 @@
+[package]
+name = "antegen-processor"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+documentation = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+readme = { workspace = true }
+keywords = { workspace = true }
+description = "Antegen thread processor - core business logic for thread execution"
+
+[dependencies]
+solana-account-decoder = { workspace = true }
+solana-sdk = { workspace = true }
+solana-client = { workspace = true }
+solana-connection-cache = { workspace = true }
+solana-quic-client = { workspace = true }
+solana-tpu-client = { workspace = true }
+solana-program = { workspace = true }
+solana-rpc-client-nonce-utils = { workspace = true }
+
+tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
+log = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+async-nats = { workspace = true }
+futures = { workspace = true }
+chrono = { workspace = true }
+base64 = { workspace = true }
+bincode = { workspace = true }
+antegen-sdk = { workspace = true }
+antegen-thread-program = { workspace = true }
+anchor-lang = { workspace = true }
+uuid = { workspace = true }
+dashmap = { workspace = true }
+crossbeam = { workspace = true }
+
+# Use the new submitter library
+antegen-submitter = { workspace = true }
+
+# Metrics (always enabled)
+opentelemetry = { workspace = true }
