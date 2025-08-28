@@ -1,3 +1,4 @@
+pub mod builder;
 pub mod clock;
 pub mod executor;
 pub mod metrics;
@@ -13,7 +14,5 @@ pub use types::{
     AccountUpdate, ClockUpdate, ExecutableThread, ProcessorConfig, ThreadExecutionData,
 };
 
-// Re-export from submitter library for convenience
-pub use antegen_submitter::{
-    CachedRpcClient, DurableTransactionMessage, ReplayConsumer, TransactionSubmitter,
-};
+// Re-export TransactionMessage from SDK
+pub use antegen_sdk::types::TransactionMessage;

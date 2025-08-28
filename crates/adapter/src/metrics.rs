@@ -5,6 +5,7 @@ use opentelemetry::{
     KeyValue,
 };
 
+#[derive(Clone)]
 pub struct AdapterMetrics {
     // Thread tracking
     pub threads_active: UpDownCounter<i64>,
@@ -60,6 +61,42 @@ impl Default for AdapterMetrics {
 }
 
 impl AdapterMetrics {
+    /// Create metrics with a specific meter
+    pub fn new(meter: &opentelemetry::metrics::Meter) -> Self {
+        Self {
+            threads_active: meter
+                .i64_up_down_counter("adapter.threads_active")
+                .with_description("Number of threads currently active")
+                .init(),
+                
+            threads_triggered: meter
+                .u64_counter("adapter.threads_triggered")
+                .with_description("Total number of threads triggered for execution")
+                .init(),
+                
+            trigger_checks: meter
+                .u64_counter("adapter.trigger_checks")
+                .with_description("Total number of trigger evaluations performed")
+                .init(),
+                
+            triggers_ready: meter
+                .u64_counter("adapter.triggers_ready")
+                .with_description("Total number of triggers that were ready to execute")
+                .init(),
+                
+            account_updates: meter
+                .u64_counter("adapter.account_updates")
+                .with_description("Total number of account updates processed")
+                .init(),
+                
+            trigger_evaluation_duration: meter
+                .f64_histogram("adapter.trigger_evaluation_duration")
+                .with_unit(Unit::new("s"))
+                .with_description("Time taken to evaluate if a thread trigger is ready")
+                .init(),
+        }
+    }
+    
     /// Update the number of active threads
     pub fn set_active_threads(&self, count: u64) {
         // Set to new value by calculating delta

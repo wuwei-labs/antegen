@@ -4,11 +4,12 @@ use solana_sdk::{
     commitment_config::CommitmentConfig,
     hash::Hash,
     instruction::Instruction,
+    message::{v0, VersionedMessage},
     program_error::ProgramError,
     pubkey::Pubkey,
     signature::{Keypair, Signature, Signer},
     signers::Signers,
-    transaction::Transaction,
+    transaction::VersionedTransaction,
 };
 use std::{
     fmt::Debug,
@@ -73,9 +74,31 @@ impl Client {
         &self,
         ixs: &[Instruction],
         signers: &T,
-    ) -> ClientResult<Transaction> {
-        let mut tx = Transaction::new_with_payer(ixs, Some(&self.payer_pubkey()));
-        tx.sign(signers, self.latest_blockhash()?);
+    ) -> ClientResult<VersionedTransaction> {
+        let blockhash = self.latest_blockhash()?;
+        
+        // Build v0 message
+        let message = v0::Message::try_compile(
+            &self.payer_pubkey(),
+            ixs,
+            &[], // No lookup tables for now
+            blockhash,
+        ).map_err(|e| ClientError::Client(
+            client_error::ClientError::from(
+                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+            )
+        ))?;
+        
+        // Create versioned transaction
+        let tx = VersionedTransaction::try_new(
+            VersionedMessage::V0(message),
+            signers,
+        ).map_err(|e| ClientError::Client(
+            client_error::ClientError::from(
+                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+            )
+        ))?;
+        
         Ok(tx)
     }
 }

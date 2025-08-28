@@ -14,7 +14,7 @@ pub const ANTEGEN_RELEASE_URL: &str = "https://github.com/wuwei-labs/antegen/rel
 pub const ANTEGEN_DEPS: &[&str] = &[
     "antegen_network_program.so",
     "antegen_thread_program.so",
-    "libantegen_plugin.so",
+    "libantegen_client_geyser.so",
 ];
 pub const SOLANA_RELEASE_BASE_URL: &str = "https://github.com/anza-xyz/agave/releases/download";
 pub const SOLANA_DEPS: &[&str] = &["solana-test-validator"];
@@ -108,10 +108,10 @@ impl CliConfig {
 
     pub fn geyser_lib(&self) -> String {
         if self.dev == true && env::consts::OS.to_lowercase().contains("mac") {
-            self.active_runtime("libantegen_plugin.dylib")
+            self.active_runtime("libantegen_client_geyser.dylib")
         } else {
             // in the release process, we always rename dylib to so anyway
-            self.active_runtime("libantegen_plugin.so")
+            self.active_runtime("libantegen_client_geyser.so")
         }
     }
 }

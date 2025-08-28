@@ -12,19 +12,21 @@ use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
     hash::Hash,
     instruction::Instruction,
+    message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Signature,
     signature::Keypair,
-    transaction::Transaction,
+    transaction::{Transaction, VersionedTransaction},
 };
 use std::{cmp, sync::Arc, time::{Duration, Instant}};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
 use crate::{
-    CacheConfig, CachedRpcClient, DurableTransactionMessage, ReplayConfig, ReplayConsumer,
-    SubmissionMode, SubmitterMetrics, TpuConfig,
+    ReplayConfig, ReplayConsumer, SubmissionMode, SubmitterMetrics, TpuConfig,
 };
+use antegen_sdk::rpc::{CachedRpcClient, CacheConfig};
+use antegen_sdk::types::{DurableTransactionMessage, TransactionMessage};
 
 /// Configuration for the submission service
 #[derive(Debug, Clone)]
@@ -190,12 +192,15 @@ impl SubmissionService {
         // Build transaction with optional simulation
         let tx = if simulate && thread_pubkey.is_some() {
             // Simulate and optimize
-            let initial_tx = Transaction::new_signed_with_payer(
-                &instructions,
-                Some(payer),
+            let initial_tx = VersionedTransaction::try_new(
+                VersionedMessage::V0(v0::Message::try_compile(
+                    payer,
+                    &instructions,
+                    &[], // No lookup tables for now
+                    blockhash,
+                )?),
                 signers,
-                blockhash,
-            );
+            )?;
             
             info!("SUBMITTER: Starting simulation at {}",
                 std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
@@ -215,32 +220,38 @@ impl SubmissionService {
             ];
             final_instructions.extend(instructions);
             
-            Transaction::new_signed_with_payer(
-                &final_instructions,
-                Some(payer),
+            VersionedTransaction::try_new(
+                VersionedMessage::V0(v0::Message::try_compile(
+                    payer,
+                    &final_instructions,
+                    &[], // No lookup tables for now
+                    blockhash,
+                )?),
                 signers,
-                blockhash,
-            )
+            )?
         } else {
             // No simulation, just build transaction
-            Transaction::new_signed_with_payer(
-                &instructions,
-                Some(payer),
+            VersionedTransaction::try_new(
+                VersionedMessage::V0(v0::Message::try_compile(
+                    payer,
+                    &instructions,
+                    &[], // No lookup tables for now
+                    blockhash,
+                )?),
                 signers,
-                blockhash,
-            )
+            )?
         };
         
         self.submit_transaction(&tx).await
     }
     
-    /// Submit a pre-built transaction (legacy method)
-    pub async fn submit(&self, tx: &Transaction) -> Result<Signature> {
+    /// Submit a pre-built transaction
+    pub async fn submit(&self, tx: &VersionedTransaction) -> Result<Signature> {
         self.submit_transaction(tx).await
     }
     
     /// Internal submit method
-    async fn submit_transaction(&self, tx: &Transaction) -> Result<Signature> {
+    async fn submit_transaction(&self, tx: &VersionedTransaction) -> Result<Signature> {
         let mode = *self.submission_mode.read().await;
 
         // Submit transaction
@@ -255,11 +266,22 @@ impl SubmissionService {
                     self.submit_via_rpc(tx).await
                 }
             },
+            SubmissionMode::Both => {
+                // Try both TPU and RPC in parallel
+                let tpu_future = self.submit_via_tpu(tx);
+                let rpc_future = self.submit_via_rpc(tx);
+                
+                // Return whichever succeeds first
+                tokio::select! {
+                    tpu_result = tpu_future => tpu_result,
+                    rpc_result = rpc_future => rpc_result,
+                }
+            }
         }
     }
 
     /// Submit multiple transactions in batch
-    pub async fn submit_batch(&self, txs: &[Transaction]) -> Result<Vec<Result<Signature>>> {
+    pub async fn submit_batch(&self, txs: &[VersionedTransaction]) -> Result<Vec<Result<Signature>>> {
         if txs.is_empty() {
             return Ok(Vec::new());
         }
@@ -280,13 +302,23 @@ impl SubmissionService {
                     self.submit_batch_via_rpc(txs).await
                 }
             },
+            SubmissionMode::Both => {
+                // Try both in parallel and return the first to succeed
+                let tpu_future = self.submit_batch_via_tpu(txs);
+                let rpc_future = self.submit_batch_via_rpc(txs);
+                
+                tokio::select! {
+                    tpu_result = tpu_future => tpu_result,
+                    rpc_result = rpc_future => rpc_result,
+                }
+            }
         }
     }
 
     /// Submit with retries
     pub async fn submit_with_retries(
         &self,
-        tx: &Transaction,
+        tx: &VersionedTransaction,
         max_retries: u32,
     ) -> Result<Signature> {
         let mut attempts = 0;
@@ -354,7 +386,7 @@ impl SubmissionService {
     /// Simulate transaction and optimize compute units
     pub async fn simulate_and_optimize_transaction(
         &self,
-        tx: &Transaction,
+        tx: &VersionedTransaction,
         thread_pubkey: &Pubkey,
         cu_multiplier: f64,
         max_compute_units: u32,
@@ -470,7 +502,7 @@ impl SubmissionService {
 
     /// Update submission mode
     pub async fn set_mode(&self, mode: SubmissionMode) -> Result<()> {
-        if matches!(mode, SubmissionMode::Tpu | SubmissionMode::TpuWithFallback) {
+        if matches!(mode, SubmissionMode::Tpu | SubmissionMode::TpuWithFallback | SubmissionMode::Both) {
             let tpu_client_guard = self.tpu_client.read().await;
             if tpu_client_guard.is_none() {
                 return Err(anyhow!("Cannot set TPU mode: TPU client not available"));
@@ -584,7 +616,7 @@ impl SubmissionService {
         }
     }
 
-    async fn submit_via_tpu(&self, tx: &Transaction) -> Result<Signature> {
+    async fn submit_via_tpu(&self, tx: &VersionedTransaction) -> Result<Signature> {
         let tpu_client_guard = self.tpu_client.read().await;
         let tpu_client = tpu_client_guard
             .as_ref()
@@ -608,7 +640,7 @@ impl SubmissionService {
         Ok(signature)
     }
 
-    async fn submit_via_rpc(&self, tx: &Transaction) -> Result<Signature> {
+    async fn submit_via_rpc(&self, tx: &VersionedTransaction) -> Result<Signature> {
         // Submit via RPC
 
         let rpc = self.cached_rpc.bypass();
@@ -633,7 +665,7 @@ impl SubmissionService {
         }
     }
 
-    async fn submit_batch_via_tpu(&self, txs: &[Transaction]) -> Result<Vec<Result<Signature>>> {
+    async fn submit_batch_via_tpu(&self, txs: &[VersionedTransaction]) -> Result<Vec<Result<Signature>>> {
         let tpu_client_guard = self.tpu_client.read().await;
         let tpu_client = tpu_client_guard
             .as_ref()
@@ -684,7 +716,7 @@ impl SubmissionService {
         Ok(results)
     }
 
-    async fn submit_batch_via_rpc(&self, txs: &[Transaction]) -> Result<Vec<Result<Signature>>> {
+    async fn submit_batch_via_rpc(&self, txs: &[VersionedTransaction]) -> Result<Vec<Result<Signature>>> {
         // Batch submit via RPC
 
         use futures::stream::{self, StreamExt};
@@ -718,6 +750,61 @@ impl SubmissionService {
         let handle = tokio::spawn(async move { consumer.run().await });
 
         *self.replay_handle.write().await = Some(handle);
+        Ok(())
+    }
+    
+    /// Process incoming transaction messages from processor
+    pub async fn process_transaction_messages(
+        &self,
+        receiver: crossbeam::channel::Receiver<TransactionMessage>,
+        executor_keypair: Arc<solana_sdk::signature::Keypair>,
+    ) -> Result<()> {
+        use solana_sdk::signer::Signer;
+        
+        info!("Starting transaction message processor");
+        
+        loop {
+            match receiver.recv() {
+                Ok(msg) => {
+                    // Get recent blockhash
+                    let blockhash = self.cached_rpc.bypass()
+                        .get_latest_blockhash()
+                        .await?;
+                    
+                    // Build transaction with compute budget if specified
+                    let tx = self.build_transaction_with_compute_budget(
+                        msg.instructions,
+                        &executor_keypair.pubkey(),
+                        blockhash,
+                        msg.compute_units,
+                    );
+                    
+                    // Sign transaction
+                    let mut signed_tx = tx;
+                    signed_tx.sign(&[executor_keypair.as_ref()], blockhash);
+                    
+                    // Convert to versioned transaction
+                    let versioned_tx = VersionedTransaction::from(signed_tx);
+                    
+                    // Submit transaction
+                    match self.submit_transaction(&versioned_tx).await {
+                        Ok(sig) => {
+                            info!("Submitted transaction {} for thread {}", sig, msg.thread_pubkey);
+                            self.metrics.transaction_submitted("processor");
+                        }
+                        Err(e) => {
+                            warn!("Failed to submit transaction for thread {}: {}", msg.thread_pubkey, e);
+                            self.metrics.transaction_failed();
+                        }
+                    }
+                }
+                Err(crossbeam::channel::RecvError) => {
+                    info!("Transaction receiver channel closed, shutting down processor");
+                    break;
+                }
+            }
+        }
+        
         Ok(())
     }
 }

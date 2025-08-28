@@ -101,6 +101,74 @@ impl Default for ProcessorMetrics {
 }
 
 impl ProcessorMetrics {
+    /// Create metrics with a specific meter
+    pub fn new(meter: &opentelemetry::metrics::Meter) -> Self {
+        Self {
+            transactions: meter
+                .u64_counter("processor.transactions")
+                .with_description("Total number of transactions by status")
+                .init(),
+
+            transaction_retries: meter
+                .u64_counter("processor.transaction_retries")
+                .with_description("Total number of transaction retry attempts")
+                .init(),
+
+            simulations: meter
+                .u64_counter("processor.simulations")
+                .with_description("Total number of transaction simulations by result")
+                .init(),
+
+            simulation_duration: meter
+                .f64_histogram("processor.simulation_duration")
+                .with_unit(Unit::new("s"))
+                .with_description("Duration of transaction simulations")
+                .init(),
+
+            compute_units_used: meter
+                .u64_histogram("processor.compute_units_used")
+                .with_description("Compute units used per transaction")
+                .init(),
+
+            submission_duration: meter
+                .f64_histogram("processor.submission_duration")
+                .with_unit(Unit::new("s"))
+                .with_description("Duration of transaction submissions")
+                .init(),
+
+            thread_execution_time: meter
+                .f64_histogram("processor.thread_execution_time")
+                .with_unit(Unit::new("s"))
+                .with_description("Time to execute a thread")
+                .init(),
+
+            queue_size: meter
+                .i64_up_down_counter("processor.queue_size")
+                .with_description("Current number of threads in queue")
+                .init(),
+
+            rpc_requests: meter
+                .u64_counter("processor.rpc_requests")
+                .with_description("Total RPC requests")
+                .init(),
+
+            tpu_submissions: meter
+                .u64_counter("processor.tpu_submissions")
+                .with_description("Total TPU submissions")
+                .init(),
+                
+            cache_hits: meter
+                .u64_counter("processor.cache_hits")
+                .with_description("Total cache hits by cache type")
+                .init(),
+                
+            cache_misses: meter
+                .u64_counter("processor.cache_misses")
+                .with_description("Total cache misses by cache type")
+                .init(),
+        }
+    }
+    
     /// Record a transaction submission
     pub fn transaction_submitted(&self, status: &str, trigger_type: Option<&str>) {
         let mut labels = vec![KeyValue::new("status", status.to_string())];

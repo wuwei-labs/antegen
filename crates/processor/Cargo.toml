@@ -39,8 +39,6 @@ uuid = { workspace = true }
 dashmap = { workspace = true }
 crossbeam = { workspace = true }
 
-# Use the new submitter library
-antegen-submitter = { workspace = true }
 
 # Metrics (always enabled)
 opentelemetry = { workspace = true }

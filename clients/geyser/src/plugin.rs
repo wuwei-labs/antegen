@@ -1,5 +1,9 @@
 use {
-    crate::{config::PluginConfig, events::replica_account_to_account, worker::PluginWorker},
+    crate::{
+        config::PluginConfig, 
+        events::replica_account_to_account, 
+        worker_builder::PluginWorkerBuilder,
+    },
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         GeyserPlugin, GeyserPluginError, ReplicaAccountInfo, ReplicaAccountInfoVersions,
         Result as PluginResult, SlotStatus,
@@ -22,10 +26,11 @@ impl Debug for AntegenPlugin {
     }
 }
 
+
 #[derive(Debug)]
 pub struct Inner {
     pub config: PluginConfig,
-    pub worker: Arc<PluginWorker>,
+    pub worker: Arc<PluginWorkerBuilder>,
     pub runtime: Arc<Runtime>,
     pub block_height: Arc<std::sync::atomic::AtomicU64>,
 }
@@ -72,7 +77,9 @@ impl GeyserPlugin for AntegenPlugin {
             debug!("No metrics HTTP configuration provided");
         }
 
-        // Initialize worker mode (builder + submitter)
+        // Initialize worker using builder pattern
+        info!("Initializing worker with builder pattern");
+        
         let mut worker = runtime.block_on(async {
             let rpc_url = config
                 .rpc_url
@@ -91,7 +98,7 @@ impl GeyserPlugin for AntegenPlugin {
             let nats_url = config.nats_url.clone();
             let replay_delay_ms = config.replay_delay_ms;
             
-            match PluginWorker::new(
+            match PluginWorkerBuilder::new(
                 rpc_url, 
                 ws_url, 
                 keypair_path, 
@@ -109,7 +116,7 @@ impl GeyserPlugin for AntegenPlugin {
             }
         })?;
 
-        // Start the worker services (spawns builder and submitter)
+        // Start the worker services
         worker.start(runtime.handle().clone())
             .map_err(|e| GeyserPluginError::Custom(format!("Failed to start worker services: {}", e).into()))?;
         

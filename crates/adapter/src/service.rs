@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use crossbeam::channel::{bounded, Sender};
 use log::error;
 use solana_program::pubkey::Pubkey;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::events::{CarbonEventSource, EventSource, GeyserEventSource, ObservedEvent};
@@ -52,6 +53,24 @@ impl AdapterService {
             },
             account_rx,
         )
+    }
+    
+    /// Create adapter service with custom sender (for builder)
+    pub fn new_with_source(
+        event_source: Box<dyn EventSource>,
+        _adapter_pubkey: Pubkey,
+        account_sender: Sender<AccountUpdate>,
+    ) -> Self {
+        Self {
+            event_source,
+            account_sender,
+            metrics: AdapterMetrics::default(),
+        }
+    }
+    
+    /// Set metrics collector
+    pub fn set_metrics(&mut self, metrics: Arc<AdapterMetrics>) {
+        self.metrics = (*metrics).clone();
     }
 
     /// Main service loop

@@ -1,13 +1,13 @@
-use anchor_lang::AccountDeserialize;
 use anyhow::{anyhow, Result};
-use crossbeam::channel::Receiver;
-use log::{error, info, warn};
+use crossbeam::channel::{Receiver, Sender};
+use solana_client::nonblocking::rpc_client::RpcClient;
+use log::{debug, error, info, warn};
 use solana_sdk::{
     pubkey::Pubkey,
     signature::{read_keypair_file, Keypair},
 };
 use std::sync::Arc;
-use std::time::Duration;
+use antegen_sdk::rpc::{CachedRpcClient, CacheConfig};
 
 use crate::clock::SharedClock;
 use crate::parser::{classify_account, AccountType};
@@ -15,19 +15,18 @@ use crate::executor::ExecutorLogic;
 use crate::queue::{ThreadQueue, TriggerType};
 use crate::types::{ProcessorConfig, AccountUpdate, ExecutableThread};
 use crate::metrics::ProcessorMetrics;
-use antegen_submitter::{
-    DurableTransactionMessage, SubmissionService, SubmissionConfig, SubmitterMetrics
-};
+use antegen_sdk::types::TransactionMessage;
 
 /// Main processor service that handles thread processing
 pub struct ProcessorService {
     /// Configuration
+    #[allow(dead_code)]
     config: ProcessorConfig,
     /// Shared blockchain clock
-    #[allow(dead_code)]
     clock: SharedClock,
-    /// Unified submission service for all RPC/TPU operations
-    submission_service: Arc<SubmissionService>,
+    /// RPC client for reading blockchain state
+    #[allow(dead_code)]
+    rpc_client: Arc<RpcClient>,
     /// Executor logic for building transactions
     executor_logic: Arc<ExecutorLogic>,
     /// Thread queue for scheduling
@@ -40,6 +39,10 @@ pub struct ProcessorService {
     executor_keypair: Arc<Keypair>,
     /// Account update receiver from adapter
     account_receiver: Receiver<AccountUpdate>,
+    /// Transaction sender to submitter
+    transaction_sender: Sender<TransactionMessage>,
+    /// Cached RPC client
+    cached_rpc: Arc<CachedRpcClient>,
 }
 
 impl ProcessorService {
@@ -47,6 +50,7 @@ impl ProcessorService {
     pub async fn new(
         config: ProcessorConfig,
         account_receiver: Receiver<AccountUpdate>,
+        transaction_sender: Sender<TransactionMessage>,
     ) -> Result<Self> {
         // Load executor keypair
         let executor_keypair = Arc::new(
@@ -54,36 +58,25 @@ impl ProcessorService {
                 .map_err(|e| anyhow!("Failed to read executor keypair: {}", e))?
         );
         
-        // Create metrics instances
+        // Create metrics
         let processor_metrics = Arc::new(ProcessorMetrics::default());
-        let submitter_metrics = Arc::new(SubmitterMetrics::default());
         
-        // Create submission configuration
-        let submission_config = SubmissionConfig {
-            cache_config: config.cache_config.clone(),
-            tpu_config: config.tpu_config.clone(),
-            replay_config: config.replay_config.clone(),
-        };
-        
-        // Create unified submission service
-        let submission_service = Arc::new(
-            SubmissionService::new(
-                config.rpc_url.clone(),
-                submission_config,
-                Some(submitter_metrics.clone()),
-            ).await?
-        );
-        
-        // Skip initialization here - will be done when service starts running
-        // submission_service.initialize().await?;
+        // Create RPC client for reading state
+        let rpc_client = Arc::new(RpcClient::new(config.rpc_url.clone()));
         
         // Create shared blockchain clock
         let clock = SharedClock::new();
         
+        // Create a cached RPC client wrapper for the executor
+        let cached_rpc = Arc::new(CachedRpcClient::new(
+            RpcClient::new(config.rpc_url.clone()), 
+            CacheConfig::default()
+        ));
+        
         // Create executor logic with shared clock
         let executor_logic = Arc::new(ExecutorLogic::new(
             executor_keypair.clone(),
-            submission_service.cached_rpc().clone(),
+            cached_rpc.clone(),
             clock.clone(),
             config.forgo_executor_commission,
             processor_metrics.clone(),
@@ -101,12 +94,14 @@ impl ProcessorService {
         Ok(Self {
             config,
             clock,
-            submission_service,
+            rpc_client,
             executor_logic,
             thread_queue,
             metrics: processor_metrics,
             executor_keypair,
             account_receiver,
+            transaction_sender,
+            cached_rpc,
         })
     }
     
@@ -125,10 +120,6 @@ impl ProcessorService {
     
     /// Main processing loop (event-driven)
     pub async fn run(self) -> Result<()> {
-        // Initialize submission service (wait for RPC and create TPU client)
-        self.submission_service.initialize().await?;
-        
-        // Note: Replay consumer is started automatically by SubmissionService during initialization
         
         // Start the continuous event-driven thread processor
         let processor_fn = self.create_processor_fn();
@@ -156,23 +147,23 @@ impl ProcessorService {
         
         // Shutdown
         info!("Processor service shutting down");
-        // ThreadQueue and SubmissionService will be dropped and cleaned up automatically
+        // ThreadQueue will be dropped and cleaned up automatically
         
         Ok(())
     }
     
     /// Process a single account update
     async fn process_account_update(&self, account_update: AccountUpdate) -> Result<()> {
-        // Update cache with the account
-        self.submission_service.cached_rpc().update_account_selectively(
-            &account_update.pubkey,
-            account_update.account.clone(),
-        ).await;
-        
         // Classify and process the account
         match classify_account(&account_update.pubkey, &account_update.account) {
             AccountType::Clock { unix_timestamp, slot, epoch } => {
                 info!("PROCESSOR: Clock update - slot: {}, epoch: {}, time: {}", slot, epoch, unix_timestamp);
+                
+                // Always update cache with Clock
+                self.cached_rpc.update_account_selectively(
+                    &account_update.pubkey,
+                    account_update.account.clone(),
+                ).await;
                 
                 // Update executor clock
                 self.executor_logic.update_clock(slot, epoch, unix_timestamp).await;
@@ -184,7 +175,22 @@ impl ProcessorService {
                 ).await;
             }
             AccountType::Thread(thread) => {
-                // Thread already logged in parser
+                // Check if we should process this Thread update based on exec_count
+                if !self.cached_rpc
+                    .should_process_thread(&account_update.pubkey, &thread)
+                    .await 
+                {
+                    // Already processed this exec_count - skip
+                    debug!("Skipping duplicate Thread update for {} (exec_count: {})", 
+                        account_update.pubkey, thread.exec_count);
+                    return Ok(());
+                }
+                
+                // Update cache with the new Thread account
+                self.cached_rpc.update_account_selectively(
+                    &account_update.pubkey,
+                    account_update.account.clone(),
+                ).await;
                 
                 // Schedule thread for processing
                 if let Err(e) = self.thread_queue.schedule_thread(
@@ -195,8 +201,11 @@ impl ProcessorService {
                 }
             }
             AccountType::Other => {
-                // Other accounts are already cached if needed
-                // Other account
+                // Update cache for other accounts (if already cached)
+                self.cached_rpc.update_account_selectively(
+                    &account_update.pubkey,
+                    account_update.account.clone(),
+                ).await;
             }
         }
         
@@ -205,19 +214,16 @@ impl ProcessorService {
     
     /// Create the processor function for thread execution
     fn create_processor_fn(&self) -> impl Fn(Pubkey, antegen_thread_program::state::Thread) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<solana_sdk::signature::Signature>> + Send>> + Send + Sync + Clone {
-        let submission_service = self.submission_service.clone();
         let executor = self.executor_logic.clone();
-        let executor_keypair = self.executor_keypair.clone();
-        let max_retries = self.config.tpu_max_retries as usize;
+        let transaction_sender = self.transaction_sender.clone();
         
         move |thread_pubkey, thread| {
-            let submission_service = submission_service.clone();
             let executor = executor.clone();
-            let executor_keypair = executor_keypair.clone();
+            let transaction_sender = transaction_sender.clone();
             
             Box::pin(async move {
                 let blockchain_time = executor.current_timestamp().await;
-                info!("PROCESSOR: Starting thread execution for {} at blockchain time {}",
+                info!("PROCESSOR: Building transaction for thread {} at blockchain time {}",
                     thread_pubkey, blockchain_time);
                 
                 // Build instructions
@@ -232,64 +238,25 @@ impl ProcessorService {
                     None, // compute units (let submitter optimize)
                 ).await?;
                 
-                // Submit with retries and automatic simulation
-                let mut attempts = 0;
-                while attempts < max_retries {
-                    match submission_service.submit_with_options(
-                        instructions.clone(),
-                        &executor.pubkey(),
-                        &[&*executor_keypair],
-                        true,  // Enable simulation
-                        Some(&thread_pubkey),
-                    ).await {
-                        Ok(sig) => {
-                            info!("Transaction {} submitted for thread {}", sig, thread_pubkey);
-                            
-                            // For TPU submissions, wait and check if thread was updated
-                            if submission_service.get_mode().await == antegen_submitter::SubmissionMode::Tpu {
-                                tokio::time::sleep(Duration::from_millis(1500)).await;
-                                
-                                // Check if thread's exec_count increased
-                                if let Ok(account) = submission_service.cached_rpc().bypass().get_account(&thread_pubkey).await {
-                                    if let Ok(updated_thread) = antegen_thread_program::state::Thread::try_deserialize(&mut account.data.as_slice()) {
-                                        if updated_thread.exec_count > thread.exec_count {
-                                            info!("Thread {} confirmed executed (exec_count: {} -> {})", 
-                                                thread_pubkey, thread.exec_count, updated_thread.exec_count);
-                                            return Ok(sig);
-                                        }
-                                    }
-                                }
-                                
-                                attempts += 1;
-                                if attempts < max_retries {
-                                    warn!("Thread {} not confirmed, retrying ({}/{})", 
-                                        thread_pubkey, attempts, max_retries);
-                                }
-                            } else {
-                                // RPC submission already waits for confirmation
-                                return Ok(sig);
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to submit transaction for thread {}: {}", thread_pubkey, e);
-                            attempts += 1;
-                            
-                            if attempts < max_retries {
-                                tokio::time::sleep(Duration::from_millis(1000 * attempts as u64)).await;
-                            }
-                        }
-                    }
-                }
+                // Create transaction message and send to submitter
+                let transaction_msg = TransactionMessage {
+                    instructions,
+                    thread_pubkey,
+                    executor_pubkey: executor.pubkey(),
+                    priority_fee: None, // Let submitter decide
+                    compute_units: None, // Let submitter optimize
+                };
                 
+                transaction_sender.send(transaction_msg)
+                    .map_err(|e| anyhow!("Failed to send transaction to submitter: {}", e))?;
                 
-                Err(anyhow!("Failed to execute thread {} after {} attempts", thread_pubkey, max_retries))
+                info!("Transaction for thread {} sent to submitter", thread_pubkey);
+                
+                // Return a dummy signature since we're not actually submitting
+                // The real signature will be created by the submitter
+                Ok(solana_sdk::signature::Signature::default())
             })
         }
     }
     
-    /// Publish a durable transaction to NATS for replay
-    #[allow(dead_code)]
-    async fn publish_durable_transaction(&self, message: DurableTransactionMessage) -> Result<()> {
-        self.submission_service.publish_durable_transaction(message).await
-    }
 }

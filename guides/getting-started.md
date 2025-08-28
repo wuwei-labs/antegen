@@ -29,9 +29,9 @@ cargo build --release
 
 # Build specific components
 cargo build -p thread-program --release
-cargo build -p antegen-observer --release  
-cargo build -p antegen-executor --release
-cargo build -p plugin --release
+cargo build -p antegen-adapter --release  
+cargo build -p antegen-processor --release
+cargo build -p antegen-client-geyser --release
 ```
 
 ### 3. Install Solana CLI (if needed)
@@ -323,7 +323,7 @@ For production deployment with real-time event processing:
 
 ```json
 {
-    "libpath": "/path/to/libantegen_plugin.so",
+    "libpath": "/path/to/libantegen_client_geyser.so",
     "keypath": "/path/to/executor-keypair.json",
     "rpc_url": "https://api.mainnet-beta.solana.com",
     "data_dir": "/var/lib/antegen",

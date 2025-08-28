@@ -1,5 +1,4 @@
-use crate::metrics::SubmitterMetrics;
-use anchor_lang::{prelude::*, Discriminator};
+use anchor_lang::{AccountDeserialize, Discriminator};
 use antegen_thread_program::state::{FiberState, Thread, ThreadConfig};
 use anyhow::Result;
 use log::debug;
@@ -9,8 +8,23 @@ use solana_sdk::{account::Account, pubkey::Pubkey};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::types::CacheConfig;
+/// Cache configuration for RPC client
+#[derive(Clone, Debug)]
+pub struct CacheConfig {
+    /// Maximum number of cached accounts
+    pub max_cached_accounts: u64,
+    /// TTL for cached accounts in seconds
+    pub account_ttl_secs: u64,
+}
 
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            max_cached_accounts: 10_000,
+            account_ttl_secs: 60,
+        }
+    }
+}
 
 /// RPC client wrapper with caching capabilities
 #[derive(Clone)]
@@ -20,9 +34,6 @@ pub struct CachedRpcClient {
 
     /// Account cache (for all accounts including thread config, fibers, etc)
     account_cache: Arc<Cache<Pubkey, Account>>,
-
-    /// Metrics
-    metrics: Option<Arc<SubmitterMetrics>>,
 }
 
 impl CachedRpcClient {
@@ -36,19 +47,17 @@ impl CachedRpcClient {
         Self {
             inner: Arc::new(rpc_client),
             account_cache: Arc::new(account_cache),
-            metrics: None,
         }
     }
-
-    /// Create with metrics support
+    
+    /// Create with metrics support (compatibility method)
     pub fn with_metrics(
         rpc_client: RpcClient,
         config: CacheConfig,
-        metrics: Arc<SubmitterMetrics>,
+        _metrics: Arc<impl std::any::Any>,
     ) -> Self {
-        let mut client = Self::new(rpc_client, config);
-        client.metrics = Some(metrics);
-        client
+        // For now, just ignore metrics and create normally
+        Self::new(rpc_client, config)
     }
 
     /// Get the inner RPC client for direct, non-cached operations
@@ -65,18 +74,10 @@ impl CachedRpcClient {
         // Check cache first
         if let Some(account) = self.account_cache.get(pubkey).await {
             // Cache hit
-            if let Some(ref metrics) = self.metrics {
-                metrics.cache_hit("account");
-            }
             return Ok(account);
         }
 
         // Cache miss - fetch with retry logic
-        // Cache miss - fetch from RPC
-        if let Some(ref metrics) = self.metrics {
-            metrics.cache_miss("account");
-        }
-
         let mut attempt = 0;
         let mut delay = Duration::from_millis(500);
         let max_delay = Duration::from_secs(5);
@@ -85,10 +86,6 @@ impl CachedRpcClient {
         
         loop {
             attempt += 1;
-            
-            if let Some(ref metrics) = self.metrics {
-                metrics.rpc_request("get_account");
-            }
             
             match self.inner.get_account(pubkey).await {
                 Ok(account) => {
@@ -145,7 +142,6 @@ impl CachedRpcClient {
             .map_err(|e| anyhow::anyhow!("Failed to deserialize fiber: {}", e))
     }
 
-
     /// Invalidate specific account
     pub async fn invalidate_account(&self, pubkey: &Pubkey) {
         self.account_cache.invalidate(pubkey).await;
@@ -156,6 +152,26 @@ impl CachedRpcClient {
         self.account_cache.invalidate_all();
     }
 
+    /// Check if we should process this Thread update based on exec_count
+    /// Returns true if:
+    /// - Thread is not in cache (new thread)
+    /// - Thread's exec_count is greater than cached version
+    pub async fn should_process_thread(&self, pubkey: &Pubkey, new_thread: &Thread) -> bool {
+        // Check if we have a cached version
+        if let Some(cached_account) = self.account_cache.get(pubkey).await {
+            // Try to deserialize cached thread to check exec_count
+            if let Ok(cached_thread) = Thread::try_deserialize(&mut cached_account.data.as_slice()) {
+                // Only process if exec_count increased
+                let should_process = new_thread.exec_count > cached_thread.exec_count;
+                
+                return should_process;
+            }
+        }
+        
+        // Not cached or failed to deserialize - process it
+        true
+    }
+
     /// Update account in cache selectively based on account type
     /// - Always cache: Clock sysvar and Thread accounts
     /// - Conditionally cache: Everything else only if already in cache
@@ -164,10 +180,6 @@ impl CachedRpcClient {
         if *pubkey == solana_sdk::sysvar::clock::ID {
             self.account_cache.insert(*pubkey, account).await;
             debug!("Cached Clock sysvar update");
-            
-            if let Some(ref metrics) = self.metrics {
-                metrics.cache_hit("clock_update");
-            }
             return;
         }
         
@@ -179,10 +191,6 @@ impl CachedRpcClient {
             if discriminator == Thread::DISCRIMINATOR {
                 self.account_cache.insert(*pubkey, account).await;
                 debug!("Cached Thread account {}", pubkey);
-                
-                if let Some(ref metrics) = self.metrics {
-                    metrics.cache_hit("thread_update");
-                }
                 return;
             }
         }
@@ -192,10 +200,6 @@ impl CachedRpcClient {
         if self.account_cache.contains_key(pubkey) {
             self.account_cache.insert(*pubkey, account).await;
             debug!("Updated existing cached account {}", pubkey);
-            
-            if let Some(ref metrics) = self.metrics {
-                metrics.cache_hit("account_update");
-            }
         } else {
             // Skip uncached account
         }
@@ -220,11 +224,6 @@ impl CachedRpcClient {
 
         // Fetch uncached accounts in batch
         if !uncached_pubkeys.is_empty() {
-            // Fetch uncached accounts
-            if let Some(ref metrics) = self.metrics {
-                metrics.rpc_request("get_multiple_accounts");
-            }
-
             let accounts = self.inner.get_multiple_accounts(&uncached_pubkeys).await?;
 
             // Update results and cache

@@ -1,0 +1,19 @@
+[package]
+name = "antegen-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+crossbeam = { workspace = true }
+futures = { workspace = true }
+log = { workspace = true }
+opentelemetry = { workspace = true }
+solana-sdk = { workspace = true }
+tokio = { workspace = true }
+
+# Internal dependencies
+antegen-adapter = { path = "../adapter" }
+antegen-processor = { path = "../processor" }
+antegen-submitter = { path = "../submitter" }

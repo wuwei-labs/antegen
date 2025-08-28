@@ -1,6 +1,7 @@
+pub mod builder;
 pub mod events;
-pub mod service;
 pub mod metrics;
+pub mod service;
 
 // Re-export main types
 pub use events::*;

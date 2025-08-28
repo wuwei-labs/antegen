@@ -6,6 +6,9 @@ pub use antegen_thread_program::ID;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 
+pub mod rpc;
+pub mod types;
+
 // Re-export instruction builders and data
 pub mod instruction {
     pub use antegen_thread_program::instruction::*;

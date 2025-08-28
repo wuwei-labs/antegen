@@ -1,6 +1,6 @@
 [package]
-name = "antegen-plugin"
-description = "Antegen plugin for Solana validators"
+name = "antegen-client-geyser"
+description = "Antegen geyser plugin for Solana validators"
 build = "build.rs"
 publish = false
 
@@ -16,12 +16,14 @@ keywords = { workspace = true }
 
 [lib]
 crate-type = ["cdylib", "rlib"]
-name = "antegen_plugin"
+name = "antegen_client_geyser"
 
 [dependencies]
 solana-cron = { workspace = true }
 antegen-adapter = { workspace = true }
+antegen-client = { workspace = true }
 antegen-processor = { workspace = true }
+antegen-submitter = { workspace = true }
 antegen-thread-program = { workspace = true }
 
 anchor-lang = { workspace = true }
@@ -42,7 +44,6 @@ lazy_static = { workspace = true }
 libsql = { workspace = true }
 log = { workspace = true }
 prost = { workspace = true }
-pyth-sdk-solana = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

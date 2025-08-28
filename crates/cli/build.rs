@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use cargo_toml::Manifest;
 
 fn main() {
-    let plugin_cargo_path = PathBuf::from("../plugin/Cargo.toml");
+    let plugin_cargo_path = PathBuf::from("../../clients/geyser/Cargo.toml");
     let manifest = Manifest::from_path(&plugin_cargo_path)
         .expect("Failed to read plugin Cargo.toml");
 

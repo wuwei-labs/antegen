@@ -3,7 +3,7 @@ use agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin;
 mod events;
 mod plugin;
 mod utils;
-mod worker;
+mod worker_builder;
 mod metrics;
 
 pub mod config {

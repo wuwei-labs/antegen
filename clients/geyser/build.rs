@@ -7,7 +7,7 @@ fn main() {
     println!("cargo:rustc-env=RUSTC_VERSION={}", version);
 
     // workspace Cargo.toml
-    let plugin_cargo_path = PathBuf::from("../Cargo.toml");
+    let plugin_cargo_path = PathBuf::from("../../Cargo.toml");
     let manifest = Manifest::from_path(&plugin_cargo_path)
         .expect("Failed to read plugin Cargo.toml");
 

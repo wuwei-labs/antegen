@@ -32,7 +32,7 @@ pub fn start(
     if dev {
         std::env::set_var(
             "RUST_LOG",
-            "antegen_plugin=info,antegen_processor=info,antegen_adapter=warn,antegen_submitter=info,antegen_thread_program=info",
+            "antegen_client_geyser=info,antegen_processor=info,antegen_adapter=warn,antegen_submitter=info,antegen_thread_program=info",
         );
     }
 

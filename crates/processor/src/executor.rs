@@ -15,7 +15,7 @@ use antegen_thread_program::state::{FiberState, Thread, Trigger, TriggerContext}
 use crate::clock::SharedClock;
 use crate::metrics::ProcessorMetrics;
 use crate::types::ExecutableThread;
-use antegen_submitter::CachedRpcClient;
+use antegen_sdk::rpc::CachedRpcClient;
 
 /// Executor logic integrated into submitter
 #[derive(Clone)]

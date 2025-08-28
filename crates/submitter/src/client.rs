@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-use crate::types::{SubmissionMode, TpuConfig};
+use crate::{SubmissionMode, TpuConfig};
 
 /// Wait for RPC server to become available
 async fn wait_for_rpc_availability(rpc_client: &RpcClient, max_wait: Duration) -> Result<()> {
@@ -204,6 +204,16 @@ impl TransactionSubmitter {
                     }
                 }
             }
+            SubmissionMode::Both => {
+                // Submit to both in parallel, return first success
+                let tpu_future = self.submit_via_tpu(tx);
+                let rpc_future = self.submit_via_rpc(tx);
+                
+                tokio::select! {
+                    tpu_result = tpu_future => tpu_result,
+                    rpc_result = rpc_future => rpc_result,
+                }
+            }
         }
     }
 
@@ -230,6 +240,16 @@ impl TransactionSubmitter {
                         );
                         self.submit_batch_via_rpc(txs).await
                     }
+                }
+            }
+            SubmissionMode::Both => {
+                // Submit to both in parallel
+                let tpu_future = self.submit_batch_via_tpu(txs);
+                let rpc_future = self.submit_batch_via_rpc(txs);
+                
+                tokio::select! {
+                    tpu_result = tpu_future => tpu_result,
+                    rpc_result = rpc_future => rpc_result,
                 }
             }
         }

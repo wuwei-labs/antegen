@@ -22,12 +22,16 @@ solana-account-decoder = { workspace = true }
 # Anchor for account deserialization
 anchor-lang = { workspace = true }
 antegen-thread-program = { workspace = true }
+antegen-sdk = { workspace = true }
+
+# Internal dependencies (none - to avoid circular deps)
 
 # Async runtime
 tokio = { workspace = true }
 
 # Utilities
 anyhow = { workspace = true }
+crossbeam = { workspace = true }
 log = { workspace = true }
 bincode = { workspace = true }
 serde = { workspace = true }

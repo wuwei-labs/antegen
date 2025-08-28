@@ -1,6 +1,6 @@
 {
   "name": "antegen",
-  "libpath": "../target/debug/libantegen_plugin.dylib",
+  "libpath": "../target/debug/libantegen_client_geyser.dylib",
   "keypath": "~/.config/solana/id.json",
   "thread_count": 10,
   "transaction_timeout_threshold": 150,

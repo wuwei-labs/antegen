@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use solana_sdk::{account::Account, pubkey::Pubkey};
-use antegen_submitter::{TpuConfig, SubmissionMode, CacheConfig, ReplayConfig};
 
 /// Configuration for the processor service
 #[derive(Debug, Clone)]
@@ -14,9 +13,6 @@ pub struct ProcessorConfig {
     /// Whether to forgo executor commission
     pub forgo_executor_commission: bool,
     
-    /// Submission configuration
-    pub tpu_config: Option<TpuConfig>,
-    pub submission_mode: SubmissionMode,
     
     /// Simulation configuration
     pub simulate_before_submit: bool,
@@ -26,16 +22,6 @@ pub struct ProcessorConfig {
     /// Task management configuration
     pub max_concurrent_threads: usize,
     
-    /// Cache configuration
-    pub cache_config: CacheConfig,
-    
-    /// TPU retry configuration
-    pub tpu_max_retries: u32,
-    pub tpu_confirmation_timeout_ms: u64,
-    pub tpu_use_rpc_fallback: bool,
-    
-    /// Replay configuration
-    pub replay_config: ReplayConfig,
 }
 
 impl Default for ProcessorConfig {
@@ -44,17 +30,10 @@ impl Default for ProcessorConfig {
             rpc_url: "http://localhost:8899".to_string(),
             executor_keypair_path: String::new(),
             forgo_executor_commission: false,
-            tpu_config: Some(TpuConfig::default()),
-            submission_mode: SubmissionMode::default(),
             simulate_before_submit: true,
             compute_unit_multiplier: 1.2,
             max_compute_units: 1_400_000,
             max_concurrent_threads: 50,
-            cache_config: CacheConfig::default(),
-            tpu_max_retries: 3,
-            tpu_confirmation_timeout_ms: 1500,
-            tpu_use_rpc_fallback: true,
-            replay_config: ReplayConfig::default(),
         }
     }
 }
@@ -97,15 +76,6 @@ impl ProcessorConfig {
         
         if let Ok(val) = std::env::var("ANTEGEN_FORGO_COMMISSION") {
             config.forgo_executor_commission = val.parse().unwrap_or(false);
-        }
-        
-        // Replay config from env
-        if let Ok(val) = std::env::var("ANTEGEN_ENABLE_REPLAY") {
-            config.replay_config.enable_replay = val.parse().unwrap_or(false);
-        }
-        
-        if let Ok(val) = std::env::var("ANTEGEN_NATS_URL") {
-            config.replay_config.nats_url = Some(val);
         }
         
         config

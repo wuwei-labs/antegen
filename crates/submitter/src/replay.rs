@@ -4,11 +4,12 @@ use anyhow::{Result, anyhow};
 use log::{info, warn, error, debug};
 use futures::StreamExt;
 use async_nats::jetstream::consumer::PullConsumer;
-use solana_sdk::{signature::Signature, transaction::Transaction};
+use solana_sdk::{signature::Signature, transaction::VersionedTransaction};
 
-use crate::{CachedRpcClient, DurableTransactionMessage};
 use crate::service::SubmissionService;
-use crate::types::ReplayConfig;
+use crate::ReplayConfig;
+use antegen_sdk::rpc::CachedRpcClient;
+use antegen_sdk::types::DurableTransactionMessage;
 
 /// Consumes durable transactions from NATS and replays them if needed
 pub struct ReplayConsumer {
@@ -98,11 +99,11 @@ impl ReplayConsumer {
         let tx_msg: DurableTransactionMessage = serde_json::from_slice(&msg.payload)?;
         
         debug!("Received durable transaction: {} (age: {}ms)", 
-               tx_msg.original_signature, tx_msg.age_ms_system_time());
+               tx_msg.original_signature.as_deref().unwrap_or("<unknown>"), tx_msg.age_ms_system_time());
         
         // Check if transaction is expired
         if tx_msg.is_expired_system_time(self.config.replay_max_age_ms) {
-            info!("Transaction {} is expired, skipping", tx_msg.original_signature);
+            info!("Transaction {} is expired, skipping", tx_msg.original_signature.as_deref().unwrap_or("<unknown>"));
             if let Err(e) = msg.ack().await {
                 error!("Failed to ack expired message: {}", e);
             }
@@ -111,7 +112,7 @@ impl ReplayConsumer {
         
         // Check if we've exceeded max attempts
         if tx_msg.retry_count >= self.config.replay_max_attempts {
-            warn!("Transaction {} exceeded max retry attempts", tx_msg.original_signature);
+            warn!("Transaction {} exceeded max retry attempts", tx_msg.original_signature.as_deref().unwrap_or("<unknown>"));
             if let Err(e) = msg.ack().await {
                 error!("Failed to ack max retry message: {}", e);
             }
@@ -122,24 +123,30 @@ impl ReplayConsumer {
         if tx_msg.retry_count == 0 && tx_msg.age_ms_system_time() < self.config.replay_delay_ms {
             let remaining_delay = self.config.replay_delay_ms - tx_msg.age_ms_system_time();
             debug!("Waiting {}ms before replaying transaction {}", 
-                   remaining_delay, tx_msg.original_signature);
+                   remaining_delay, tx_msg.original_signature.as_deref().unwrap_or("<unknown>"));
             tokio::time::sleep(Duration::from_millis(remaining_delay)).await;
         }
         
         // Check if transaction is already confirmed
-        match self.check_transaction_status(&tx_msg.original_signature).await {
+        let sig_str = tx_msg.original_signature.as_deref().unwrap_or("<unknown>");
+        let check_result = if let Some(ref sig) = tx_msg.original_signature {
+            self.check_transaction_status(sig).await
+        } else {
+            Ok(false) // No signature to check
+        };
+        match check_result {
             Ok(true) => {
-                info!("Transaction {} already confirmed, skipping replay", tx_msg.original_signature);
+                info!("Transaction {} already confirmed, skipping replay", sig_str);
                 if let Err(e) = msg.ack().await {
                     error!("Failed to ack confirmed message: {}", e);
                 }
                 return Ok(());
             }
             Ok(false) => {
-                debug!("Transaction {} not confirmed, proceeding with replay", tx_msg.original_signature);
+                debug!("Transaction {} not confirmed, proceeding with replay", tx_msg.original_signature.as_deref().unwrap_or("<unknown>"));
             }
             Err(e) => {
-                warn!("Could not check status for transaction {}: {}", tx_msg.original_signature, e);
+                warn!("Could not check status for transaction {}: {}", tx_msg.original_signature.as_deref().unwrap_or("<unknown>"), e);
                 // Proceed with replay attempt anyway
             }
         }
@@ -153,7 +160,7 @@ impl ReplayConsumer {
                 }
             }
             Err(e) => {
-                warn!("Failed to replay transaction {}: {}", tx_msg.original_signature, e);
+                warn!("Failed to replay transaction {}: {}", tx_msg.original_signature.as_deref().unwrap_or("<unknown>"), e);
                 
                 // Increment retry count and republish if under limit
                 if tx_msg.retry_count < self.config.replay_max_attempts - 1 {
@@ -188,11 +195,13 @@ impl ReplayConsumer {
     async fn replay_transaction(&self, tx_msg: &DurableTransactionMessage) -> Result<Signature> {
         // Decode the base64 transaction
         use base64::Engine;
-        let tx_bytes = base64::engine::general_purpose::STANDARD.decode(&tx_msg.base64_transaction)?;
-        let tx: Transaction = bincode::deserialize(&tx_bytes)?;
+        let base64_tx = tx_msg.base64_transaction.as_ref()
+            .ok_or_else(|| anyhow!("No base64 transaction data"))?;
+        let tx_bytes = base64::engine::general_purpose::STANDARD.decode(base64_tx)?;
+        let tx: VersionedTransaction = bincode::deserialize(&tx_bytes)?;
         
         info!("Replaying transaction {} for thread {}", 
-              tx_msg.original_signature, tx_msg.thread_pubkey);
+              tx_msg.original_signature.as_deref().unwrap_or("<unknown>"), tx_msg.thread_pubkey);
         
         // Submit the transaction
         self.submission_service.submit(&tx).await
@@ -208,7 +217,7 @@ impl ReplayConsumer {
         }
         
         debug!("Republished transaction {} for retry (attempt {})", 
-               tx_msg.original_signature, tx_msg.retry_count);
+               tx_msg.original_signature.as_deref().unwrap_or("<unknown>"), tx_msg.retry_count);
         
         Ok(())
     }
