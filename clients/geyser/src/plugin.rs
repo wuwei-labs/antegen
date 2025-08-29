@@ -1,8 +1,6 @@
 use {
     crate::{
-        config::PluginConfig, 
-        events::replica_account_to_account, 
-        worker_builder::PluginWorkerBuilder,
+        builder::PluginWorkerBuilder, config::PluginConfig, events::replica_account_to_account,
     },
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         GeyserPlugin, GeyserPluginError, ReplicaAccountInfo, ReplicaAccountInfoVersions,
@@ -25,7 +23,6 @@ impl Debug for AntegenPlugin {
         }
     }
 }
-
 
 #[derive(Debug)]
 pub struct Inner {
@@ -52,8 +49,11 @@ impl GeyserPlugin for AntegenPlugin {
         // Always initialize a basic meter provider for metrics collection
         // This ensures metrics are collected even if not exposed via HTTP
         let registry = runtime.block_on(async {
-            crate::metrics::init_basic_meter_provider()
-                .map_err(|e| GeyserPluginError::Custom(format!("Failed to initialize meter provider: {}", e).into()))
+            crate::metrics::init_basic_meter_provider().map_err(|e| {
+                GeyserPluginError::Custom(
+                    format!("Failed to initialize meter provider: {}", e).into(),
+                )
+            })
         })?;
         debug!("Basic meter provider initialized with registry");
 
@@ -62,13 +62,18 @@ impl GeyserPlugin for AntegenPlugin {
             if metrics_config.enabled {
                 info!("=== Initializing Metrics HTTP Service ===");
                 info!("Metrics backend: {:?}", metrics_config.backend);
-                
+
                 let handle = runtime.handle().clone();
                 runtime.block_on(async {
-                    crate::metrics::init_metrics(metrics_config, registry, handle).await
-                        .map_err(|e| GeyserPluginError::Custom(format!("Failed to initialize metrics HTTP server: {}", e).into()))
+                    crate::metrics::init_metrics(metrics_config, registry, handle)
+                        .await
+                        .map_err(|e| {
+                            GeyserPluginError::Custom(
+                                format!("Failed to initialize metrics HTTP server: {}", e).into(),
+                            )
+                        })
                 })?;
-                
+
                 info!("=== Metrics HTTP Service Started ===");
             } else {
                 info!("Metrics HTTP server disabled in configuration");
@@ -79,7 +84,7 @@ impl GeyserPlugin for AntegenPlugin {
 
         // Initialize worker using builder pattern
         info!("Initializing worker with builder pattern");
-        
+
         let mut worker = runtime.block_on(async {
             let rpc_url = config
                 .rpc_url
@@ -96,17 +101,17 @@ impl GeyserPlugin for AntegenPlugin {
             let forgo_executor_commission = config.forgo_executor_commission.unwrap_or(false);
             let enable_replay = config.enable_replay.unwrap_or(false);
             let nats_url = config.nats_url.clone();
-            let replay_delay_ms = config.replay_delay_ms;
-            
+
             match PluginWorkerBuilder::new(
-                rpc_url, 
-                ws_url, 
-                keypair_path, 
+                rpc_url,
+                ws_url,
+                keypair_path,
                 forgo_executor_commission,
                 enable_replay,
                 nats_url,
-                replay_delay_ms,
-            ).await {
+            )
+            .await
+            {
                 Ok(worker) => Ok(worker),
                 Err(e) => {
                     let error_msg = format!("Failed to create worker: {}", e);
@@ -117,9 +122,10 @@ impl GeyserPlugin for AntegenPlugin {
         })?;
 
         // Start the worker services
-        worker.start(runtime.handle().clone())
-            .map_err(|e| GeyserPluginError::Custom(format!("Failed to start worker services: {}", e).into()))?;
-        
+        worker.start(runtime.handle().clone()).map_err(|e| {
+            GeyserPluginError::Custom(format!("Failed to start worker services: {}", e).into())
+        })?;
+
         let worker = Arc::new(worker);
 
         self.inner = Some(Arc::new(Inner {
@@ -134,11 +140,16 @@ impl GeyserPlugin for AntegenPlugin {
 
     fn on_unload(&mut self) {
         // Shutdown metrics if enabled
-        if self.inner.as_ref().and_then(|i| i.config.metrics.as_ref()).is_some() {
+        if self
+            .inner
+            .as_ref()
+            .and_then(|i| i.config.metrics.as_ref())
+            .is_some()
+        {
             info!("=== Shutting Down Metrics Service ===");
             crate::metrics::shutdown();
         }
-        
+
         // Clean up resources if needed
         self.inner = None;
     }
@@ -184,7 +195,7 @@ impl GeyserPlugin for AntegenPlugin {
                 write_version: account_info.write_version,
             },
         };
-        
+
         // Convert to standard account
         let account_result = replica_account_to_account(account_info);
 
@@ -230,9 +241,12 @@ impl GeyserPlugin for AntegenPlugin {
             match status {
                 SlotStatus::Confirmed | SlotStatus::Rooted => {
                     // Increment block height for confirmed/finalized slots
-                    let new_height = inner.block_height.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    let new_height = inner
+                        .block_height
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                        + 1;
                     info!("Block {} confirmed (slot {})", new_height, slot);
-                    
+
                     // Send block height update to worker
                     // This will be included with the next clock event
                 }

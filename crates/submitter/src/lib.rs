@@ -3,15 +3,16 @@ pub mod client;
 pub mod metrics;
 pub mod replay;
 pub mod service;
+pub mod worker_pool;
 
 // Re-export main public APIs
 pub use client::TransactionSubmitter;
 pub use metrics::SubmitterMetrics;
 pub use replay::ReplayConsumer;
 pub use service::{SubmissionService, SubmissionConfig};
+pub use worker_pool::{TransactionWorkerPool, WorkerPoolConfig};
 
 // Re-export shared types from SDK
-pub use antegen_sdk::rpc::{CachedRpcClient, CacheConfig};
 pub use antegen_sdk::types::{TransactionMessage, DurableTransactionMessage};
 
 // Submitter-specific types

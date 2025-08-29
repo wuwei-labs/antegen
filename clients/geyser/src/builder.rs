@@ -10,8 +10,8 @@ use solana_sdk::{
 use std::fmt::Debug;
 use tokio::runtime::Handle;
 
-use antegen_adapter::events::{EventSource, ObservedEvent};
 use antegen_adapter::builder::AdapterBuilder;
+use antegen_adapter::events::{EventSource, ObservedEvent};
 use antegen_client::AntegenClient;
 use antegen_processor::builder::ProcessorBuilder;
 use antegen_submitter::builder::SubmitterBuilder;
@@ -41,75 +41,78 @@ impl PluginWorkerBuilder {
         forgo_executor_commission: bool,
         enable_replay: bool,
         nats_url: Option<String>,
-        replay_delay_ms: Option<u64>,
     ) -> Result<Self> {
         info!("=== Initializing PluginWorkerBuilder ===");
         info!("RPC URL: {}", rpc_url);
-        
+
         // Create channel for Geyser -> Adapter
         let (observed_tx, observed_rx) = bounded(1000);
         info!("Created observed event channel (Geyser->Adapter) with capacity 1000");
-        
+
         // Load keypair
         let keypair = std::sync::Arc::new(load_keypair(&keypair_path)?);
         let executor_pubkey = keypair.pubkey();
-        info!("Loaded keypair from {}, pubkey: {}", keypair_path, executor_pubkey);
-        
+        info!(
+            "Loaded keypair from {}, pubkey: {}",
+            keypair_path, executor_pubkey
+        );
+
         // Create Geyser event source
         let event_source = Box::new(GeyserPluginEventSource::new(observed_rx));
-        
+
         // Build the client using the builder pattern
         let mut client_builder = AntegenClient::builder()
             .adapter(
                 AdapterBuilder::geyser()
                     .event_source(event_source)
-                    .adapter_pubkey(executor_pubkey)
+                    .adapter_pubkey(executor_pubkey),
             )
             .processor(
                 ProcessorBuilder::new()
                     .keypair(keypair_path.clone())
                     .rpc_url(rpc_url.clone())
-                    .forgo_commission(forgo_executor_commission)
+                    .forgo_commission(forgo_executor_commission),
             );
-        
+
         // Add submitter with replay if configured
         if enable_replay {
             let mut replay_config = antegen_submitter::ReplayConfig::default();
             replay_config.enable_replay = true;
             replay_config.nats_url = nats_url;
-            
+
             client_builder = client_builder.submitter(
                 SubmitterBuilder::new()
                     .rpc_url(rpc_url)
                     .executor_keypair(keypair.clone())
-                    .replay_config(replay_config)
+                    .replay_config(replay_config),
             );
         } else {
             client_builder = client_builder.submitter(
                 SubmitterBuilder::new()
                     .rpc_url(rpc_url)
-                    .executor_keypair(keypair.clone())
+                    .executor_keypair(keypair.clone()),
             );
         }
-        
+
         let client = client_builder.build().await?;
-        
+
         info!("=== PluginWorkerBuilder initialization complete ===");
-        
+
         Ok(Self {
             event_sender: observed_tx,
             client: Some(client),
         })
     }
-    
+
     /// Start the client
     pub fn start(&mut self, runtime: Handle) -> Result<()> {
         info!("=== Starting Worker Services with Builder ===");
-        
-        let client = self.client
+
+        let client = self
+            .client
             .take()
             .ok_or_else(|| anyhow!("Client already started"))?;
-        
+
         runtime.spawn(async move {
             info!("Starting AntegenClient");
             match client.run().await {
@@ -117,11 +120,11 @@ impl PluginWorkerBuilder {
                 Err(e) => error!("AntegenClient error: {}", e),
             }
         });
-        
+
         info!("=== Worker Services Started ===");
         Ok(())
     }
-    
+
     /// Send account update from Geyser to the client
     pub async fn send_account_event(
         &self,
@@ -134,8 +137,9 @@ impl PluginWorkerBuilder {
             account,
             slot,
         };
-        
-        self.event_sender.send(event)
+
+        self.event_sender
+            .send(event)
             .map_err(|e| anyhow!("Failed to send account event: {}", e))?;
         Ok(())
     }

@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::{
     ReplayConfig, SubmissionConfig, SubmissionMode, SubmissionService, SubmitterMetrics, TpuConfig,
+    TransactionWorkerPool, WorkerPoolConfig,
 };
-use antegen_sdk::rpc::CacheConfig;
 use antegen_sdk::types::TransactionMessage;
 
 /// Builder for SubmissionService
@@ -13,11 +13,11 @@ pub struct SubmitterBuilder {
     rpc_url: String,
     submission_mode: SubmissionMode,
     tpu_config: Option<TpuConfig>,
-    cache_config: CacheConfig,
     replay_config: ReplayConfig,
     metrics: Option<Arc<SubmitterMetrics>>,
     transaction_receiver: Option<Receiver<TransactionMessage>>,
     executor_keypair: Option<Arc<solana_sdk::signature::Keypair>>,
+    worker_pool_config: Option<WorkerPoolConfig>,
 }
 
 impl Default for SubmitterBuilder {
@@ -26,11 +26,11 @@ impl Default for SubmitterBuilder {
             rpc_url: "http://localhost:8899".to_string(),
             submission_mode: SubmissionMode::default(),
             tpu_config: Some(TpuConfig::default()),
-            cache_config: CacheConfig::default(),
             replay_config: ReplayConfig::default(),
             metrics: None,
             transaction_receiver: None,
             executor_keypair: None,
+            worker_pool_config: None,
         }
     }
 }
@@ -84,12 +84,6 @@ impl SubmitterBuilder {
         self
     }
 
-    /// Set cache configuration
-    pub fn cache(mut self, config: CacheConfig) -> Self {
-        self.cache_config = config;
-        self
-    }
-
     /// Set replay configuration
     pub fn replay(mut self, config: ReplayConfig) -> Self {
         self.replay_config = config;
@@ -128,6 +122,18 @@ impl SubmitterBuilder {
         self.executor_keypair = Some(keypair);
         self
     }
+    
+    /// Enable worker pool with default configuration
+    pub fn with_worker_pool(mut self) -> Self {
+        self.worker_pool_config = Some(WorkerPoolConfig::default());
+        self
+    }
+    
+    /// Set custom worker pool configuration
+    pub fn worker_pool_config(mut self, config: WorkerPoolConfig) -> Self {
+        self.worker_pool_config = Some(config);
+        self
+    }
 
     /// Build from existing config (for compatibility)
     pub fn from_config(config: SubmissionConfig) -> Self {
@@ -135,11 +141,11 @@ impl SubmitterBuilder {
             rpc_url: "http://localhost:8899".to_string(), // Will be overridden
             submission_mode: SubmissionMode::default(),
             tpu_config: config.tpu_config,
-            cache_config: config.cache_config,
             replay_config: config.replay_config,
             metrics: None,
             transaction_receiver: None,
             executor_keypair: None,
+            worker_pool_config: None,
         }
     }
 
@@ -147,13 +153,15 @@ impl SubmitterBuilder {
     pub async fn build(self) -> Result<SubmissionService> {
         // Create submission configuration
         let config = SubmissionConfig {
-            cache_config: self.cache_config,
             tpu_config: self.tpu_config,
             replay_config: self.replay_config,
         };
 
+        // Store metrics before moving to service
+        let metrics = self.metrics.clone();
+
         // Create submission service
-        let service = SubmissionService::new(self.rpc_url, config, self.metrics).await?;
+        let service = SubmissionService::new(self.rpc_url, config, metrics.clone()).await?;
 
         // Initialize the service
         service.initialize().await?;
@@ -164,15 +172,37 @@ impl SubmitterBuilder {
                 anyhow::anyhow!("Executor keypair required when using transaction receiver")
             })?;
 
-            let service_clone = service.clone();
-            tokio::spawn(async move {
-                if let Err(e) = service_clone
-                    .process_transaction_messages(receiver, executor_keypair)
-                    .await
-                {
-                    log::error!("Transaction processor error: {}", e);
-                }
-            });
+            // Use worker pool if configured
+            if let Some(pool_config) = self.worker_pool_config {
+                let pool_metrics = metrics
+                    .unwrap_or_else(|| Arc::new(SubmitterMetrics::default()));
+                
+                let worker_pool = Arc::new(TransactionWorkerPool::new(
+                    Arc::new(service.clone()),
+                    pool_config,
+                    pool_metrics,
+                ));
+                
+                tokio::spawn(async move {
+                    if let Err(e) = worker_pool
+                        .process_with_batching(receiver, executor_keypair)
+                        .await
+                    {
+                        log::error!("Worker pool processor error: {}", e);
+                    }
+                });
+            } else {
+                // Use simple serial processing
+                let service_clone = service.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = service_clone
+                        .process_transaction_messages(receiver, executor_keypair)
+                        .await
+                    {
+                        log::error!("Transaction processor error: {}", e);
+                    }
+                });
+            }
         }
 
         Ok(service)

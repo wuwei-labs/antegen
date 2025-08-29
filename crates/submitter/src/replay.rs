@@ -8,15 +8,15 @@ use solana_sdk::{signature::Signature, transaction::VersionedTransaction};
 
 use crate::service::SubmissionService;
 use crate::ReplayConfig;
-use antegen_sdk::rpc::CachedRpcClient;
 use antegen_sdk::types::DurableTransactionMessage;
+use solana_client::nonblocking::rpc_client::RpcClient;
 
 /// Consumes durable transactions from NATS and replays them if needed
 pub struct ReplayConsumer {
     nats_client: async_nats::Client,
     consumer: PullConsumer,
     submission_service: Arc<SubmissionService>,
-    cached_rpc: Arc<CachedRpcClient>,
+    rpc_client: Arc<RpcClient>,
     config: ReplayConfig,
 }
 
@@ -25,7 +25,7 @@ impl ReplayConsumer {
     pub async fn new(
         nats_client: async_nats::Client,
         submission_service: Arc<SubmissionService>,
-        cached_rpc: Arc<CachedRpcClient>,
+        rpc_client: Arc<RpcClient>,
         config: ReplayConfig,
     ) -> Result<Self> {
         let jetstream = async_nats::jetstream::new(nats_client.clone());
@@ -63,7 +63,7 @@ impl ReplayConsumer {
             nats_client,
             consumer,
             submission_service,
-            cached_rpc,
+            rpc_client,
             config,
         })
     }
@@ -185,7 +185,7 @@ impl ReplayConsumer {
     async fn check_transaction_status(&self, signature_str: &str) -> Result<bool> {
         let signature = signature_str.parse::<Signature>()?;
         
-        match self.cached_rpc.bypass().get_signature_status(&signature).await? {
+        match self.rpc_client.get_signature_status(&signature).await? {
             Some(status) => Ok(status.is_ok()),
             None => Ok(false), // Transaction not found
         }

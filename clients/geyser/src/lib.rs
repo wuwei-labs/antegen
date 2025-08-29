@@ -1,10 +1,10 @@
 use agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin;
 
+mod builder;
 mod events;
+mod metrics;
 mod plugin;
 mod utils;
-mod worker_builder;
-mod metrics;
 
 pub mod config {
     pub use crate::utils::PluginConfig;

@@ -534,6 +534,7 @@ dependencies = [
  "async-trait",
  "carbon-core",
  "carbon-helius-atlas-ws-datasource",
+ "carbon-log-metrics",
  "carbon-rpc-program-subscribe-datasource",
  "carbon-yellowstone-grpc-datasource",
  "clap 4.5.46",
@@ -1515,6 +1516,18 @@ dependencies = [
  "solana-transaction-status",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "carbon-log-metrics"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6dfd4b7c2b6c9ea3849cafd4a6028dff468e353f826afbb0f82d78b686863c30"
+dependencies = [
+ "async-trait",
+ "carbon-core",
+ "log 0.4.27",
+ "tokio",
 ]
 
 [[package]]

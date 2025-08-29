@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 
 use antegen_adapter::events::ObservedEvent;
-use antegen_processor::{AccountUpdate, TransactionMessage};
+use antegen_processor::TransactionMessage;
 use antegen_submitter::SubmissionService;
 
 /// Main Antegen client that orchestrates all components
@@ -176,28 +176,31 @@ impl AntegenClientBuilder {
         };
 
         // Create transaction channel if both processor and submitter are configured
-        let (transaction_tx, transaction_rx): (Option<Sender<TransactionMessage>>, Option<Receiver<TransactionMessage>>) = 
-            if self.processor_builder.is_some() && self.submitter_builder.is_some() {
-                let (tx, rx) = bounded(100);
-                (Some(tx), Some(rx))
-            } else {
-                (None, None)
-            };
+        let (transaction_tx, transaction_rx): (
+            Option<Sender<TransactionMessage>>,
+            Option<Receiver<TransactionMessage>>,
+        ) = if self.processor_builder.is_some() && self.submitter_builder.is_some() {
+            let (tx, rx) = bounded(100);
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
 
         // Build processor if configured
         if let Some(mut processor_builder) = self.processor_builder {
             let account_rx = account_rx
                 .ok_or_else(|| anyhow!("Processor requires adapter or custom event source"))?;
-            
-            let transaction_tx = transaction_tx
-                .ok_or_else(|| anyhow!("Processor requires transaction sender (submitter must be configured)"))?;
+
+            let transaction_tx = transaction_tx.ok_or_else(|| {
+                anyhow!("Processor requires transaction sender (submitter must be configured)")
+            })?;
 
             // Apply global metrics if available
             if let Some(meter) = &self.global_metrics {
                 processor_builder = processor_builder.metrics(meter.clone());
             }
 
-            let mut processor_service = processor_builder
+            let processor_service = processor_builder
                 .account_receiver(account_rx)
                 .transaction_sender(transaction_tx)
                 .build()
@@ -215,7 +218,7 @@ impl AntegenClientBuilder {
             if let Some(meter) = &self.global_metrics {
                 submitter_builder = submitter_builder.metrics(meter.clone());
             }
-            
+
             // Add transaction receiver if processor is configured
             if let Some(rx) = transaction_rx {
                 submitter_builder = submitter_builder.transaction_receiver(rx);

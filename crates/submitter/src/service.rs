@@ -25,14 +25,11 @@ use tokio::task::JoinHandle;
 use crate::{
     ReplayConfig, ReplayConsumer, SubmissionMode, SubmitterMetrics, TpuConfig,
 };
-use antegen_sdk::rpc::{CachedRpcClient, CacheConfig};
 use antegen_sdk::types::{DurableTransactionMessage, TransactionMessage};
 
 /// Configuration for the submission service
 #[derive(Debug, Clone)]
 pub struct SubmissionConfig {
-    /// Cache configuration
-    pub cache_config: CacheConfig,
     /// TPU configuration (optional)
     pub tpu_config: Option<TpuConfig>,
     /// Replay configuration
@@ -42,7 +39,6 @@ pub struct SubmissionConfig {
 impl Default for SubmissionConfig {
     fn default() -> Self {
         Self {
-            cache_config: CacheConfig::default(),
             tpu_config: Some(TpuConfig::default()),
             replay_config: ReplayConfig::default(),
         }
@@ -51,8 +47,8 @@ impl Default for SubmissionConfig {
 
 /// Unified service for all transaction submission and RPC operations
 pub struct SubmissionService {
-    /// Cached RPC client (single instance for all RPC operations)
-    cached_rpc: Arc<CachedRpcClient>,
+    /// RPC client for blockchain operations
+    rpc_client: Arc<RpcClient>,
     /// TPU client for direct submission to leaders
     tpu_client: RwLock<Option<Arc<TpuClient<QuicPool, QuicConnectionManager, QuicConfig>>>>,
     /// Current submission mode
@@ -74,15 +70,9 @@ impl SubmissionService {
         config: SubmissionConfig,
         metrics: Option<Arc<SubmitterMetrics>>,
     ) -> Result<Self> {
-        // Create single RPC client wrapped in CachedRpcClient
-        let rpc_client = RpcClient::new(rpc_url);
+        // Create RPC client
+        let rpc_client = Arc::new(RpcClient::new(rpc_url));
         let metrics = metrics.unwrap_or_else(|| Arc::new(SubmitterMetrics::default()));
-
-        let cached_rpc = Arc::new(CachedRpcClient::with_metrics(
-            rpc_client,
-            config.cache_config.clone(),
-            metrics.clone(),
-        ));
 
         // Initialize submission mode (will be updated after connection)
         let submission_mode = RwLock::new(SubmissionMode::Rpc);
@@ -107,7 +97,7 @@ impl SubmissionService {
         };
 
         Ok(Self {
-            cached_rpc,
+            rpc_client,
             tpu_client: RwLock::new(None),
             submission_mode,
             nats_client,
@@ -157,8 +147,8 @@ impl SubmissionService {
     }
 
     /// Get the cached RPC client
-    pub fn cached_rpc(&self) -> &Arc<CachedRpcClient> {
-        &self.cached_rpc
+    pub fn rpc_client(&self) -> &Arc<RpcClient> {
+        &self.rpc_client
     }
 
     /// Submit a transaction using configured mode with automatic simulation
@@ -180,13 +170,13 @@ impl SubmissionService {
                 if let Some(nonce_pubkey) = nonce_ix.accounts.first() {
                     self.get_nonce_blockhash(&nonce_pubkey.pubkey).await?
                 } else {
-                    self.cached_rpc.bypass().get_latest_blockhash().await?
+                    self.rpc_client.get_latest_blockhash().await?
                 }
             } else {
-                self.cached_rpc.bypass().get_latest_blockhash().await?
+                self.rpc_client.get_latest_blockhash().await?
             }
         } else {
-            self.cached_rpc.bypass().get_latest_blockhash().await?
+            self.rpc_client.get_latest_blockhash().await?
         };
 
         // Build transaction with optional simulation
@@ -371,7 +361,7 @@ impl SubmissionService {
         // Fetch nonce account blockhash
         
         // Always bypass cache for nonce accounts since they can be advanced
-        let account = self.cached_rpc.bypass().get_account(nonce_pubkey).await?;
+        let account = self.rpc_client.get_account(nonce_pubkey).await?;
         debug!("Nonce account data length: {}", account.data.len());
         
         // Use proper nonce utilities to extract data
@@ -396,7 +386,7 @@ impl SubmissionService {
         let sim_start = Instant::now();
         
         self.metrics.rpc_request("_simulate_transaction");
-        let sim_result = match self.cached_rpc.bypass().simulate_transaction_with_config(
+        let sim_result = match self.rpc_client.simulate_transaction_with_config(
             tx,
             RpcSimulateTransactionConfig {
                 sig_verify: false,
@@ -527,12 +517,9 @@ impl SubmissionService {
         let max_delay = Duration::from_secs(30);
         let mut last_log = Instant::now();
 
-        let rpc = self.cached_rpc.bypass();
-
         // Wait for RPC to become available
-
         loop {
-            match rpc.get_health().await {
+            match self.rpc_client.get_health().await {
                 Ok(_) => {
                     // RPC server available
                     return Ok(());
@@ -545,7 +532,7 @@ impl SubmissionService {
             if start.elapsed() > max_wait {
                 return Err(anyhow!(
                     "RPC server at {} failed to become available after {} seconds",
-                    rpc.url(),
+                    self.rpc_client.url(),
                     max_wait.as_secs()
                 ));
             }
@@ -564,8 +551,7 @@ impl SubmissionService {
         &self,
         config: &TpuConfig,
     ) -> Result<TpuClient<QuicPool, QuicConnectionManager, QuicConfig>> {
-        let rpc = self.cached_rpc.bypass();
-        let rpc_url = rpc.url();
+        let rpc_url = self.rpc_client.url();
         let ws_url = rpc_url
             .replace("http://", "ws://")
             .replace("https://", "wss://")
@@ -586,7 +572,7 @@ impl SubmissionService {
 
             match TpuClient::new(
                 "antegen-submitter",
-                rpc.clone(),
+                self.rpc_client.clone(),
                 &ws_url,
                 tpu_client_config.clone(),
             )
@@ -643,11 +629,9 @@ impl SubmissionService {
     async fn submit_via_rpc(&self, tx: &VersionedTransaction) -> Result<Signature> {
         // Submit via RPC
 
-        let rpc = self.cached_rpc.bypass();
-
         match tokio::time::timeout(
             Duration::from_secs(30),
-            rpc.send_and_confirm_transaction(tx),
+            self.rpc_client.send_and_confirm_transaction(tx),
         )
         .await
         {
@@ -719,15 +703,14 @@ impl SubmissionService {
     async fn submit_batch_via_rpc(&self, txs: &[VersionedTransaction]) -> Result<Vec<Result<Signature>>> {
         // Batch submit via RPC
 
-        use futures::stream::{self, StreamExt};
+        use futures::future::join_all;
 
-        const MAX_CONCURRENT_RPC: usize = 10;
+        let mut futures = Vec::new();
+        for tx in txs {
+            futures.push(self.submit_via_rpc(tx));
+        }
 
-        let results = stream::iter(txs.iter())
-            .map(|tx| async move { self.submit_via_rpc(tx).await })
-            .buffer_unordered(MAX_CONCURRENT_RPC)
-            .collect::<Vec<_>>()
-            .await;
+        let results = join_all(futures).await;
 
         if let Some(ref metrics) = Some(&self.metrics) {
             metrics.batch_submitted("rpc", txs.len());
@@ -742,7 +725,7 @@ impl SubmissionService {
         let mut consumer = ReplayConsumer::new(
             nats_client,
             Arc::new(self.clone()), // We'll need to implement Clone
-            self.cached_rpc.clone(),
+            self.rpc_client.clone(),
             self.config.replay_config.clone(),
         )
         .await?;
@@ -767,7 +750,7 @@ impl SubmissionService {
             match receiver.recv() {
                 Ok(msg) => {
                     // Get recent blockhash
-                    let blockhash = self.cached_rpc.bypass()
+                    let blockhash = self.rpc_client
                         .get_latest_blockhash()
                         .await?;
                     
@@ -813,7 +796,7 @@ impl SubmissionService {
 impl Clone for SubmissionService {
     fn clone(&self) -> Self {
         Self {
-            cached_rpc: self.cached_rpc.clone(),
+            rpc_client: self.rpc_client.clone(),
             tpu_client: RwLock::new(None), // Don't clone TPU client
             submission_mode: RwLock::new(SubmissionMode::Rpc), // Reset to RPC
             nats_client: self.nats_client.clone(),
