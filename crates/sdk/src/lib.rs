@@ -9,6 +9,9 @@ pub mod metrics;
 pub mod rpc;
 pub mod types;
 
+// Re-export types needed by other crates
+pub use types::{ProcessorMessage, TransactionMessage, DurableTransactionMessage};
+
 // Re-export instruction builders and data
 pub mod instruction {
     pub use antegen_thread_program::instruction::*;

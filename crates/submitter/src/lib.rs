@@ -1,16 +1,14 @@
 pub mod builder;
-pub mod client;
 pub mod metrics;
 pub mod replay;
 pub mod service;
-pub mod worker_pool;
+pub mod submitter;
 
 // Re-export main public APIs
-pub use client::TransactionSubmitter;
 pub use metrics::SubmitterMetrics;
 pub use replay::ReplayConsumer;
 pub use service::{SubmissionService, SubmissionConfig};
-pub use worker_pool::{TransactionWorkerPool, WorkerPoolConfig};
+pub use submitter::TransactionSubmitter;
 
 // Re-export shared types from SDK
 pub use antegen_sdk::types::{TransactionMessage, DurableTransactionMessage};
@@ -28,7 +26,7 @@ pub enum SubmissionMode {
 
 impl Default for SubmissionMode {
     fn default() -> Self {
-        Self::Rpc
+        Self::TpuWithFallback
     }
 }
 

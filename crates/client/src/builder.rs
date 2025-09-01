@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 
 use antegen_adapter::events::ObservedEvent;
-use antegen_processor::TransactionMessage;
+use antegen_sdk::ProcessorMessage;
 use antegen_submitter::SubmissionService;
 
 /// Main Antegen client that orchestrates all components
@@ -177,8 +177,8 @@ impl AntegenClientBuilder {
 
         // Create transaction channel if both processor and submitter are configured
         let (transaction_tx, transaction_rx): (
-            Option<Sender<TransactionMessage>>,
-            Option<Receiver<TransactionMessage>>,
+            Option<Sender<ProcessorMessage>>,
+            Option<Receiver<ProcessorMessage>>,
         ) = if self.processor_builder.is_some() && self.submitter_builder.is_some() {
             let (tx, rx) = bounded(100);
             (Some(tx), Some(rx))

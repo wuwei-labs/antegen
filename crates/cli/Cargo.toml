@@ -49,6 +49,8 @@ tar = { workspace = true }
 thiserror = { workspace = true }
 termcolor = { workspace = true }
 terminal-link = { workspace = true }
+toml = { workspace = true }
+once_cell = { workspace = true }
 
 [[bin]]
 name = "antegen"

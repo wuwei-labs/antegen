@@ -173,10 +173,22 @@ pub trait ToTagVersion {
 
 impl ToTagVersion for String {
     fn to_tag_version(&self) -> String {
-        if !self.starts_with("v") {
-            format!("v{}", self)
+        // Clean up version string - remove ~ or ^ prefix and any spaces
+        let cleaned = self.trim().trim_start_matches('~').trim_start_matches('^').trim();
+        
+        // For Solana/Agave, we need to use the exact version
+        // If it's a partial version like "2.2", expand it to "2.2.0"
+        let parts: Vec<&str> = cleaned.split('.').collect();
+        let version = match parts.len() {
+            1 => format!("{}.0.0", parts[0]),
+            2 => format!("{}.{}.0", parts[0], parts[1]),
+            _ => cleaned.to_string(),
+        };
+        
+        if !version.starts_with("v") {
+            format!("v{}", version)
         } else {
-            self.to_owned()
+            version
         }
     }
 }

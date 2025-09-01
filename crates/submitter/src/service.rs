@@ -25,7 +25,8 @@ use tokio::task::JoinHandle;
 use crate::{
     ReplayConfig, ReplayConsumer, SubmissionMode, SubmitterMetrics, TpuConfig,
 };
-use antegen_sdk::types::{DurableTransactionMessage, TransactionMessage};
+use antegen_sdk::{DurableTransactionMessage, ProcessorMessage};
+use solana_sdk::clock::Clock;
 
 /// Configuration for the submission service
 #[derive(Debug, Clone)]
@@ -61,6 +62,8 @@ pub struct SubmissionService {
     metrics: Arc<SubmitterMetrics>,
     /// Configuration
     config: SubmissionConfig,
+    /// Broadcast channel for clock updates
+    clock_broadcaster: tokio::sync::broadcast::Sender<Clock>,
 }
 
 impl SubmissionService {
@@ -96,6 +99,9 @@ impl SubmissionService {
             None
         };
 
+        // Create broadcast channel for clock updates
+        let (clock_broadcaster, _) = tokio::sync::broadcast::channel(100);
+
         Ok(Self {
             rpc_client,
             tpu_client: RwLock::new(None),
@@ -104,9 +110,15 @@ impl SubmissionService {
             replay_handle: RwLock::new(None),
             metrics,
             config,
+            clock_broadcaster,
         })
     }
 
+    /// Broadcast a clock update to all retry tasks
+    pub fn broadcast_clock(&self, clock: Clock) {
+        let _ = self.clock_broadcaster.send(clock);
+    }
+    
     /// Initialize the service (wait for RPC and create TPU client)
     pub async fn initialize(&self) -> Result<()> {
         // Wait for RPC to be available
@@ -303,38 +315,6 @@ impl SubmissionService {
                 }
             }
         }
-    }
-
-    /// Submit with retries
-    pub async fn submit_with_retries(
-        &self,
-        tx: &VersionedTransaction,
-        max_retries: u32,
-    ) -> Result<Signature> {
-        let mut attempts = 0;
-        let mut last_error = None;
-
-        while attempts < max_retries {
-            match self.submit(tx).await {
-                Ok(sig) => return Ok(sig),
-                Err(e) => {
-                    attempts += 1;
-                    warn!("Submission attempt {} failed: {}", attempts, e);
-                    last_error = Some(e);
-
-                    if attempts < max_retries {
-                        tokio::time::sleep(Duration::from_millis(1000 * attempts as u64)).await;
-                    }
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or_else(|| {
-            anyhow!(
-                "Failed to submit transaction after {} attempts",
-                max_retries
-            )
-        }))
     }
 
     /// Publish a durable transaction to NATS for replay
@@ -617,13 +597,27 @@ impl SubmissionService {
             return Err(anyhow!("Failed to send transaction to TPU"));
         }
 
-        // Sent to TPU
-
-        if let Some(ref metrics) = Some(&self.metrics) {
-            metrics.transaction_submitted("tpu");
+        // Sent to TPU, now confirm it
+        debug!("Transaction sent to TPU, waiting for confirmation: {}", signature);
+        
+        // Wait for confirmation using RPC
+        let confirmation = self.rpc_client
+            .confirm_transaction(&signature)
+            .await;
+        
+        match confirmation {
+            Ok(_) => {
+                info!("Transaction confirmed via TPU: {}", signature);
+                if let Some(ref metrics) = Some(&self.metrics) {
+                    metrics.transaction_submitted("tpu");
+                }
+                Ok(signature)
+            }
+            Err(e) => {
+                warn!("Transaction sent to TPU but not confirmed: {}: {}", signature, e);
+                Err(anyhow!("Transaction not confirmed: {}", e))
+            }
         }
-
-        Ok(signature)
     }
 
     async fn submit_via_rpc(&self, tx: &VersionedTransaction) -> Result<Signature> {
@@ -689,7 +683,23 @@ impl SubmissionService {
                     }
                 }
             } else {
-                // Batch sent to TPU
+                // Batch sent to TPU, now confirm them
+                debug!("Batch sent {} transactions to TPU, confirming...", txs.len());
+                
+                // Confirm each transaction
+                for (_i, result) in results.iter_mut().enumerate() {
+                    if let Ok(sig) = result {
+                        match self.rpc_client.confirm_transaction(sig).await {
+                            Ok(_) => {
+                                debug!("Transaction confirmed: {}", sig);
+                            }
+                            Err(e) => {
+                                warn!("Transaction not confirmed: {}: {}", sig, e);
+                                *result = Err(anyhow!("Transaction not confirmed: {}", e));
+                            }
+                        }
+                    }
+                }
 
                 if let Some(ref metrics) = Some(&self.metrics) {
                     metrics.batch_submitted("tpu", txs.len());
@@ -737,51 +747,81 @@ impl SubmissionService {
     }
     
     /// Process incoming transaction messages from processor
+    /// Handle a single transaction with honeybadger retry logic
+    async fn handle_transaction_task(
+        self: Arc<Self>,
+        msg: antegen_sdk::TransactionMessage,
+        executor_keypair: Arc<solana_sdk::signature::Keypair>,
+    ) {
+        info!("Starting task for thread {}", msg.thread_pubkey);
+        
+        // Create a TransactionSubmitter for this task
+        let submitter = crate::submitter::TransactionSubmitter::from_client(
+            self.rpc_client.clone(),
+            self.config.tpu_config.clone(),
+            self.metrics.clone(),
+            self.clock_broadcaster.subscribe(),
+        );
+        
+        // Initialize TPU if configured
+        if let Err(e) = submitter.initialize_tpu().await {
+            warn!("Failed to initialize TPU for thread {}: {}", msg.thread_pubkey, e);
+            // Continue anyway - will fall back to RPC
+        }
+        
+        // Submit using the honeybadger approach
+        // This will run until timeout - success is determined by thread updates
+        match submitter.submit(msg.instructions, executor_keypair).await {
+            Ok(()) => {
+                // Should never happen - submit only returns on timeout (error)
+                warn!("Unexpected return from honeybadger submit for thread {}", msg.thread_pubkey);
+            }
+            Err(e) => {
+                // Timeout reached without thread update
+                log::warn!("Honeybadger timeout for thread {}: {}", msg.thread_pubkey, e);
+                // Metrics already tracked in submitter
+            }
+        }
+    }
+
     pub async fn process_transaction_messages(
-        &self,
-        receiver: crossbeam::channel::Receiver<TransactionMessage>,
+        self: Arc<Self>,
+        receiver: crossbeam::channel::Receiver<ProcessorMessage>,
         executor_keypair: Arc<solana_sdk::signature::Keypair>,
     ) -> Result<()> {
-        use solana_sdk::signer::Signer;
-        
         info!("Starting transaction message processor");
         
+        // Initialize service (wait for RPC) before processing
+        self.initialize().await?;
+        
+        // Simple message routing loop - wrap blocking recv in spawn_blocking
         loop {
-            match receiver.recv() {
-                Ok(msg) => {
-                    // Get recent blockhash
-                    let blockhash = self.rpc_client
-                        .get_latest_blockhash()
-                        .await?;
-                    
-                    // Build transaction with compute budget if specified
-                    let tx = self.build_transaction_with_compute_budget(
-                        msg.instructions,
-                        &executor_keypair.pubkey(),
-                        blockhash,
-                        msg.compute_units,
-                    );
-                    
-                    // Sign transaction
-                    let mut signed_tx = tx;
-                    signed_tx.sign(&[executor_keypair.as_ref()], blockhash);
-                    
-                    // Convert to versioned transaction
-                    let versioned_tx = VersionedTransaction::from(signed_tx);
-                    
-                    // Submit transaction
-                    match self.submit_transaction(&versioned_tx).await {
-                        Ok(sig) => {
-                            info!("Submitted transaction {} for thread {}", sig, msg.thread_pubkey);
-                            self.metrics.transaction_submitted("processor");
-                        }
-                        Err(e) => {
-                            warn!("Failed to submit transaction for thread {}: {}", msg.thread_pubkey, e);
-                            self.metrics.transaction_failed();
-                        }
-                    }
+            let receiver_clone = receiver.clone();
+            let recv_result = tokio::task::spawn_blocking(move || receiver_clone.recv())
+                .await
+                .map_err(|e| anyhow!("Spawn blocking task failed: {}", e))?;
+            
+            match recv_result {
+                Ok(ProcessorMessage::Clock(clock)) => {
+                    // Broadcast clock update immediately to all retry tasks
+                    debug!("Broadcasted clock update: slot {}, timestamp {}", clock.slot, clock.unix_timestamp);
+                    let _ = self.clock_broadcaster.send(clock);
                 }
-                Err(crossbeam::channel::RecvError) => {
+                Ok(ProcessorMessage::Transaction(msg)) => {
+                    info!("Received transaction message for thread {}", msg.thread_pubkey);
+                    // Spawn independent task for this transaction
+                    let service_clone = self.clone();
+                    let executor_keypair_clone = executor_keypair.clone();
+                    
+                    let thread_pubkey = msg.thread_pubkey;
+                    let handle = tokio::spawn(async move {
+                        log::debug!("Task spawned, calling handle_transaction_task for thread {}", thread_pubkey);
+                        service_clone.handle_transaction_task(msg, executor_keypair_clone).await;
+                        log::debug!("Task completed for thread {}", thread_pubkey);
+                    });
+                    debug!("Spawned task for transaction submission: {:?}", handle);
+                }
+                Err(_) => {
                     info!("Transaction receiver channel closed, shutting down processor");
                     break;
                 }
@@ -803,6 +843,7 @@ impl Clone for SubmissionService {
             replay_handle: RwLock::new(None), // Don't clone handle
             metrics: self.metrics.clone(),
             config: self.config.clone(),
+            clock_broadcaster: self.clock_broadcaster.clone(),
         }
     }
 }

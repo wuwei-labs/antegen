@@ -483,6 +483,7 @@ dependencies = [
  "clap 4.5.46",
  "dirs-next",
  "indicatif",
+ "once_cell",
  "reqwest",
  "serde",
  "serde_json",
@@ -501,6 +502,7 @@ dependencies = [
  "termcolor",
  "terminal-link",
  "thiserror 2.0.16",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -509,6 +511,7 @@ version = "0.1.0"
 dependencies = [
  "antegen-adapter",
  "antegen-processor",
+ "antegen-sdk",
  "antegen-submitter",
  "anyhow",
  "async-trait",
@@ -612,6 +615,7 @@ version = "3.0.0"
 dependencies = [
  "anchor-lang",
  "antegen-sdk",
+ "antegen-submitter",
  "antegen-thread-program",
  "anyhow",
  "async-nats",

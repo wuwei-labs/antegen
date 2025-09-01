@@ -8,6 +8,7 @@ use solana_sdk::{
     signature::{read_keypair_file, Keypair},
 };
 use std::sync::Arc;
+use tokio::sync::broadcast;
 
 use crate::clock::SharedClock;
 use crate::executor::ExecutorLogic;
@@ -15,7 +16,7 @@ use crate::metrics::ProcessorMetrics;
 use crate::parser::{classify_account, AccountType};
 use crate::queue::{ThreadQueue, TriggerType};
 use crate::types::{AccountUpdate, ExecutableThread, ProcessorConfig};
-use antegen_sdk::types::TransactionMessage;
+use antegen_sdk::ProcessorMessage;
 
 /// Main processor service that handles thread processing
 pub struct ProcessorService {
@@ -37,8 +38,8 @@ pub struct ProcessorService {
     executor_keypair: Arc<Keypair>,
     /// Account update receiver from adapter
     account_receiver: Receiver<AccountUpdate>,
-    /// Transaction sender to submitter
-    transaction_sender: Sender<TransactionMessage>,
+    /// Clock broadcaster for retry timing
+    clock_broadcaster: broadcast::Sender<solana_sdk::clock::Clock>,
     /// Cached RPC client
     cached_rpc: Arc<CachedRpcClient>,
 }
@@ -48,7 +49,7 @@ impl ProcessorService {
     pub async fn new(
         config: ProcessorConfig,
         account_receiver: Receiver<AccountUpdate>,
-        transaction_sender: Sender<TransactionMessage>,
+        _transaction_sender: Sender<ProcessorMessage>, // Keep for compatibility, but unused
     ) -> Result<Self> {
         // Load executor keypair
         let executor_keypair = Arc::new(
@@ -87,6 +88,9 @@ impl ProcessorService {
             processor_metrics.clone(),
         )?);
 
+        // Create clock broadcaster for retry timing
+        let (clock_broadcaster, _) = broadcast::channel(100);
+
         Ok(Self {
             config,
             rpc_client,
@@ -95,7 +99,7 @@ impl ProcessorService {
             metrics: processor_metrics,
             executor_keypair,
             account_receiver,
-            transaction_sender,
+            clock_broadcaster,
             cached_rpc,
         })
     }
@@ -172,6 +176,16 @@ impl ProcessorService {
                     .update_clock(slot, epoch, unix_timestamp)
                     .await;
 
+                // Broadcast Clock update for retry timing
+                let clock = solana_sdk::clock::Clock {
+                    slot,
+                    epoch,
+                    unix_timestamp,
+                    epoch_start_timestamp: unix_timestamp - ((slot % 432000) as i64 * 400 / 1000),
+                    leader_schedule_epoch: epoch,
+                };
+                let _ = self.clock_broadcaster.send(clock);
+
                 // Check timestamp-based triggers (execution happens automatically)
                 self.thread_queue
                     .check_single_trigger(TriggerType::Time, unix_timestamp as u64)
@@ -235,11 +249,15 @@ impl ProcessorService {
            + Sync
            + Clone {
         let executor = self.executor_logic.clone();
-        let transaction_sender = self.transaction_sender.clone();
+        let rpc_url = self.config.rpc_url.clone();
+        let executor_keypair = self.executor_keypair.clone();
+        let clock_broadcaster = self.clock_broadcaster.clone();
 
         move |thread_pubkey, thread| {
             let executor = executor.clone();
-            let transaction_sender = transaction_sender.clone();
+            let rpc_url = rpc_url.clone();
+            let executor_keypair = executor_keypair.clone();
+            let clock_rx = clock_broadcaster.subscribe();
 
             Box::pin(async move {
                 let blockchain_time = executor.current_timestamp().await;
@@ -262,24 +280,29 @@ impl ProcessorService {
                     )
                     .await?;
 
-                // Create transaction message and send to submitter
-                let transaction_msg = TransactionMessage {
-                    instructions,
-                    thread_pubkey,
-                    executor_pubkey: executor.pubkey(),
-                    priority_fee: None,  // Let submitter decide
-                    compute_units: None, // Let submitter optimize
-                };
+                // Create TransactionSubmitter for this task
+                let submitter = antegen_submitter::TransactionSubmitter::new(
+                    rpc_url,
+                    None, // TPU config - could add to ProcessorConfig if needed
+                    Arc::new(antegen_submitter::SubmitterMetrics::default()),
+                    clock_rx,
+                )?;
 
-                transaction_sender
-                    .send(transaction_msg)
-                    .map_err(|e| anyhow!("Failed to send transaction to submitter: {}", e))?;
+                // Initialize TPU if configured
+                if let Err(e) = submitter.initialize_tpu().await {
+                    debug!("Failed to initialize TPU: {}", e);
+                    // Continue with RPC submission
+                }
 
-                info!("Transaction for thread {} sent to submitter", thread_pubkey);
+                // Submit with honeybadger retry (blocks until timeout)
+                info!(
+                    "Starting honeybadger submission for thread {}",
+                    thread_pubkey
+                );
+                submitter.submit(instructions, executor_keypair).await?;
 
-                // Return a dummy signature since we're not actually submitting
-                // The real signature will be created by the submitter
-                Ok(solana_sdk::signature::Signature::default())
+                // This only returns on timeout (error)
+                Err(anyhow!("Submission timed out for thread {}", thread_pubkey))
             })
         }
     }

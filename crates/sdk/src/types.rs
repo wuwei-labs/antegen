@@ -1,5 +1,14 @@
 use serde::{Deserialize, Serialize};
-use solana_sdk::{instruction::Instruction, pubkey::Pubkey};
+use solana_sdk::{clock::Clock, instruction::Instruction, pubkey::Pubkey};
+
+/// Processor messages that can be sent to the submitter
+#[derive(Clone, Debug)]
+pub enum ProcessorMessage {
+    /// Transaction to be submitted
+    Transaction(TransactionMessage),
+    /// Clock update from the blockchain
+    Clock(Clock),
+}
 
 /// Message containing transaction details for submission
 #[derive(Clone, Debug, Serialize, Deserialize)]

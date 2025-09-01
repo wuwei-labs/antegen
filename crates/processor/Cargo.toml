@@ -34,6 +34,7 @@ base64 = { workspace = true }
 bincode = { workspace = true }
 antegen-sdk = { workspace = true }
 antegen-thread-program = { workspace = true }
+antegen-submitter = { workspace = true }
 anchor-lang = { workspace = true }
 uuid = { workspace = true }
 dashmap = { workspace = true }

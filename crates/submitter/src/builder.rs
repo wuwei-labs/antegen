@@ -4,9 +4,8 @@ use std::sync::Arc;
 
 use crate::{
     ReplayConfig, SubmissionConfig, SubmissionMode, SubmissionService, SubmitterMetrics, TpuConfig,
-    TransactionWorkerPool, WorkerPoolConfig,
 };
-use antegen_sdk::types::TransactionMessage;
+use antegen_sdk::ProcessorMessage;
 
 /// Builder for SubmissionService
 pub struct SubmitterBuilder {
@@ -15,9 +14,8 @@ pub struct SubmitterBuilder {
     tpu_config: Option<TpuConfig>,
     replay_config: ReplayConfig,
     metrics: Option<Arc<SubmitterMetrics>>,
-    transaction_receiver: Option<Receiver<TransactionMessage>>,
+    transaction_receiver: Option<Receiver<ProcessorMessage>>,
     executor_keypair: Option<Arc<solana_sdk::signature::Keypair>>,
-    worker_pool_config: Option<WorkerPoolConfig>,
 }
 
 impl Default for SubmitterBuilder {
@@ -30,7 +28,6 @@ impl Default for SubmitterBuilder {
             metrics: None,
             transaction_receiver: None,
             executor_keypair: None,
-            worker_pool_config: None,
         }
     }
 }
@@ -112,7 +109,7 @@ impl SubmitterBuilder {
     }
 
     /// Set transaction receiver from processor
-    pub fn transaction_receiver(mut self, receiver: Receiver<TransactionMessage>) -> Self {
+    pub fn transaction_receiver(mut self, receiver: Receiver<ProcessorMessage>) -> Self {
         self.transaction_receiver = Some(receiver);
         self
     }
@@ -122,19 +119,6 @@ impl SubmitterBuilder {
         self.executor_keypair = Some(keypair);
         self
     }
-    
-    /// Enable worker pool with default configuration
-    pub fn with_worker_pool(mut self) -> Self {
-        self.worker_pool_config = Some(WorkerPoolConfig::default());
-        self
-    }
-    
-    /// Set custom worker pool configuration
-    pub fn worker_pool_config(mut self, config: WorkerPoolConfig) -> Self {
-        self.worker_pool_config = Some(config);
-        self
-    }
-
     /// Build from existing config (for compatibility)
     pub fn from_config(config: SubmissionConfig) -> Self {
         Self {
@@ -145,7 +129,6 @@ impl SubmitterBuilder {
             metrics: None,
             transaction_receiver: None,
             executor_keypair: None,
-            worker_pool_config: None,
         }
     }
 
@@ -163,8 +146,8 @@ impl SubmitterBuilder {
         // Create submission service
         let service = SubmissionService::new(self.rpc_url, config, metrics.clone()).await?;
 
-        // Initialize the service
-        service.initialize().await?;
+        // NOTE: Don't initialize here - let it happen lazily when the service starts
+        // Otherwise we block the Geyser plugin load which prevents the validator from starting
 
         // If transaction receiver is provided, start processing task
         if let Some(receiver) = self.transaction_receiver {
@@ -172,37 +155,16 @@ impl SubmitterBuilder {
                 anyhow::anyhow!("Executor keypair required when using transaction receiver")
             })?;
 
-            // Use worker pool if configured
-            if let Some(pool_config) = self.worker_pool_config {
-                let pool_metrics = metrics
-                    .unwrap_or_else(|| Arc::new(SubmitterMetrics::default()));
-                
-                let worker_pool = Arc::new(TransactionWorkerPool::new(
-                    Arc::new(service.clone()),
-                    pool_config,
-                    pool_metrics,
-                ));
-                
-                tokio::spawn(async move {
-                    if let Err(e) = worker_pool
-                        .process_with_batching(receiver, executor_keypair)
-                        .await
-                    {
-                        log::error!("Worker pool processor error: {}", e);
-                    }
-                });
-            } else {
-                // Use simple serial processing
-                let service_clone = service.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = service_clone
-                        .process_transaction_messages(receiver, executor_keypair)
-                        .await
-                    {
-                        log::error!("Transaction processor error: {}", e);
-                    }
-                });
-            }
+            // Start the message processor directly (no worker pool)
+            let service_arc = Arc::new(service.clone());
+            tokio::spawn(async move {
+                if let Err(e) = service_arc
+                    .process_transaction_messages(receiver, executor_keypair)
+                    .await
+                {
+                    log::error!("Transaction processor error: {}", e);
+                }
+            });
         }
 
         Ok(service)

@@ -1,13 +1,9 @@
-use std::{convert::TryFrom, fs, path::PathBuf, str::FromStr};
+use std::{convert::TryFrom, fs, str::FromStr};
 
 use antegen_sdk::state::{Trigger, SerializableAccountMeta, SerializableInstruction};
 use clap::ArgMatches;
 use serde::{Deserialize as JsonDeserialize, Serialize as JsonSerialize};
-use solana_sdk::{
-    pubkey::Pubkey,
-    signature::read_keypair_file,
-    signer::Signer,
-};
+use solana_sdk::pubkey::Pubkey;
 
 use crate::{cli::CliCommand, errors::CliError};
 
@@ -28,66 +24,29 @@ impl TryFrom<&ArgMatches> for CliCommand {
 
 // Command parsers
 fn parse_bpf_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
-    let mut program_infos = Vec::<ProgramInfo>::new();
-    let mut clone_addresses = Vec::<Pubkey>::new();
-
-    if let Some(values) = matches.get_many::<String>("bpf_program") {
-        let values: Vec<String> = values.cloned().collect();
-        for address_program in values.chunks(2) {
-            match address_program {
-                [address, program] => {
-                    let address = address
-                        .parse::<Pubkey>()
-                        .or_else(|_| read_keypair_file(address).map(|keypair| keypair.pubkey()));
-
-                    if address.is_err() {
-                        return Err(CliError::InvalidAddress);
-                    }
-
-                    let program_path = PathBuf::from(program);
-
-                    if !program_path.exists() {
-                        return Err(CliError::InvalidProgramFile);
-                    }
-
-                    program_infos.push(ProgramInfo {
-                        program_id: address.unwrap(),
-                        program_path,
-                    });
-                }
-                _ => unreachable!(),
-            }
+    match matches.subcommand() {
+        Some(("start", matches)) => {
+            let config = parse_string("config", matches).ok();
+            let validator = parse_string("validator", matches).ok();
+            let clients = matches
+                .get_many::<String>("client")
+                .map(|values| values.cloned().collect())
+                .unwrap_or_default();
+            let release = matches.get_flag("release");
+            
+            Ok(CliCommand::LocalnetStart {
+                config,
+                validator,
+                clients,
+                release,
+            })
         }
+        Some(("stop", _)) => Ok(CliCommand::LocalnetStop),
+        Some(("status", _)) => Ok(CliCommand::LocalnetStatus),
+        _ => Err(CliError::CommandNotRecognized(
+            matches.subcommand().unwrap().0.into(),
+        )),
     }
-
-    if let Some(values) = matches.get_many::<String>("clone") {
-        let values: Vec<String> = values.cloned().collect();
-        for value in values {
-            let address = value
-                .parse::<Pubkey>()
-                .map_err(|_| CliError::InvalidAddress)
-                .unwrap();
-            clone_addresses.push(address);
-        }
-    }
-
-    Ok(CliCommand::Localnet {
-        clone_addresses,
-        program_infos,
-        force_init: matches.get_flag("force_init"),
-        solana_archive: parse_string("solana_archive", matches).ok(),
-        antegen_archive: parse_string("antegen_archive", matches).ok(),
-        dev: matches.get_flag("dev"),
-        enable_replay: matches.get_flag("enable_replay"),
-        nats_url: parse_string("nats_url", matches).ok(),
-        replay_delay_ms: parse_u64("replay_delay_ms", matches).unwrap_or(30000),
-        forgo_commission: matches.get_flag("forgo_commission"),
-        trailing_args: matches
-            .get_many::<String>("test_validator_args")
-            .unwrap_or_default()
-            .map(|s| s.to_string())
-            .collect(),
-    })
 }
 
 fn parse_crontab_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
@@ -175,12 +134,6 @@ pub fn _parse_i64(arg: &str, matches: &ArgMatches) -> Result<i64, CliError> {
         .unwrap())
 }
 
-pub fn parse_u64(arg: &str, matches: &ArgMatches) -> Result<u64, CliError> {
-    Ok(parse_string(arg, matches)?
-        .parse::<u64>()
-        .map_err(|_err| CliError::BadParameter(arg.into()))
-        .unwrap())
-}
 
 // Json parsers
 
@@ -236,8 +189,3 @@ impl TryFrom<&JsonAccountMetaData> for SerializableAccountMeta {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProgramInfo {
-    pub program_id: Pubkey,
-    pub program_path: PathBuf,
-}

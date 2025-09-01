@@ -1,6 +1,5 @@
 mod crontab;
 mod localnet;
-// mod snapshot;
 mod thread;
 
 use {
@@ -19,15 +18,15 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
 
     match command {
         // Set solana config if using localnet command
-        CliCommand::Localnet { .. } => {
+        CliCommand::LocalnetStart { .. } => {
             set_solana_config().map_err(|err| CliError::FailedLocalnet(err.to_string()))?
         }
         _ => {}
     }
 
-    let mut config = CliConfig::load();
+    let config = CliConfig::load();
 
-    // Build the RPC client
+    // Build the RPC client (not needed for all localnet commands)
     let payer = read_keypair_file(&config.keypair_path)
         .map_err(|_| CliError::KeypairNotFound(config.keypair_path.clone()))?;
 
@@ -36,33 +35,14 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
     // Process the command
     match command {
         CliCommand::Crontab { schedule } => crontab::get(&client, schedule),
-        CliCommand::Localnet {
-            clone_addresses,
-            program_infos,
-            force_init,
-            solana_archive,
-            antegen_archive,
-            dev,
-            enable_replay,
-            nats_url,
-            replay_delay_ms,
-            forgo_commission,
-            trailing_args,
-        } => localnet::start(
-            &mut config,
-            &client,
-            clone_addresses,
-            program_infos,
-            force_init,
-            solana_archive,
-            antegen_archive,
-            dev,
-            enable_replay,
-            nats_url,
-            replay_delay_ms,
-            forgo_commission,
-            trailing_args,
-        ),
+        CliCommand::LocalnetStart {
+            config: config_path,
+            validator,
+            clients,
+            release,
+        } => localnet::start(config_path, validator, clients, release),
+        CliCommand::LocalnetStop => localnet::stop(),
+        CliCommand::LocalnetStatus => localnet::status(),
         CliCommand::ThreadCreate { id, trigger } => thread::create(&client, id, trigger),
         CliCommand::ThreadDelete { id, address } => {
             let pubkey = parse_pubkey_from_id_or_address(client.payer_pubkey(), id, address)?;

@@ -16,4 +16,5 @@ tokio = { workspace = true }
 # Internal dependencies
 antegen-adapter = { path = "../adapter" }
 antegen-processor = { path = "../processor" }
+antegen-sdk = { path = "../sdk" }
 antegen-submitter = { path = "../submitter" }

@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use crossbeam::channel::{bounded, Receiver, Sender, TryRecvError};
+use crossbeam::channel::{bounded, Receiver, Sender};
 use log::{error, info};
 use solana_program::pubkey::Pubkey;
 use solana_sdk::{
@@ -11,8 +11,8 @@ use std::fmt::Debug;
 use tokio::runtime::Handle;
 
 use antegen_adapter::builder::AdapterBuilder;
-use antegen_adapter::events::{EventSource, ObservedEvent};
-use antegen_client::AntegenClient;
+use antegen_adapter::events::ObservedEvent;
+use antegen_client::{AntegenClient, DatasourceBuilder};
 use antegen_processor::builder::ProcessorBuilder;
 use antegen_submitter::builder::SubmitterBuilder;
 
@@ -57,14 +57,14 @@ impl PluginWorkerBuilder {
             keypair_path, executor_pubkey
         );
 
-        // Create Geyser event source
-        let event_source = Box::new(GeyserPluginEventSource::new(observed_rx));
+        // Create Geyser datasource
+        let datasource = Box::new(GeyserDatasource::new(observed_rx));
 
         // Build the client using the builder pattern
         let mut client_builder = AntegenClient::builder()
+            .datasource(datasource)
             .adapter(
-                AdapterBuilder::geyser()
-                    .event_source(event_source)
+                AdapterBuilder::default()
                     .adapter_pubkey(executor_pubkey),
             )
             .processor(
@@ -84,13 +84,15 @@ impl PluginWorkerBuilder {
                 SubmitterBuilder::new()
                     .rpc_url(rpc_url)
                     .executor_keypair(keypair.clone())
-                    .replay_config(replay_config),
+                    .replay_config(replay_config)
+                    .tpu_enabled(),
             );
         } else {
             client_builder = client_builder.submitter(
                 SubmitterBuilder::new()
                     .rpc_url(rpc_url)
-                    .executor_keypair(keypair.clone()),
+                    .executor_keypair(keypair.clone())
+                    .tpu_enabled(),
             );
         }
 
@@ -145,69 +147,41 @@ impl PluginWorkerBuilder {
     }
 }
 
-/// Event source that receives events from the Geyser plugin
-struct GeyserPluginEventSource {
+/// Geyser datasource that receives events from the Geyser plugin
+struct GeyserDatasource {
     receiver: Receiver<ObservedEvent>,
-    running: bool,
 }
 
-impl GeyserPluginEventSource {
+impl GeyserDatasource {
     fn new(receiver: Receiver<ObservedEvent>) -> Self {
-        Self {
-            receiver,
-            running: false,
-        }
+        Self { receiver }
     }
 }
 
 #[async_trait]
-impl EventSource for GeyserPluginEventSource {
-    async fn start(&mut self) -> Result<()> {
-        info!("Starting GeyserPluginEventSource");
-        self.running = true;
-        Ok(())
-    }
-
-    async fn stop(&mut self) -> Result<()> {
-        info!("Stopping GeyserPluginEventSource");
-        self.running = false;
-        Ok(())
-    }
-
-    async fn next_event(&mut self) -> Result<Option<ObservedEvent>> {
-        if !self.running {
-            return Ok(None);
-        }
-
-        // Non-blocking receive
-        match self.receiver.try_recv() {
-            Ok(event) => Ok(Some(event)),
-            Err(TryRecvError::Empty) => Ok(None),
-            Err(TryRecvError::Disconnected) => {
-                error!("Event channel disconnected");
-                self.running = false;
-                Ok(None)
+impl DatasourceBuilder for GeyserDatasource {
+    async fn run(&self, sender: Sender<ObservedEvent>) -> Result<()> {
+        info!("Starting GeyserDatasource");
+        
+        loop {
+            // Blocking receive - will wait for events
+            match self.receiver.recv() {
+                Ok(event) => {
+                    // Forward event to the adapter
+                    if let Err(e) = sender.send(event) {
+                        error!("Failed to send event to adapter: {}", e);
+                        break;
+                    }
+                }
+                Err(e) => {
+                    info!("GeyserDatasource channel disconnected: {}", e);
+                    break;
+                }
             }
         }
-    }
-
-    async fn subscribe_thread(&mut self, _thread_pubkey: Pubkey) -> Result<()> {
-        // No-op - we receive all events from Geyser
+        
+        info!("GeyserDatasource stopped");
         Ok(())
-    }
-
-    async fn unsubscribe_thread(&mut self, _thread_pubkey: Pubkey) -> Result<()> {
-        // No-op - we receive all events from Geyser
-        Ok(())
-    }
-
-    async fn get_current_slot(&self) -> Result<u64> {
-        // This would need to be tracked from clock events
-        Ok(0)
-    }
-
-    fn name(&self) -> &str {
-        "GeyserPluginEventSource"
     }
 }
 
