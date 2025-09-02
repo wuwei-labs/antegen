@@ -484,6 +484,7 @@ dependencies = [
  "dirs-next",
  "indicatif",
  "once_cell",
+ "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_json",

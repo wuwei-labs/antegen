@@ -8,28 +8,28 @@ use {
 #[macro_export]
 macro_rules! print_status {
     ($action:expr, $($args: tt)*) => {
-        print_style($action, &format!($($args)*), termcolor::Color::Green, true)
+        $crate::print::print_style($action, &format!($($args)*), termcolor::Color::Green, true)
     };
 }
 
 #[macro_export]
 macro_rules! print_note {
      ($($args: tt)*) => {
-        print_style("note", &format!($($args)*), termcolor::Color::Cyan, true)
+        $crate::print::print_style("note", &format!($($args)*), termcolor::Color::Cyan, true)
     };
 }
 
 #[macro_export]
 macro_rules! print_warn {
      ($($args: tt)*) => {
-        print_style("warning", &format!($($args)*), termcolor::Color::Yellow, false)
+        $crate::print::print_style("warning", &format!($($args)*), termcolor::Color::Yellow, false)
     };
 }
 
 #[macro_export]
 macro_rules! print_error {
      ($($args: tt)*) => {
-        print_style("ERROR", &format!($($args)*), termcolor::Color::Red, false)
+        $crate::print::print_style("ERROR", &format!($($args)*), termcolor::Color::Red, false)
     };
 }
 

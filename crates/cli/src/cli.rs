@@ -35,6 +35,14 @@ pub enum CliCommand {
         id: String,
         schedule: Option<String>,
     },
+    ThreadStressTest {
+        count: u32,
+        interval: u64,
+        jitter: u64,
+        prefix: String,
+        with_fibers: bool,
+        batch_size: u32,
+    },
 
 }
 
@@ -229,6 +237,56 @@ pub fn app() -> Command {
                                 .num_args(1)
                                 .required(false)
                                 .help("The cron schedule of the thread"),
+                        ),
+                )
+                .subcommand(
+                    Command::new("stress-test")
+                        .about("Create multiple test threads for stress testing")
+                        .arg(
+                            Arg::new("count")
+                                .long("count")
+                                .short('c')
+                                .value_name("COUNT")
+                                .default_value("100")
+                                .help("Number of threads to create")
+                        )
+                        .arg(
+                            Arg::new("interval")
+                                .long("interval")
+                                .short('i')
+                                .value_name("SECONDS")
+                                .default_value("30")
+                                .help("Base interval in seconds for thread triggers")
+                        )
+                        .arg(
+                            Arg::new("jitter")
+                                .long("jitter")
+                                .short('j')
+                                .value_name("SECONDS")
+                                .default_value("5")
+                                .help("Random jitter in seconds to add/subtract from base interval")
+                        )
+                        .arg(
+                            Arg::new("prefix")
+                                .long("prefix")
+                                .short('p')
+                                .value_name("PREFIX")
+                                .default_value("stress-test")
+                                .help("Prefix for thread IDs")
+                        )
+                        .arg(
+                            Arg::new("with-fibers")
+                                .long("with-fibers")
+                                .action(clap::ArgAction::SetTrue)
+                                .help("Create fibers with memo instructions for each thread")
+                        )
+                        .arg(
+                            Arg::new("batch-size")
+                                .long("batch-size")
+                                .short('b')
+                                .value_name("SIZE")
+                                .default_value("10")
+                                .help("Number of threads to create per batch (to avoid rate limiting)")
                         ),
                 ),
         )

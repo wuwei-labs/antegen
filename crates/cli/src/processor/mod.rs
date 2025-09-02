@@ -54,6 +54,14 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             thread::get(&client, pubkey)
         }
         CliCommand::ThreadUpdate { id, schedule } => thread::update(&client, id, schedule),
+        CliCommand::ThreadStressTest {
+            count,
+            interval,
+            jitter,
+            prefix,
+            with_fibers,
+            batch_size,
+        } => thread::stress_test(&client, count, interval, jitter, prefix, with_fibers, batch_size),
     }
 }
 
