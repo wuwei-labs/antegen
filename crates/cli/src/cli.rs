@@ -16,6 +16,16 @@ pub enum CliCommand {
     },
     LocalnetStop,
     LocalnetStatus,
+    LocalnetClientAdd {
+        client_type: String,
+        name: Option<String>,
+        rpc_url: Option<String>,
+        keypair: Option<String>,
+    },
+    LocalnetClientRemove {
+        name: String,
+    },
+    LocalnetClientList,
     ThreadCreate {
         id: String,
         trigger: Trigger,
@@ -112,6 +122,62 @@ pub fn app() -> Command {
                 .subcommand(
                     Command::new("status")
                         .about("Get status of the running localnet")
+                )
+                .subcommand(
+                    Command::new("client")
+                        .about("Manage localnet clients")
+                        .arg_required_else_help(true)
+                        .subcommand(
+                            Command::new("add")
+                                .about("Add a new client to the running localnet")
+                                .arg(
+                                    Arg::new("type")
+                                        .long("type")
+                                        .short('t')
+                                        .value_name("TYPE")
+                                        .num_args(1)
+                                        .required(true)
+                                        .help("Client type (carbon)")
+                                )
+                                .arg(
+                                    Arg::new("name")
+                                        .long("name")
+                                        .short('n')
+                                        .value_name("NAME")
+                                        .num_args(1)
+                                        .help("Client name (defaults to type-N)")
+                                )
+                                .arg(
+                                    Arg::new("rpc-url")
+                                        .long("rpc-url")
+                                        .value_name("URL")
+                                        .num_args(1)
+                                        .help("RPC URL (default: http://localhost:8899)")
+                                )
+                                .arg(
+                                    Arg::new("keypair")
+                                        .long("keypair")
+                                        .short('k')
+                                        .value_name("PATH")
+                                        .num_args(1)
+                                        .help("Path to keypair file")
+                                )
+                        )
+                        .subcommand(
+                            Command::new("remove")
+                                .about("Remove a client from the running localnet")
+                                .arg(
+                                    Arg::new("name")
+                                        .index(1)
+                                        .value_name("NAME")
+                                        .required(true)
+                                        .help("Client name to remove")
+                                )
+                        )
+                        .subcommand(
+                            Command::new("list")
+                                .about("List all running clients")
+                        )
                 )
         )
         .subcommand(

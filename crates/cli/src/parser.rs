@@ -43,6 +43,29 @@ fn parse_bpf_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
         }
         Some(("stop", _)) => Ok(CliCommand::LocalnetStop),
         Some(("status", _)) => Ok(CliCommand::LocalnetStatus),
+        Some(("client", matches)) => parse_localnet_client_command(matches),
+        _ => Err(CliError::CommandNotRecognized(
+            matches.subcommand().unwrap().0.into(),
+        )),
+    }
+}
+
+fn parse_localnet_client_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
+    match matches.subcommand() {
+        Some(("add", matches)) => {
+            Ok(CliCommand::LocalnetClientAdd {
+                client_type: parse_string("type", matches)?,
+                name: matches.get_one::<String>("name").cloned(),
+                rpc_url: matches.get_one::<String>("rpc-url").cloned(),
+                keypair: matches.get_one::<String>("keypair").cloned(),
+            })
+        }
+        Some(("remove", matches)) => {
+            Ok(CliCommand::LocalnetClientRemove {
+                name: parse_string("name", matches)?,
+            })
+        }
+        Some(("list", _)) => Ok(CliCommand::LocalnetClientList),
         _ => Err(CliError::CommandNotRecognized(
             matches.subcommand().unwrap().0.into(),
         )),

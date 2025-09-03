@@ -43,6 +43,14 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
         } => localnet::start(config_path, validator, clients, release),
         CliCommand::LocalnetStop => localnet::stop(),
         CliCommand::LocalnetStatus => localnet::status(),
+        CliCommand::LocalnetClientAdd {
+            client_type,
+            name,
+            rpc_url,
+            keypair,
+        } => localnet::add_client(client_type, name, rpc_url, keypair),
+        CliCommand::LocalnetClientRemove { name } => localnet::remove_client(name),
+        CliCommand::LocalnetClientList => localnet::list_clients(),
         CliCommand::ThreadCreate { id, trigger } => thread::create(&client, id, trigger),
         CliCommand::ThreadDelete { id, address } => {
             let pubkey = parse_pubkey_from_id_or_address(client.payer_pubkey(), id, address)?;

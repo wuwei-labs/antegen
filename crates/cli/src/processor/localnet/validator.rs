@@ -12,6 +12,7 @@ pub struct ValidatorStatus {
     pub pid: Option<u32>,
     pub rpc_url: String,
     pub ws_url: String,
+    pub validator_type: String,
 }
 
 /// Trait for validator implementations
@@ -38,15 +39,17 @@ pub struct SolanaValidator {
     process: Option<Child>,
     binary_path: PathBuf,
     programs: Vec<(Pubkey, PathBuf)>,
+    runtime_dir: PathBuf,
 }
 
 impl SolanaValidator {
-    pub fn new(config: ValidatorConfig, binary_path: PathBuf) -> Self {
+    pub fn new(config: ValidatorConfig, binary_path: PathBuf, runtime_dir: PathBuf) -> Self {
         Self {
             config,
             process: None,
             binary_path,
             programs: Vec::new(),
+            runtime_dir,
         }
     }
     
@@ -102,11 +105,17 @@ impl Validator for SolanaValidator {
         print!("  Starting Solana validator... ");
         std::io::Write::flush(&mut std::io::stdout()).ok();
         
-        // Create log file
+        // Ensure runtime directory exists
+        std::fs::create_dir_all(&self.runtime_dir)?;
+        
+        // Ensure ledger directory exists  
+        std::fs::create_dir_all(&self.config.ledger_dir)?;
+        
+        // Create log file in runtime directory
         let log_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("validator.log")?;
+            .open(self.runtime_dir.join("validator.log"))?;
         
         let mut cmd = self.build_command();
         
@@ -141,6 +150,7 @@ impl Validator for SolanaValidator {
             pid: self.process.as_ref().and_then(|p| p.id().try_into().ok()),
             rpc_url: self.config.rpc_url.clone(),
             ws_url: self.config.ws_url.clone(),
+            validator_type: self.config.validator_type.clone(),
         }
     }
     
@@ -176,14 +186,49 @@ impl Validator for SolanaValidator {
 pub fn create_validator(config: ValidatorConfig, runtime_dir: &PathBuf) -> Result<Box<dyn Validator>> {
     match config.validator_type.as_str() {
         "solana" => {
-            // In dev mode, look for binary in target/VERSION dir, otherwise in runtime dir
-            let binary_path = if runtime_dir == &PathBuf::from(".") {
-                let antegen_version = env!("CARGO_PKG_VERSION");
-                PathBuf::from("target").join(antegen_version).join("solana-test-validator")
+            // First try to find solana-test-validator in PATH
+            let binary_path = if let Ok(path_output) = std::process::Command::new("which")
+                .arg("solana-test-validator")
+                .output()
+            {
+                let path_str = String::from_utf8_lossy(&path_output.stdout);
+                let path_str = path_str.trim();
+                if !path_str.is_empty() && PathBuf::from(path_str).exists() {
+                    PathBuf::from(path_str)
+                } else {
+                    // Try runtime dir
+                    let runtime_path = runtime_dir.join("solana-test-validator");
+                    if !runtime_path.exists() {
+                        // Download if not present
+                        println!("Downloading solana-test-validator...");
+                        crate::deps::download_deps(
+                            runtime_dir,
+                            false, // force_init
+                            None,  // solana_archive
+                            None,  // antegen_archive
+                            false, // dev mode
+                        )?;
+                    }
+                    runtime_path
+                }
             } else {
-                runtime_dir.join("solana-test-validator")
+                // Try runtime dir
+                let runtime_path = runtime_dir.join("solana-test-validator");
+                if !runtime_path.exists() {
+                    // Download if not present
+                    println!("Downloading solana-test-validator...");
+                    crate::deps::download_deps(
+                        runtime_dir,
+                        false, // force_init
+                        None,  // solana_archive
+                        None,  // antegen_archive
+                        false, // dev mode
+                    )?;
+                }
+                runtime_path
             };
-            Ok(Box::new(SolanaValidator::new(config, binary_path)))
+            
+            Ok(Box::new(SolanaValidator::new(config, binary_path, runtime_dir.clone())))
         }
         // Future: Add support for other validators
         // "firedancer" => ...

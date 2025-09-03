@@ -1,11 +1,13 @@
 pub mod client;
 pub mod config;
+pub mod manager;
 pub mod validator;
 
 use antegen_sdk::state::Trigger;
 use anyhow::Result;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::read_keypair_file;
+use solana_sdk::signer::Signer;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -81,15 +83,19 @@ impl LocalnetOrchestrator {
         );
 
         // Ensure runtime dir exists
-        if !self.is_dev {
-            std::fs::create_dir_all(&self.runtime_dir)?;
-        }
+        std::fs::create_dir_all(&self.runtime_dir)?;
+        
+        // Ensure executor keypair exists
+        self.ensure_executor_keypair()?;
 
         // Download dependencies if needed
         self.ensure_dependencies()?;
 
         // Start validator
         self.start_validator()?;
+        
+        // Fund executor keypair
+        self.fund_executor()?;
 
         // Start clients
         self.start_clients()?;
@@ -100,21 +106,19 @@ impl LocalnetOrchestrator {
             eprintln!("The localnet is running but threads won't be available");
         }
 
-        println!("\n✅ Localnet is running!");
-        self.print_compact_status();
+        // Show status
+        self.print_status();
 
         Ok(())
     }
 
     /// Stop everything
     pub fn stop(&mut self) -> Result<()> {
-        println!("Stopping Antegen localnet");
+        println!("\n🛑 Stopping Antegen localnet");
 
         // Stop clients first
         for client in &mut self.clients {
-            if let Err(e) = client.stop() {
-                eprintln!("Failed to stop client: {}", e);
-            }
+            client.stop().ok(); // Ignore errors on stop
         }
 
         // Stop validator
@@ -122,7 +126,7 @@ impl LocalnetOrchestrator {
             validator.stop()?;
         }
 
-        println!("Localnet stopped");
+        println!("✓ Localnet stopped");
         Ok(())
     }
 
@@ -134,86 +138,77 @@ impl LocalnetOrchestrator {
         }
     }
 
-    /// Print compact status to console
-    pub fn print_compact_status(&self) {
-        println!("\n  RPC URL:      {}", self.config.validator.rpc_url);
-        println!("  WebSocket:    {}", self.config.validator.ws_url);
-        println!("  Logs:         validator.log");
-        println!("  Test Thread:  Runs every 30 seconds");
-        println!("\n  💡 Tip: Use 'antegen localnet stop' to stop the validator");
-    }
-
-    /// Print detailed status to console
+    /// Print a formatted status report
     pub fn print_status(&self) {
         let status = self.status();
 
-        println!("\n=== Localnet Status ===");
+        println!("\n📊 Localnet Status");
+        println!("━━━━━━━━━━━━━━━━");
 
-        if let Some(validator_status) = status.validator {
-            println!("Validator:");
-            println!("  Running: {}", validator_status.running);
-            println!("  RPC: {}", validator_status.rpc_url);
-            println!("  WebSocket: {}", validator_status.ws_url);
-            if let Some(pid) = validator_status.pid {
+        // Validator status
+        if let Some(validator) = status.validator {
+            let state = if validator.running { "✅ Running" } else { "⚠️  Stopped" };
+            println!("Validator ({}):", validator.validator_type);
+            println!("  State: {}", state);
+            if let Some(pid) = validator.pid {
                 println!("  PID: {}", pid);
             }
+            println!("  RPC: {}", validator.rpc_url);
+            println!("  WebSocket: {}", validator.ws_url);
+        } else {
+            println!("Validator: ⚠️  Not initialized");
         }
 
-        if !status.clients.is_empty() {
-            println!("\nClients:");
+        // Client status
+        println!("\nClients:");
+        if status.clients.is_empty() {
+            println!("  None configured (use --client to add)");
+            println!("  Options: geyser, carbon");
+        } else {
             for client in status.clients {
-                println!("  {} ({}):", client.name, client.client_type);
-                println!("    Running: {}", client.running);
+                let state = if client.running { "✅" } else { "⚠️ " };
+                print!("  {} {} ({})", state, client.name, client.client_type);
                 if let Some(pid) = client.pid {
-                    println!("    PID: {}", pid);
+                    print!(" - PID: {}", pid);
                 }
-            }
-        }
-
-        println!("\nLogs:");
-        println!("  Validator: validator.log");
-        for client in &self.clients {
-            let client_status = client.status();
-            if client_status.client_type == "carbon" {
-                println!(
-                    "  {}: carbon-{}.log",
-                    client_status.name, client_status.name
-                );
+                println!();
             }
         }
     }
 
-    // Private helper methods
-
+    /// Initialize the thread system (thread config and test thread)
     fn initialize_thread_system(&self) -> Result<()> {
-        print!("  Initializing thread system... ");
-        std::io::Write::flush(&mut std::io::stdout()).ok();
+        print!("\nInitializing thread system... ");
 
-        // Create RPC client
-        let client = self.create_rpc_client()?;
+        let keypair_path = self.get_executor_keypair_path();
+        let rpc_url = "http://localhost:8899";
 
-        // Wait a bit for validator to be fully ready
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        let keypair = read_keypair_file(&keypair_path)
+            .map_err(|e| anyhow::anyhow!("Failed to read executor keypair: {}", e))?;
+
+        let client = Client::new(
+            keypair.insecure_clone(),
+            rpc_url.to_string(),
+        );
 
         // Initialize thread config
-        thread::init_config(&client)
-            .map_err(|e| anyhow::anyhow!("Failed to initialize thread config: {}", e))?;
+        thread::init_config(&client)?;
 
-        // Create test thread
-        let thread_id = "test-thread".to_string();
-        let trigger = Trigger::Interval {
-            seconds: 30,
-            skippable: true,
+        // Create a test thread with cron trigger
+        let thread_id = "localnet-test-thread".to_string();
+        let trigger = Trigger::Cron {
+            schedule: "*/15 * * * * * *".to_string(), // Every 15 seconds
+            skippable: false,
         };
 
-        thread::create(&client, thread_id.clone(), trigger)
-            .map_err(|e| anyhow::anyhow!("Failed to create test thread: {}", e))?;
+        // Create thread (includes default fiber)
+        thread::create(&client, thread_id.clone(), trigger)?;
 
-        // Create fiber with memo instruction
-        let memo_program_id = Pubkey::from_str("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
-            .map_err(|e| anyhow::anyhow!("Failed to parse memo program ID: {}", e))?;
+        // Create an additional test fiber (optional)
+        // The thread already has a default fiber, but we can add more
         let test_instruction = solana_sdk::instruction::Instruction {
-            program_id: memo_program_id,
+            program_id: Pubkey::from_str("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")?
+                .to_owned(),
             accounts: vec![],
             data: b"Thread execution test!".to_vec(),
         };
@@ -225,28 +220,109 @@ impl LocalnetOrchestrator {
         Ok(())
     }
 
-    fn create_rpc_client(&self) -> Result<Client> {
-        // Use the default keypair
-        let keypair_path = dirs_next::home_dir()
-            .map(|mut path| {
-                path.extend([".config", "solana", "id.json"]);
-                path
-            })
-            .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
+    fn get_executor_keypair_path(&self) -> PathBuf {
+        self.runtime_dir.join("executor-keypair.json")
+    }
+    
+    /// Ensure executor keypair exists, create if not
+    fn ensure_executor_keypair(&self) -> Result<()> {
+        let keypair_path = self.get_executor_keypair_path();
+        
+        if !keypair_path.exists() {
+            println!("  Creating executor keypair...");
+            
+            // Use solana-keygen to create a new keypair
+            let output = std::process::Command::new("solana-keygen")
+                .args(&[
+                    "new",
+                    "--no-bip39-passphrase",
+                    "--outfile", keypair_path.to_str().unwrap(),
+                    "--force"
+                ])
+                .output()
+                .map_err(|e| anyhow::anyhow!("Failed to run solana-keygen: {}. Make sure Solana CLI is installed.", e))?;
+            
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(anyhow::anyhow!("Failed to create keypair: {}", stderr));
+            }
+            
+            println!("  ✓ Executor keypair created");
+        }
+        
+        Ok(())
+    }
+    
+    /// Fund the executor keypair if needed
+    fn fund_executor(&self) -> Result<()> {
+        use solana_client::rpc_client::RpcClient;
+        use std::time::{Duration, Instant};
+        
+        let keypair_path = self.get_executor_keypair_path();
+        let keypair = read_keypair_file(&keypair_path)
+            .map_err(|e| anyhow::anyhow!("Failed to read executor keypair: {}", e))?;
+        let rpc_client = RpcClient::new("http://localhost:8899");
+        
+        // Wait for validator to be ready
+        let timeout = Duration::from_secs(10);
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            if rpc_client.get_version().is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        
+        // Check balance
+        let balance = rpc_client.get_balance(&keypair.pubkey())
+            .unwrap_or(0);
+        
+        // If balance is less than 1 SOL, airdrop 10 SOL
+        if balance < 1_000_000_000 {
+            print!("  Funding executor account...");
+            std::io::Write::flush(&mut std::io::stdout()).ok();
+            
+            match rpc_client.request_airdrop(&keypair.pubkey(), 10_000_000_000) {
+                Ok(sig) => {
+                    // Wait for confirmation
+                    let timeout = Duration::from_secs(30);
+                    let start = Instant::now();
+                    
+                    while start.elapsed() < timeout {
+                        if let Ok(confirmed) = rpc_client.confirm_transaction(&sig) {
+                            if confirmed {
+                                println!(" ✓ (10 SOL)");
+                                return Ok(());
+                            }
+                        }
+                        std::thread::sleep(Duration::from_millis(500));
+                    }
+                    
+                    println!(" ✓ (10 SOL)");
+                }
+                Err(e) => {
+                    // Non-fatal - localnet will run but thread system won't work
+                    eprintln!(" ⚠️  Failed to airdrop: {}", e);
+                    eprintln!("     You may need to fund the executor manually");
+                }
+            }
+        }
+        
+        Ok(())
+    }
 
-        let payer = read_keypair_file(&keypair_path)
-            .map_err(|e| anyhow::anyhow!("Failed to read keypair: {}", e))?;
-
-        Ok(Client::new(payer, self.config.validator.rpc_url.clone()))
+    fn get_runtime_dir(is_dev: bool) -> PathBuf {
+        // Always use ~/.antegen/localnet for consistency
+        dirs_next::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".antegen")
+            .join("localnet")
     }
 
     fn ensure_dependencies(&self) -> Result<()> {
         if self.is_dev {
-            // In dev mode, download deps to target/VERSION directory
-            let antegen_version = env!("CARGO_PKG_VERSION");
-            let versioned_dir = PathBuf::from("target").join(antegen_version);
-            let validator_path = versioned_dir.join("solana-test-validator");
-
+            // In dev mode, check if solana-test-validator exists in target
+            let validator_path = PathBuf::from("target/debug/solana-test-validator");
             if !validator_path.exists() {
                 // Try to download deps
                 crate::deps::download_deps(
@@ -281,10 +357,20 @@ impl LocalnetOrchestrator {
     }
 
     fn start_validator(&mut self) -> Result<()> {
-        // Configure Geyser plugin args BEFORE creating validator
-        if self.config.validator.validator_type == "solana" {
+        // Check if any Geyser clients are configured
+        let has_geyser = self.config.clients
+            .iter()
+            .any(|c| c.client_type == "geyser");
+        
+        // Only configure Geyser plugin if requested
+        if has_geyser && self.config.validator.validator_type == "solana" {
+            println!("  Configuring Geyser plugin...");
+            
             for client_config in &self.config.clients {
                 if client_config.client_type == "geyser" {
+                    // Ensure plugin binary exists
+                    self.ensure_geyser_plugin()?;
+                    
                     // Create Geyser client to get config
                     let mut geyser_client = self.create_geyser_client(client_config)?;
                     let _config_path = geyser_client.create_config_file(&self.get_config_dir())?;
@@ -297,18 +383,38 @@ impl LocalnetOrchestrator {
             }
         }
 
-        let mut validator = create_validator(self.config.validator.clone(), &self.runtime_dir)?;
-
-        // Add Thread program for Solana validator
+        // Create and start validator with programs
+        let mut validator = create_validator(
+            self.config.validator.clone(),
+            &self.runtime_dir,
+        )?;
+        
+        // Add thread programs to deploy
         if self.config.validator.validator_type == "solana" {
-            if let Some(solana) = validator.as_any_mut().downcast_mut::<SolanaValidator>() {
-                let program_path = if self.is_dev {
-                    PathBuf::from("target/deploy/antegen_thread_program.so")
-                } else {
-                    self.runtime_dir.join("antegen_thread_program.so")
-                };
-
-                solana.add_program(antegen_sdk::ID, program_path);
+            // Get the program path
+            let program_path = if self.is_dev {
+                PathBuf::from("target/deploy/antegen_thread_program.so")
+            } else {
+                self.runtime_dir.join("antegen_thread_program.so")
+            };
+            
+            // Check if program exists
+            if program_path.exists() {
+                // Cast to SolanaValidator to add programs
+                if let Some(solana_validator) = validator.as_any_mut().downcast_mut::<SolanaValidator>() {
+                    use solana_sdk::pubkey::Pubkey;
+                    use std::str::FromStr;
+                    
+                    // Thread program ID
+                    let thread_program_id = Pubkey::from_str("AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1")
+                        .expect("Valid program ID");
+                    
+                    println!("  Deploying thread program...");
+                    solana_validator.add_program(thread_program_id, program_path);
+                }
+            } else if self.is_dev {
+                println!("  Warning: Thread program not found at {:?}", program_path);
+                println!("  Programs will need to be deployed manually");
             }
         }
 
@@ -318,63 +424,84 @@ impl LocalnetOrchestrator {
         Ok(())
     }
 
-    fn start_clients(&mut self) -> Result<()> {
-        for client_config in &self.config.clients {
-            if client_config.client_type == "geyser" {
-                // Geyser is already configured with validator
-                continue;
+    fn ensure_geyser_plugin(&self) -> Result<()> {
+        let plugin_name = if cfg!(target_os = "macos") {
+            "libantegen_client_geyser.dylib"
+        } else {
+            "libantegen_client_geyser.so"
+        };
+        
+        let plugin_path = self.runtime_dir.join("plugins").join(plugin_name);
+        
+        if !plugin_path.exists() {
+            // Create plugins directory
+            std::fs::create_dir_all(plugin_path.parent().unwrap())?;
+            
+            if self.is_dev {
+                // In dev mode, build the plugin
+                println!("    Building Geyser plugin...");
+                std::process::Command::new("cargo")
+                    .args(&["build", "--release", "-p", "antegen-client-geyser"])
+                    .status()
+                    .map_err(|e| anyhow::anyhow!("Failed to build Geyser plugin: {}", e))?;
+                
+                // Copy from target/release to runtime dir
+                let built_path = PathBuf::from("target/release").join(plugin_name);
+                if built_path.exists() {
+                    std::fs::copy(&built_path, &plugin_path)?;
+                } else {
+                    return Err(anyhow::anyhow!("Built plugin not found at {:?}", built_path));
+                }
+            } else {
+                // In production mode, download from releases
+                return Err(anyhow::anyhow!(
+                    "Plugin download not yet implemented. Please build in dev mode first."
+                ));
             }
-
-            let mut client = create_client(client_config.clone(), &self.runtime_dir)?;
-            client.start()?;
-            self.clients.push(client);
         }
-
+        
         Ok(())
     }
+    
+    fn create_geyser_client(
+        &self,
+        client_config: &ClientConfig,
+    ) -> Result<GeyserClient> {
+        // Try to parse as Geyser config
+        let geyser_config: GeyserClientConfig = client_config.config.clone().try_into()?;
 
-    fn create_geyser_client(&self, config: &ClientConfig) -> Result<GeyserClient> {
-        let mut geyser_config: GeyserClientConfig = config.config.clone().try_into()?;
-
-        // Populate RPC and WS URLs from validator config if not specified
-        if geyser_config.rpc_url.is_none() {
-            geyser_config.rpc_url = Some(self.config.validator.rpc_url.clone());
-        }
-        if geyser_config.ws_url.is_none() {
-            geyser_config.ws_url = Some(self.config.validator.ws_url.clone());
-        }
-
-        let plugin_path = if self.is_dev {
-            // On macOS, use .dylib extension, otherwise .so
-            if cfg!(target_os = "macos") {
-                PathBuf::from("target/debug/libantegen_client_geyser.dylib")
-            } else {
-                PathBuf::from("target/debug/libantegen_client_geyser.so")
-            }
+        // Determine plugin path
+        let plugin_name = if cfg!(target_os = "macos") {
+            "libantegen_client_geyser.dylib"
         } else {
-            self.runtime_dir.join("libantegen_client_geyser.so")
+            "libantegen_client_geyser.so"
         };
+        let plugin_path = self.runtime_dir.join("plugins").join(plugin_name);
 
         Ok(GeyserClient::new(
-            config.name.clone(),
+            client_config.name.clone(),
             geyser_config,
             plugin_path,
         ))
     }
 
-    fn get_runtime_dir(is_dev: bool) -> PathBuf {
-        if is_dev {
-            // In dev mode, use workspace root
-            PathBuf::from(".")
-        } else {
-            // In release mode, use home directory
-            dirs_next::home_dir()
-                .map(|mut path| {
-                    path.extend([".config", "antegen", "localnet", "runtime"]);
-                    path
-                })
-                .unwrap_or_else(|| PathBuf::from("."))
+    fn start_clients(&mut self) -> Result<()> {
+        for client_config in &self.config.clients {
+            match client_config.client_type.as_str() {
+                "geyser" => {
+                    // Geyser is handled as validator plugin
+                    println!("Geyser client '{}' configured", client_config.name);
+                }
+                _ => {
+                    // Other clients (carbon, etc.)
+                    let mut client = create_client(client_config.clone(), &self.runtime_dir)?;
+                    client.start()?;
+                    self.clients.push(client);
+                }
+            }
         }
+
+        Ok(())
     }
 
     fn get_config_dir(&self) -> PathBuf {
@@ -427,13 +554,9 @@ pub fn start(
         orchestrator.set_validator(validator_type);
     }
 
-    // Add clients if specified
-    for client in clients {
-        // Parse client type and optional name (format: "type" or "type:name")
-        let parts: Vec<&str> = client.split(':').collect();
-        let client_type = parts[0].to_string();
-        let name = parts.get(1).map(|s| s.to_string());
-        orchestrator.add_client(client_type, name);
+    // Add clients
+    for client_type in clients {
+        orchestrator.add_client(client_type, None);
     }
 
     // Start everything
@@ -441,8 +564,10 @@ pub fn start(
         .start()
         .map_err(|e| CliError::FailedLocalnet(e.to_string()))?;
 
-    // Store orchestrator for stop/status commands
-    let mut guard = ORCHESTRATOR.lock().unwrap();
+    // Store in global for other commands
+    let mut guard = ORCHESTRATOR
+        .lock()
+        .map_err(|_| CliError::FailedLocalnet("Failed to acquire lock".to_string()))?;
     *guard = Some(orchestrator);
 
     Ok(())
@@ -450,14 +575,14 @@ pub fn start(
 
 /// Stop the running localnet
 pub fn stop() -> Result<(), CliError> {
-    let mut guard = ORCHESTRATOR.lock().unwrap();
+    let mut guard = ORCHESTRATOR
+        .lock()
+        .map_err(|_| CliError::FailedLocalnet("Failed to acquire lock".to_string()))?;
 
     if let Some(mut orchestrator) = guard.take() {
         orchestrator
             .stop()
             .map_err(|e| CliError::FailedLocalnet(e.to_string()))?;
-
-        print_status!("Localnet", "Stopped successfully");
     } else {
         return Err(CliError::FailedLocalnet(
             "No localnet is running".to_string(),
@@ -469,7 +594,9 @@ pub fn stop() -> Result<(), CliError> {
 
 /// Get status of the running localnet
 pub fn status() -> Result<(), CliError> {
-    let guard = ORCHESTRATOR.lock().unwrap();
+    let guard = ORCHESTRATOR
+        .lock()
+        .map_err(|_| CliError::FailedLocalnet("Failed to acquire lock".to_string()))?;
 
     if let Some(orchestrator) = guard.as_ref() {
         orchestrator.print_status();
@@ -479,5 +606,112 @@ pub fn status() -> Result<(), CliError> {
         ));
     }
 
+    Ok(())
+}
+
+/// Add a client to the running localnet
+pub fn add_client(
+    client_type: String,
+    name: Option<String>,
+    rpc_url: Option<String>,
+    keypair: Option<String>,
+) -> Result<(), CliError> {
+    use self::manager::{ClientManager, default_carbon_config};
+    
+    // Get runtime dir
+    let runtime_dir = dirs_next::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".antegen")
+        .join("localnet");
+    
+    // Create manager
+    let mut manager = ClientManager::new(runtime_dir.clone())
+        .map_err(|e| CliError::FailedLocalnet(format!("Failed to create client manager: {}", e)))?;
+    
+    // Generate name if not provided
+    let client_name = name.unwrap_or_else(|| {
+        format!("{}-{}", client_type, chrono::Utc::now().timestamp())
+    });
+    
+    // Build client config based on type
+    let config = if client_type == "carbon" {
+        let mut config = default_carbon_config(client_name.clone());
+        
+        // Override with provided options
+        if let Some(rpc_url) = rpc_url {
+            if let toml::Value::Table(ref mut table) = config.config {
+                table.insert("rpc_url".to_string(), toml::Value::String(rpc_url));
+            }
+        }
+        
+        if let Some(keypair) = keypair {
+            if let toml::Value::Table(ref mut table) = config.config {
+                table.insert("keypair_path".to_string(), toml::Value::String(keypair));
+            }
+        }
+        
+        config
+    } else {
+        return Err(CliError::BadParameter(format!("Unsupported client type: {}", client_type)));
+    };
+    
+    // Add the client
+    manager.add_client(config)
+        .map_err(|e| CliError::FailedLocalnet(format!("Failed to add client: {}", e)))?;
+    
+    Ok(())
+}
+
+/// Remove a client from the running localnet
+pub fn remove_client(name: String) -> Result<(), CliError> {
+    use self::manager::ClientManager;
+    
+    // Get runtime dir
+    let runtime_dir = dirs_next::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".antegen")
+        .join("localnet");
+    
+    // Create manager
+    let mut manager = ClientManager::new(runtime_dir)
+        .map_err(|e| CliError::FailedLocalnet(format!("Failed to create client manager: {}", e)))?;
+    
+    // Remove the client
+    manager.remove_client(&name)
+        .map_err(|e| CliError::FailedLocalnet(format!("Failed to remove client: {}", e)))?;
+    
+    Ok(())
+}
+
+/// List all clients in the running localnet
+pub fn list_clients() -> Result<(), CliError> {
+    use self::manager::ClientManager;
+    
+    // Get runtime dir
+    let runtime_dir = dirs_next::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".antegen")
+        .join("localnet");
+    
+    // Create manager
+    let manager = ClientManager::new(runtime_dir)
+        .map_err(|e| CliError::FailedLocalnet(format!("Failed to create client manager: {}", e)))?;
+    
+    // List clients
+    let clients = manager.list_clients();
+    
+    if clients.is_empty() {
+        println!("No clients currently running");
+    } else {
+        println!("Running clients:");
+        for client in clients {
+            println!("  {} ({}): PID={:?}", 
+                client.name, 
+                client.client_type,
+                client.pid.unwrap_or(0)
+            );
+        }
+    }
+    
     Ok(())
 }

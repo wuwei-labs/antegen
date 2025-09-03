@@ -4,6 +4,7 @@ use log::info;
 use std::path::PathBuf;
 
 mod builder;
+mod clock_tracker;
 mod config;
 mod pipeline;
 mod processor;

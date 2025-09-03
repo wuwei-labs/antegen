@@ -7,7 +7,7 @@ use carbon_core::{
 };
 use crossbeam::channel::Sender;
 use log::{debug, error};
-use solana_sdk::{account::Account, pubkey::Pubkey};
+use solana_sdk::{account::Account, pubkey::Pubkey, sysvar};
 use std::sync::Arc;
 
 use antegen_adapter::events::ObservedEvent;
@@ -53,10 +53,10 @@ impl Processor for ThreadAccountProcessor {
             rent_epoch: decoded_account.rent_epoch,
         };
 
-        // Only process accounts owned by the thread program
-        if account.owner != self.thread_program_id {
+        // Process accounts owned by the thread program OR the Clock sysvar
+        if account.owner != self.thread_program_id && pubkey != sysvar::clock::ID {
             debug!(
-                "Skipping account {} - not owned by thread program (owner: {})",
+                "Skipping account {} - not thread program or Clock sysvar (owner: {})",
                 pubkey, account.owner
             );
             return Ok(());

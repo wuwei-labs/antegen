@@ -13,38 +13,18 @@ ws_url = "ws://localhost:8900"
 ledger_dir = "test-ledger"
 reset = true
 
-# Default client is Geyser for backward compatibility
-[[clients]]
-type = "geyser"
-name = "geyser-default"
+# No clients by default - start with just validator
+# Add clients with --client flag or configure below
 
-[clients.config]
-keypath = "~/.config/solana/id.json"
-forgo_commission = true
-enable_replay = false
-thread_count = 10
+# Example: Geyser plugin (efficient streaming)
+# [[clients]]
+# type = "geyser"
+# name = "geyser-default"
 
-# Example Carbon client configuration (commented out by default)
+# Example: Carbon RPC client (polling-based)
 # [[clients]]
 # type = "carbon"
 # name = "carbon-rpc"
-# 
-# [clients.config]
-# datasource = "rpc"
-# rpc_url = "http://localhost:8899"
-# thread_program_id = "..."
-# keypair_path = "~/.config/solana/id.json"
-
-# Example for multiple Carbon clients
-# [[clients]]
-# type = "carbon"
-# name = "carbon-yellowstone"
-# 
-# [clients.config]
-# datasource = "yellowstone"
-# endpoint = "grpc.example.com:10000"
-# token = "your-token"
-# thread_program_id = "..."
 "#;
 
 /// Main localnet configuration

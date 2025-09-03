@@ -2,7 +2,8 @@ use anyhow::Result;
 use std::process::{Child, Command, Stdio};
 use std::path::PathBuf;
 
-use super::config::{ClientConfig, GeyserClientConfig, CarbonClientConfig};
+use super::config::{GeyserClientConfig, CarbonClientConfig};
+pub use super::config::ClientConfig;
 
 /// Status of a client
 #[derive(Debug, Clone)]
@@ -231,7 +232,7 @@ impl ClientRunner for CarbonClient {
 }
 
 /// Factory function to create appropriate client
-pub fn create_client(config: ClientConfig, runtime_dir: &PathBuf) -> Result<Box<dyn ClientRunner>> {
+pub fn create_client(config: super::config::ClientConfig, runtime_dir: &PathBuf) -> Result<Box<dyn ClientRunner>> {
     match config.client_type.as_str() {
         "geyser" => {
             let geyser_config: GeyserClientConfig = config.config.try_into()?;
@@ -240,7 +241,27 @@ pub fn create_client(config: ClientConfig, runtime_dir: &PathBuf) -> Result<Box<
         }
         "carbon" => {
             let carbon_config: CarbonClientConfig = config.config.try_into()?;
-            let binary_path = runtime_dir.join("antegen-carbon");
+            // In dev mode, try to use the local build first
+            let binary_path = if let Ok(local_path) = std::env::current_exe() {
+                let exe_dir = local_path.parent().unwrap();
+                let local_carbon = exe_dir.join("antegen-carbon");
+                if local_carbon.exists() {
+                    local_carbon
+                } else {
+                    // Fall back to runtime dir
+                    runtime_dir.join("antegen-carbon")
+                }
+            } else {
+                runtime_dir.join("antegen-carbon")
+            };
+            
+            if !binary_path.exists() {
+                return Err(anyhow::anyhow!(
+                    "Carbon client binary not found at {:?}. In dev mode, build with 'cargo build -p antegen-carbon'",
+                    binary_path
+                ));
+            }
+            
             Ok(Box::new(CarbonClient::new(config.name, carbon_config, binary_path)))
         }
         other => Err(anyhow::anyhow!("Unsupported client type: {}", other))

@@ -95,6 +95,7 @@ solana-client = { version = "~2.2" }
 solana-connection-cache = { version = "~2.2" }
 solana-logger = { version = "~2.2" }
 solana-program = { version = "~2.2" }
+solana-pubsub-client = { version = "~2.2" }
 solana-quic-client = { version = "~2.2" }
 solana-rpc-client-nonce-utils = { version = "~2.2" }
 solana-tpu-client = { version = "~2.2" }
