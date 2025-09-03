@@ -1,6 +1,7 @@
 pub mod builder;
 pub mod clock;
 pub mod executor;
+pub mod load_balancer;
 pub mod metrics;
 pub mod parser;
 pub mod queue;

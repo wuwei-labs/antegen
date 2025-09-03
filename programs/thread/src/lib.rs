@@ -92,10 +92,11 @@ pub mod thread_program {
         index: u8,
         instruction: SerializableInstruction,
         signer_seeds: Vec<Vec<Vec<u8>>>,
+        priority_fee: u64,
     ) -> Result<()> {
         // Convert to regular Instruction
         let instruction: Instruction = instruction.into();
-        fiber_create(ctx, index, instruction, signer_seeds)
+        fiber_create(ctx, index, instruction, signer_seeds, priority_fee)
     }
 
     /// Deletes a fiber from a thread.

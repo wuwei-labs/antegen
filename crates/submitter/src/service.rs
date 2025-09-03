@@ -771,7 +771,7 @@ impl SubmissionService {
         
         // Submit using the honeybadger approach
         // This will run until timeout - success is determined by thread updates
-        match submitter.submit(msg.instructions, executor_keypair).await {
+        match submitter.submit(msg.instructions, executor_keypair, None).await {
             Ok(()) => {
                 // Should never happen - submit only returns on timeout (error)
                 warn!("Unexpected return from honeybadger submit for thread {}", msg.thread_pubkey);

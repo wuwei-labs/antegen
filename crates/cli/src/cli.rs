@@ -42,6 +42,8 @@ pub enum CliCommand {
         prefix: String,
         with_fibers: bool,
         batch_size: u32,
+        durable_ratio: u8,
+        fiber_count: u8,
     },
 
 }
@@ -287,6 +289,22 @@ pub fn app() -> Command {
                                 .value_name("SIZE")
                                 .default_value("10")
                                 .help("Number of threads to create per batch (to avoid rate limiting)")
+                        )
+                        .arg(
+                            Arg::new("durable-ratio")
+                                .long("durable-ratio")
+                                .short('d')
+                                .value_name("PERCENTAGE")
+                                .default_value("50")
+                                .help("Percentage of threads to create as durable (with nonce accounts), 0-100")
+                        )
+                        .arg(
+                            Arg::new("fiber-count")
+                                .long("fiber-count")
+                                .short('f')
+                                .value_name("MAX_FIBERS")
+                                .default_value("1")
+                                .help("Maximum number of fibers per thread (each thread gets 1 to MAX_FIBERS fibers), max 50")
                         ),
                 ),
         )

@@ -53,6 +53,7 @@ pub fn fiber_create(
     index: u8,
     instruction: Instruction,
     signer_seeds: Vec<Vec<Vec<u8>>>,
+    priority_fee: u64,
 ) -> Result<()> {
     let thread = &mut ctx.accounts.thread;
     let fiber = &mut ctx.accounts.fiber;
@@ -65,6 +66,7 @@ pub fn fiber_create(
     fiber.thread = thread.key();
     fiber.index = index;
     fiber.compiled_instruction = compiled_bytes;
+    fiber.priority_fee = priority_fee;
 
     // Update thread's fiber mapping
     if !thread.fibers.contains(&index) {

@@ -14,31 +14,90 @@ use solana_sdk::{
 use std::str::FromStr;
 
 pub fn create(client: &Client, id: String, trigger: Trigger) -> Result<(), CliError> {
-    let thread_pubkey = Thread::pubkey(client.payer_pubkey(), id.clone().into_bytes());
-    let nonce_keypair = Keypair::new();
+    // Create thread with nonce (durable)
+    create_with_optional_nonce(client, id.clone(), trigger, true)?;
+    
+    // Always create a default fiber so the thread can execute
+    create_default_fiber(client, id)?;
+    
+    Ok(())
+}
 
-    let ix = Instruction {
-        program_id: antegen_sdk::ID,
-        accounts: antegen_sdk::accounts::ThreadCreate {
-            authority: client.payer_pubkey(),
-            payer: client.payer_pubkey(),
-            thread: thread_pubkey,
-            nonce_account: Some(nonce_keypair.pubkey()),
-            recent_blockhashes: Some(recent_blockhashes::ID),
-            rent: Some(rent::ID),
-            system_program: system_program::ID,
-        }
-        .to_account_metas(Some(false)),
-        data: antegen_sdk::instruction::CreateThread {
-            amount: LAMPORTS_PER_SOL,
-            id: id.into(),
-            trigger,
-        }
-        .data(),
+/// Create a thread with optional nonce account (durable threads)
+/// Create a default fiber for a thread (required for execution)
+fn create_default_fiber(client: &Client, thread_id: String) -> Result<(), CliError> {
+    // Create a simple memo instruction as the default fiber
+    let memo_program_id = Pubkey::from_str("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
+        .map_err(|e| CliError::BadParameter(format!("Invalid memo program ID: {}", e)))?;
+    
+    let memo_instruction = Instruction {
+        program_id: memo_program_id,
+        accounts: vec![],
+        data: format!("Thread {} default fiber", thread_id).into_bytes(),
     };
-    client
-        .send_and_confirm(&[ix], &[client.payer(), &nonce_keypair])
-        .unwrap();
+    
+    create_fiber(client, thread_id, 0, memo_instruction, None)
+}
+
+pub fn create_with_optional_nonce(
+    client: &Client, 
+    id: String, 
+    trigger: Trigger,
+    use_nonce: bool
+) -> Result<(), CliError> {
+    let thread_pubkey = Thread::pubkey(client.payer_pubkey(), id.clone().into_bytes());
+    
+    if use_nonce {
+        // Create with nonce account (durable thread)
+        let nonce_keypair = Keypair::new();
+        let ix = Instruction {
+            program_id: antegen_sdk::ID,
+            accounts: antegen_sdk::accounts::ThreadCreate {
+                authority: client.payer_pubkey(),
+                payer: client.payer_pubkey(),
+                thread: thread_pubkey,
+                nonce_account: Some(nonce_keypair.pubkey()),
+                recent_blockhashes: Some(recent_blockhashes::ID),
+                rent: Some(rent::ID),
+                system_program: system_program::ID,
+            }
+            .to_account_metas(Some(false)),
+            data: antegen_sdk::instruction::CreateThread {
+                amount: LAMPORTS_PER_SOL,
+                id: id.into(),
+                trigger,
+            }
+            .data(),
+        };
+        client
+            .send_and_confirm(&[ix], &[client.payer(), &nonce_keypair])
+            .unwrap();
+    } else {
+        // Create without nonce account (regular thread)
+        let ix = Instruction {
+            program_id: antegen_sdk::ID,
+            accounts: antegen_sdk::accounts::ThreadCreate {
+                authority: client.payer_pubkey(),
+                payer: client.payer_pubkey(),
+                thread: thread_pubkey,
+                nonce_account: None,
+                recent_blockhashes: None,
+                rent: None,
+                system_program: system_program::ID,
+            }
+            .to_account_metas(Some(false)),
+            data: antegen_sdk::instruction::CreateThread {
+                amount: LAMPORTS_PER_SOL,
+                id: id.into(),
+                trigger,
+            }
+            .data(),
+        };
+        client
+            .send_and_confirm(&[ix], &[client.payer()])
+            .unwrap();
+    }
+    
     // Don't call get() here to avoid verbose output during creation
     Ok(())
 }
@@ -177,6 +236,17 @@ pub fn update(client: &Client, id: String, schedule: Option<String>) -> Result<(
 pub fn init_config(client: &Client) -> Result<(), CliError> {
     let config_pubkey = ThreadConfig::pubkey();
 
+    // Check if config already exists
+    match client.get_account_data(&config_pubkey) {
+        Ok(_) => {
+            // Config already exists, skip initialization
+            return Ok(());
+        }
+        Err(_) => {
+            // Config doesn't exist, proceed with initialization
+        }
+    }
+
     let ix = Instruction {
         program_id: antegen_sdk::ID,
         accounts: antegen_sdk::accounts::ConfigInit {
@@ -188,9 +258,17 @@ pub fn init_config(client: &Client) -> Result<(), CliError> {
         data: antegen_sdk::instruction::InitConfig {}.data(),
     };
 
-    client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
-    // Silent initialization - will be shown in localnet status
-    Ok(())
+    match client.send_and_confirm(&[ix], &[client.payer()]) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            // If it fails because account already exists, that's ok
+            if e.to_string().contains("already in use") {
+                Ok(())
+            } else {
+                Err(CliError::BadParameter(format!("Failed to initialize config: {}", e)))
+            }
+        }
+    }
 }
 
 pub fn create_fiber(
@@ -198,11 +276,9 @@ pub fn create_fiber(
     thread_id: String,
     index: u8,
     instruction: Instruction,
+    priority_fee: Option<u64>,
 ) -> Result<(), CliError> {
     let thread_pubkey = Thread::pubkey(client.payer_pubkey(), thread_id.into_bytes());
-
-    // Convert standard Instruction to SerializableInstruction
-    let serializable_instruction: SerializableInstruction = instruction.into();
 
     // Derive fiber PDA
     let fiber_pubkey = Pubkey::find_program_address(
@@ -210,6 +286,20 @@ pub fn create_fiber(
         &antegen_sdk::ID,
     )
     .0;
+    
+    // Check if fiber already exists
+    match client.get_account_data(&fiber_pubkey) {
+        Ok(_) => {
+            // Fiber already exists, skip creation
+            return Ok(());
+        }
+        Err(_) => {
+            // Fiber doesn't exist, proceed with creation
+        }
+    }
+
+    // Convert standard Instruction to SerializableInstruction
+    let serializable_instruction: SerializableInstruction = instruction.into();
 
     let ix = Instruction {
         program_id: antegen_sdk::ID,
@@ -225,12 +315,22 @@ pub fn create_fiber(
             index,
             instruction: serializable_instruction,
             signer_seeds: vec![], // Empty for simple instructions
+            priority_fee: priority_fee.unwrap_or(0),
         }
         .data(),
     };
 
-    client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
-    Ok(())
+    match client.send_and_confirm(&[ix], &[client.payer()]) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            // If it fails because account already exists, that's ok
+            if e.to_string().contains("already in use") {
+                Ok(())
+            } else {
+                Err(CliError::BadParameter(format!("Failed to create fiber: {}", e)))
+            }
+        }
+    }
 }
 
 pub fn parse_pubkey_from_id_or_address(
@@ -248,8 +348,10 @@ pub fn stress_test(
     interval: u64,
     jitter: u64,
     prefix: String,
-    with_fibers: bool,
+    _with_fibers: bool,  // Kept for backward compatibility, fiber_count now controls fibers
     batch_size: u32,
+    durable_ratio: u8,
+    fiber_count: u8,
 ) -> Result<(), CliError> {
     use crate::print_status;
     use rand::Rng;
@@ -261,14 +363,17 @@ pub fn stress_test(
     );
     println!("   Thread ID prefix: '{}'", prefix);
     println!("   Batch size: {} threads per batch", batch_size);
-
-    if with_fibers {
-        println!("   Each thread will have a fiber with memo instruction");
-    }
+    println!("   Durable thread ratio: {}%", durable_ratio);
+    println!("   Max fibers per thread: {}", fiber_count);
 
     let mut rng = rand::thread_rng();
     let mut created = 0;
     let mut failed = 0;
+    let mut durable_count = 0;
+    let mut regular_count = 0;
+    let mut total_fibers_created = 0;
+    let mut min_fibers = fiber_count;
+    let mut max_fibers = 0u8;
 
     // Process in batches to avoid rate limiting
     for batch_num in 0..(count as f32 / batch_size as f32).ceil() as u32 {
@@ -300,34 +405,72 @@ pub fn stress_test(
                 seconds: thread_interval as i64,
                 skippable: true,
             };
+            
+            // Determine if this thread should be durable based on the ratio
+            let use_nonce = if durable_ratio == 100 {
+                true  // All durable
+            } else if durable_ratio == 0 {
+                false  // All regular
+            } else {
+                // Use random selection based on ratio
+                rng.gen_range(0..100) < durable_ratio
+            };
 
-            match create(client, thread_id.clone(), trigger) {
+            match create_with_optional_nonce(client, thread_id.clone(), trigger, use_nonce) {
                 Ok(_) => {
                     created += 1;
+                    if use_nonce {
+                        durable_count += 1;
+                    } else {
+                        regular_count += 1;
+                    }
 
-                    // Create fiber if requested
-                    if with_fibers {
-                        let thread_pubkey =
-                            Thread::pubkey(client.payer_pubkey(), thread_id.clone().into_bytes());
-                        let memo_program_id =
-                            Pubkey::from_str("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
-                                .map_err(|e| {
-                                    CliError::BadParameter(format!(
-                                        "Invalid memo program ID: {}",
-                                        e
-                                    ))
-                                })?;
+                    // Randomly choose number of fibers for this thread
+                    let num_fibers = if fiber_count > 1 {
+                        rng.gen_range(1..=fiber_count)
+                    } else {
+                        1
+                    };
+                    
+                    // Track min/max fibers for statistics
+                    min_fibers = min_fibers.min(num_fibers);
+                    max_fibers = max_fibers.max(num_fibers);
+                    
+                    // Create fibers for the thread
+                    let memo_program_id =
+                        Pubkey::from_str("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
+                            .map_err(|e| {
+                                CliError::BadParameter(format!(
+                                    "Invalid memo program ID: {}",
+                                    e
+                                ))
+                            })?;
+                    
+                    let mut fiber_creation_failed = false;
+                    for fiber_index in 0..num_fibers {
+                        let memo_data = format!(
+                            "Thread {} fiber {} (durable: {}, total: {})", 
+                            thread_id, fiber_index, use_nonce, num_fibers
+                        );
+                        
                         let memo_instruction = Instruction {
                             program_id: memo_program_id,
                             accounts: vec![],
-                            data: format!("Stress test thread {} execution", thread_id)
-                                .into_bytes(),
+                            data: memo_data.into_bytes(),
                         };
 
-                        if let Err(e) = create_fiber(client, thread_id.clone(), 0, memo_instruction)
+                        if let Err(e) = create_fiber(client, thread_id.clone(), fiber_index, memo_instruction, None)
                         {
-                            eprintln!("Failed to create fiber for {}: {}", thread_id, e);
+                            eprintln!("Failed to create fiber {} for {}: {}", fiber_index, thread_id, e);
+                            fiber_creation_failed = true;
+                            break;
                         }
+                        total_fibers_created += 1;
+                    }
+                    
+                    if fiber_creation_failed {
+                        failed += 1;
+                        continue;  // Skip to next thread if any fiber creation fails
                     }
 
                     // Show progress periodically
@@ -368,10 +511,30 @@ pub fn stress_test(
             created - 1
         );
         println!(
+            "   Durable threads (with nonce): {} ({}%)",
+            durable_count,
+            if created > 0 { (durable_count * 100) / created } else { 0 }
+        );
+        println!(
+            "   Regular threads (no nonce): {} ({}%)",
+            regular_count,
+            if created > 0 { (regular_count * 100) / created } else { 0 }
+        );
+        println!(
             "   Intervals range from {} to {} seconds",
             interval.saturating_sub(jitter),
             interval + jitter
         );
+        
+        // Fiber statistics
+        println!("\n📊 Fiber Statistics:");
+        println!("   Total fibers created: {}", total_fibers_created);
+        println!(
+            "   Average fibers per thread: {:.2}",
+            total_fibers_created as f64 / created as f64
+        );
+        println!("   Min fibers per thread: {}", min_fibers);
+        println!("   Max fibers per thread: {}", max_fibers);
     }
 
     if failed > 0 {

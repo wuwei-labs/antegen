@@ -76,22 +76,42 @@ fn parse_thread_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
             id: parse_string("id", matches)?,
             schedule: parse_string("schedule", matches).ok(),
         }),
-        Some(("stress-test", matches)) => Ok(CliCommand::ThreadStressTest {
-            count: parse_string("count", matches)?
-                .parse::<u32>()
-                .map_err(|_| CliError::BadParameter("count must be a number".into()))?,
-            interval: parse_string("interval", matches)?
-                .parse::<u64>()
-                .map_err(|_| CliError::BadParameter("interval must be a number".into()))?,
-            jitter: parse_string("jitter", matches)?
-                .parse::<u64>()
-                .map_err(|_| CliError::BadParameter("jitter must be a number".into()))?,
-            prefix: parse_string("prefix", matches)?,
-            with_fibers: matches.get_flag("with-fibers"),
-            batch_size: parse_string("batch-size", matches)?
-                .parse::<u32>()
-                .map_err(|_| CliError::BadParameter("batch-size must be a number".into()))?,
-        }),
+        Some(("stress-test", matches)) => {
+            let durable_ratio = parse_string("durable-ratio", matches)?
+                .parse::<u8>()
+                .map_err(|_| CliError::BadParameter("durable-ratio must be a number".into()))?;
+            
+            if durable_ratio > 100 {
+                return Err(CliError::BadParameter("durable-ratio must be between 0 and 100".into()));
+            }
+            
+            let fiber_count = parse_string("fiber-count", matches)?
+                .parse::<u8>()
+                .map_err(|_| CliError::BadParameter("fiber-count must be a number".into()))?;
+            
+            if fiber_count == 0 || fiber_count > 50 {
+                return Err(CliError::BadParameter("fiber-count must be between 1 and 50".into()));
+            }
+            
+            Ok(CliCommand::ThreadStressTest {
+                count: parse_string("count", matches)?
+                    .parse::<u32>()
+                    .map_err(|_| CliError::BadParameter("count must be a number".into()))?,
+                interval: parse_string("interval", matches)?
+                    .parse::<u64>()
+                    .map_err(|_| CliError::BadParameter("interval must be a number".into()))?,
+                jitter: parse_string("jitter", matches)?
+                    .parse::<u64>()
+                    .map_err(|_| CliError::BadParameter("jitter must be a number".into()))?,
+                prefix: parse_string("prefix", matches)?,
+                with_fibers: matches.get_flag("with-fibers"),
+                batch_size: parse_string("batch-size", matches)?
+                    .parse::<u32>()
+                    .map_err(|_| CliError::BadParameter("batch-size must be a number".into()))?,
+                durable_ratio,
+                fiber_count,
+            })
+        }
         _ => Err(CliError::CommandNotRecognized(
             matches.subcommand().unwrap().0.into(),
         )),

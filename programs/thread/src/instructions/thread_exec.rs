@@ -133,7 +133,12 @@ pub fn thread_exec(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<(
     fiber.last_executed = clock.unix_timestamp;
     fiber.execution_count += 1;
     thread.exec_count += 1; // Increment thread-level execution counter
-    thread.exec_index = (thread.exec_index + 1) % thread.fibers.len() as u8;
+    
+    // Advance to next fiber in the sequence
+    thread.advance_to_next_fiber();
+    
+    // Update last executor for load balancing
+    thread.last_executor = executor.key();
 
     Ok(())
 }

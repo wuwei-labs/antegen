@@ -90,12 +90,13 @@ impl ExecutorLogic {
     }
 
     /// Build a transaction to execute a thread (unified method)
+    /// Returns (instructions, priority_fee)
     pub async fn build_execute_transaction(
         &self,
         executable: &ExecutableThread,
         fiber: Option<&FiberState>,
         compute_units: Option<u32>,
-    ) -> Result<Vec<Instruction>> {
+    ) -> Result<(Vec<Instruction>, u64)> {
         let thread_pubkey = &executable.thread_pubkey;
         let thread = &executable.thread;
         
@@ -116,6 +117,9 @@ impl ExecutorLogic {
             }
         };
 
+        // Extract priority fee from fiber
+        let priority_fee = fiber_state.priority_fee;
+
         // Build execute instruction
         let execute_ix = self
             .build_execute_instruction(thread_pubkey, thread, &fiber_state)
@@ -128,7 +132,7 @@ impl ExecutorLogic {
         }
 
         ixs.push(execute_ix);
-        Ok(ixs)
+        Ok((ixs, priority_fee))
     }
 
     /// Build exec_thread instruction

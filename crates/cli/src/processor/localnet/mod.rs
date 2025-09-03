@@ -218,7 +218,7 @@ impl LocalnetOrchestrator {
             data: b"Thread execution test!".to_vec(),
         };
 
-        thread::create_fiber(&client, thread_id, 0, test_instruction)
+        thread::create_fiber(&client, thread_id, 0, test_instruction, None)
             .map_err(|e| anyhow::anyhow!("Failed to create test fiber: {}", e))?;
 
         println!("✓");

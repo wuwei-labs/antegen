@@ -153,6 +153,7 @@ pub fn thread_create(
 
     thread.exec_index = 0;
     thread.exec_count = 0; // Initialize execution counter
+    thread.last_executor = Pubkey::default(); // Initialize with default for load balancing
 
     // Transfer SOL from payer to the thread.
     transfer(

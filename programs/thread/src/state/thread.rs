@@ -193,6 +193,9 @@ pub struct Thread {
     /// The triggering event to kickoff a thread.
     pub trigger: Trigger,
     pub trigger_context: TriggerContext,
+
+    /// The last executor who successfully executed this thread (for load balancing)
+    pub last_executor: Pubkey,
 }
 
 impl Thread {

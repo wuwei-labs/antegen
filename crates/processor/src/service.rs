@@ -6,12 +6,14 @@ use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
     pubkey::Pubkey,
     signature::{read_keypair_file, Keypair},
+    signer::Signer,
 };
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::clock::SharedClock;
 use crate::executor::ExecutorLogic;
+use crate::load_balancer::{LoadBalancer, ProcessDecision};
 use crate::metrics::ProcessorMetrics;
 use crate::parser::{classify_account, AccountType};
 use crate::queue::{ThreadQueue, TriggerType};
@@ -42,6 +44,8 @@ pub struct ProcessorService {
     clock_broadcaster: broadcast::Sender<solana_sdk::clock::Clock>,
     /// Cached RPC client
     cached_rpc: Arc<CachedRpcClient>,
+    /// Load balancer for distributed thread processing
+    load_balancer: Arc<LoadBalancer>,
 }
 
 impl ProcessorService {
@@ -90,6 +94,12 @@ impl ProcessorService {
 
         // Create clock broadcaster for retry timing
         let (clock_broadcaster, _) = broadcast::channel(100);
+        
+        // Create load balancer with config settings
+        let load_balancer = Arc::new(LoadBalancer::new(
+            executor_keypair.pubkey(),
+            config.load_balancer.clone(),
+        ));
 
         Ok(Self {
             config,
@@ -101,6 +111,7 @@ impl ProcessorService {
             account_receiver,
             clock_broadcaster,
             cached_rpc,
+            load_balancer,
         })
     }
 
@@ -213,14 +224,35 @@ impl ProcessorService {
                         account_update.account.clone(),
                     )
                     .await;
-
-                // Schedule thread for processing
-                if let Err(e) = self
-                    .thread_queue
-                    .schedule_thread(account_update.pubkey, thread)
-                    .await
-                {
-                    warn!("Failed to schedule thread {}: {}", account_update.pubkey, e);
+                
+                // Check with load balancer if we should process this thread
+                let current_time = self.executor_logic.current_timestamp().await;
+                let (is_overdue, overdue_seconds) = self.calculate_overdue(&thread, current_time);
+                
+                let decision = self.load_balancer.should_process(
+                    &account_update.pubkey,
+                    &thread.last_executor,
+                    is_overdue,
+                    overdue_seconds,
+                ).await?;
+                
+                match decision {
+                    ProcessDecision::Process => {
+                        // Schedule thread for processing
+                        if let Err(e) = self
+                            .thread_queue
+                            .schedule_thread(account_update.pubkey, thread)
+                            .await
+                        {
+                            warn!("Failed to schedule thread {}: {}", account_update.pubkey, e);
+                        }
+                    }
+                    ProcessDecision::Skip => {
+                        debug!("Load balancer: skipping thread {} (owned by another processor)", account_update.pubkey);
+                    }
+                    ProcessDecision::AtCapacity => {
+                        debug!("Load balancer: at capacity, skipping non-critical thread {}", account_update.pubkey);
+                    }
                 }
             }
             AccountType::Other => {
@@ -252,12 +284,14 @@ impl ProcessorService {
         let rpc_url = self.config.rpc_url.clone();
         let executor_keypair = self.executor_keypair.clone();
         let clock_broadcaster = self.clock_broadcaster.clone();
+        let load_balancer = self.load_balancer.clone();
 
         move |thread_pubkey, thread| {
             let executor = executor.clone();
             let rpc_url = rpc_url.clone();
             let executor_keypair = executor_keypair.clone();
             let clock_rx = clock_broadcaster.subscribe();
+            let load_balancer = load_balancer.clone();
 
             Box::pin(async move {
                 let blockchain_time = executor.current_timestamp().await;
@@ -272,7 +306,7 @@ impl ProcessorService {
                     thread: thread.clone(),
                     slot: 0, // Current slot, could be passed in if needed
                 };
-                let instructions = executor
+                let (instructions, priority_fee) = executor
                     .build_execute_transaction(
                         &executable,
                         None, // fiber state
@@ -299,11 +333,59 @@ impl ProcessorService {
                     "Starting honeybadger submission for thread {}",
                     thread_pubkey
                 );
-                submitter.submit(instructions, executor_keypair).await?;
-
-                // This only returns on timeout (error)
+                
+                // Attempt submission and track result
+                let current_time = executor.current_timestamp().await;
+                submitter.submit(instructions, executor_keypair, Some(priority_fee)).await.map_err(|e| {
+                    // Record failed execution (someone else likely beat us)
+                    let balancer = load_balancer.clone();
+                    let thread_pk = thread_pubkey.clone();
+                    tokio::spawn(async move {
+                        let _ = balancer.record_execution_result(
+                            &thread_pk,
+                            false,
+                            current_time,
+                        ).await;
+                    });
+                    e
+                })?;
+                
+                // Record successful execution
+                let _ = load_balancer.record_execution_result(
+                    &thread_pubkey,
+                    true,
+                    current_time,
+                ).await;
+                
+                // This returns on timeout (error) - submitter doesn't return signature
                 Err(anyhow!("Submission timed out for thread {}", thread_pubkey))
             })
+        }
+    }
+    
+    /// Calculate if a thread is overdue and by how much
+    fn calculate_overdue(&self, thread: &antegen_thread_program::state::Thread, current_timestamp: i64) -> (bool, i64) {
+        use antegen_thread_program::state::TriggerContext;
+        
+        match &thread.trigger_context {
+            TriggerContext::Timestamp { next, .. } => {
+                let overdue = current_timestamp > *next;
+                let overdue_seconds = if overdue {
+                    current_timestamp - *next
+                } else {
+                    0
+                };
+                (overdue, overdue_seconds)
+            }
+            TriggerContext::Block { .. } => {
+                // For block-based triggers, we'd need current slot/epoch
+                // For now, consider not overdue
+                (false, 0)
+            }
+            TriggerContext::Account { .. } => {
+                // Account triggers are event-driven, not time-based
+                (false, 0)
+            }
         }
     }
 }

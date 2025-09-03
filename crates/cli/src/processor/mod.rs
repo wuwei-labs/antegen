@@ -61,7 +61,9 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             prefix,
             with_fibers,
             batch_size,
-        } => thread::stress_test(&client, count, interval, jitter, prefix, with_fibers, batch_size),
+            durable_ratio,
+            fiber_count,
+        } => thread::stress_test(&client, count, interval, jitter, prefix, with_fibers, batch_size, durable_ratio, fiber_count),
     }
 }
 

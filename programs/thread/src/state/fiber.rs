@@ -24,6 +24,8 @@ pub struct FiberState {
     pub last_executed: i64,
     /// Total number of executions
     pub execution_count: u64,
+    /// Priority fee in microlamports for compute unit price (0 = no priority fee)
+    pub priority_fee: u64,
 }
 
 impl FiberState {

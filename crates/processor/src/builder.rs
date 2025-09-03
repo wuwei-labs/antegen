@@ -3,6 +3,7 @@ use crossbeam::channel::{Receiver, Sender};
 use std::sync::Arc;
 
 use crate::{
+    load_balancer::LoadBalancerConfig,
     metrics::ProcessorMetrics,
     service::ProcessorService,
     types::{AccountUpdate, ProcessorConfig},
@@ -21,6 +22,7 @@ pub struct ProcessorBuilder {
     account_receiver: Option<Receiver<AccountUpdate>>,
     transaction_sender: Option<Sender<ProcessorMessage>>,
     metrics: Option<Arc<ProcessorMetrics>>,
+    load_balancer_config: LoadBalancerConfig,
 }
 
 impl Default for ProcessorBuilder {
@@ -37,6 +39,7 @@ impl Default for ProcessorBuilder {
             account_receiver: None,
             transaction_sender: None,
             metrics: None,
+            load_balancer_config: LoadBalancerConfig::default(),
         }
     }
 }
@@ -118,11 +121,23 @@ impl ProcessorBuilder {
         self.metrics = Some(Arc::new(ProcessorMetrics::new(&meter)));
         self
     }
+    
+    /// Configure load balancer
+    pub fn load_balancer(mut self, config: LoadBalancerConfig) -> Self {
+        self.load_balancer_config = config;
+        self
+    }
+    
+    /// Enable/disable load balancing
+    pub fn load_balancing_enabled(mut self, enabled: bool) -> Self {
+        self.load_balancer_config.enabled = enabled;
+        self
+    }
 
     /// Build from existing config (for compatibility)
     pub fn from_config(config: ProcessorConfig) -> Self {
         Self {
-            keypair_path: Some(config.executor_keypair_path),
+            keypair_path: Some(config.executor_keypair_path.clone()),
             rpc_url: config.rpc_url,
             forgo_commission: config.forgo_executor_commission,
             max_concurrent_threads: config.max_concurrent_threads,
@@ -132,6 +147,7 @@ impl ProcessorBuilder {
             account_receiver: None,
             transaction_sender: None,
             metrics: None,
+            load_balancer_config: config.load_balancer,
         }
     }
 
@@ -157,6 +173,7 @@ impl ProcessorBuilder {
             simulate_before_submit: self.simulate_before_submit,
             compute_unit_multiplier: self.compute_unit_multiplier,
             max_compute_units: self.max_compute_units,
+            load_balancer: self.load_balancer_config,
         };
 
         // Create service

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use solana_sdk::{account::Account, pubkey::Pubkey};
+use crate::load_balancer::LoadBalancerConfig;
 
 /// Configuration for the processor service
 #[derive(Debug, Clone)]
@@ -22,6 +23,8 @@ pub struct ProcessorConfig {
     /// Task management configuration
     pub max_concurrent_threads: usize,
     
+    /// Load balancer configuration
+    pub load_balancer: LoadBalancerConfig,
 }
 
 impl Default for ProcessorConfig {
@@ -34,6 +37,7 @@ impl Default for ProcessorConfig {
             compute_unit_multiplier: 1.2,
             max_compute_units: 1_400_000,
             max_concurrent_threads: 50,
+            load_balancer: LoadBalancerConfig::default(),
         }
     }
 }
@@ -76,6 +80,23 @@ impl ProcessorConfig {
         
         if let Ok(val) = std::env::var("ANTEGEN_FORGO_COMMISSION") {
             config.forgo_executor_commission = val.parse().unwrap_or(false);
+        }
+        
+        // Load balancer configuration from environment
+        if let Ok(val) = std::env::var("ANTEGEN_LOAD_BALANCER_ENABLED") {
+            config.load_balancer.enabled = val.parse().unwrap_or(true);
+        }
+        
+        if let Ok(val) = std::env::var("ANTEGEN_LOAD_BALANCER_CAPACITY_THRESHOLD") {
+            if let Ok(threshold) = val.parse::<u32>() {
+                config.load_balancer.capacity_threshold = threshold;
+            }
+        }
+        
+        if let Ok(val) = std::env::var("ANTEGEN_LOAD_BALANCER_TAKEOVER_DELAY") {
+            if let Ok(delay) = val.parse::<i64>() {
+                config.load_balancer.takeover_delay_seconds = delay;
+            }
         }
         
         config

@@ -69,8 +69,9 @@ pub mod cpi {
         index: u8,
         instruction: SerializableInstruction,
         signer_seeds: Vec<Vec<Vec<u8>>>,
+        priority_fee: u64,
     ) -> Result<()> {
-        antegen_thread_program::cpi::create_fiber(ctx, index, instruction, signer_seeds)
+        antegen_thread_program::cpi::create_fiber(ctx, index, instruction, signer_seeds, priority_fee)
     }
 
     pub fn fiber_delete<'info>(

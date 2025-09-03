@@ -123,6 +123,7 @@ impl TransactionSubmitter {
         &self,
         instructions: Vec<Instruction>,
         keypair: Arc<Keypair>,
+        priority_fee: Option<u64>,
     ) -> Result<()> {
         // Honeybadger approach: Keep trying until timeout
         // Success is determined by thread updates, not transaction submission
@@ -176,6 +177,7 @@ impl TransactionSubmitter {
                 &keypair.pubkey(),
                 blockhash,
                 None, // Let simulation determine compute units
+                priority_fee,
             );
 
             // Sign for simulation
@@ -205,6 +207,7 @@ impl TransactionSubmitter {
                         &keypair.pubkey(),
                         blockhash,
                         Some(compute_units),
+                        priority_fee,
                     );
 
                     // Sign and submit
@@ -359,6 +362,7 @@ impl TransactionSubmitter {
         payer: &Pubkey,
         blockhash: Hash,
         compute_units: Option<u32>,
+        priority_fee: Option<u64>,
     ) -> Transaction {
         let mut final_instructions = Vec::new();
 
@@ -367,8 +371,12 @@ impl TransactionSubmitter {
             final_instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(units));
         }
 
-        // Add priority fee if needed (could be made configurable)
-        final_instructions.push(ComputeBudgetInstruction::set_compute_unit_price(1));
+        // Add priority fee if specified (in microlamports)
+        if let Some(fee) = priority_fee {
+            if fee > 0 {
+                final_instructions.push(ComputeBudgetInstruction::set_compute_unit_price(fee));
+            }
+        }
 
         // Add the actual instructions
         final_instructions.append(&mut instructions);
