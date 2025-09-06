@@ -6,6 +6,7 @@ use std::path::PathBuf;
 mod builder;
 mod clock_tracker;
 mod config;
+mod connection_waiter;
 mod pipeline;
 mod processor;
 
@@ -97,11 +98,15 @@ async fn main() -> Result<()> {
 }
 
 fn init_logging(debug: bool) {
+    use env_logger::{Builder, Target};
+    
     let level = if debug {
         "debug,antegen_adapter=debug,antegen_processor=debug,antegen_submitter=debug"
     } else {
         "info,antegen_adapter=info,antegen_processor=info,antegen_submitter=info"
     };
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).init();
+    let mut builder = Builder::from_env(env_logger::Env::default().default_filter_or(level));
+    builder.target(Target::Stdout);
+    builder.init();
 }

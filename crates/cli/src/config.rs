@@ -10,15 +10,6 @@ use {
 
 pub const DEFAULT_RPC_TIMEOUT_SECONDS: Duration = Duration::from_secs(30);
 pub const DEFAULT_CONFIRM_TX_TIMEOUT_SECONDS: Duration = Duration::from_secs(5);
-// These constants are used by deps.rs
-pub const ANTEGEN_RELEASE_URL: &str = "https://github.com/wuwei-labs/antegen/releases/download";
-pub const ANTEGEN_DEPS: &[&str] = &[
-    "antegen_network_program.so",
-    "antegen_thread_program.so",
-    "libantegen_client_geyser.so",
-];
-pub const SOLANA_RELEASE_BASE_URL: &str = "https://github.com/anza-xyz/agave/releases/download";
-pub const SOLANA_DEPS: &[&str] = &["solana-test-validator"];
 
 /// The combination of solana config file and our own config file
 #[derive(Debug, PartialEq)]
@@ -131,50 +122,3 @@ impl CliConfig {
 }
 
 
-// Antegen Deps Helpers
-impl CliConfig {
-    // #[tokio::main]
-    fn detect_target_triplet() -> String {
-        let output = std::process::Command::new("cargo")
-            .arg("-vV")
-            .output()
-            .expect("failed to execute process");
-
-        let host_prefix = "host:";
-        String::from_utf8(output.stdout)
-            .expect("Unable to get output from cargo -vV")
-            .split('\n')
-            .find(|line| line.trim_start().to_lowercase().starts_with(&host_prefix))
-            .map(|line| line.trim_start_matches(&host_prefix).trim())
-            .expect("Unable to detect target 'host' from cargo -vV")
-            .to_owned()
-    }
-
-    pub fn antegen_release_url(tag: &str) -> String {
-        format!(
-            "{}/v{}/{}",
-            ANTEGEN_RELEASE_URL,
-            tag,
-            &Self::antegen_release_archive()
-        )
-    }
-
-    pub fn antegen_release_archive() -> String {
-        let target_triplet = Self::detect_target_triplet();
-        format!("antegen-geyser-plugin-release-{}.tar.xz", target_triplet)
-    }
-
-    pub fn solana_release_url(tag: &str) -> String {
-        format!(
-            "{}/{}/{}",
-            SOLANA_RELEASE_BASE_URL,
-            tag.replace("=", ""),
-            &Self::solana_release_archive()
-        )
-    }
-
-    pub fn solana_release_archive() -> String {
-        let target_triplet = Self::detect_target_triplet();
-        format!("solana-release-{}.tar.bz2", target_triplet)
-    }
-}

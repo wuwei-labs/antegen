@@ -30,6 +30,7 @@ bs58 = { workspace = true }
 bzip2 = { workspace = true }
 clap = { workspace = true }
 chrono = { workspace = true }
+dialoguer = "0.11"
 dirs-next = { workspace = true }
 indicatif = { workspace = true }
 reqwest = { workspace = true }
@@ -52,6 +53,9 @@ terminal-link = { workspace = true }
 toml = { workspace = true }
 once_cell = { workspace = true }
 rand = { workspace = true }
+pmdaemon = "0.1.4"
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }
 
 [[bin]]
 name = "antegen"

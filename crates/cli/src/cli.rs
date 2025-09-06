@@ -23,7 +23,7 @@ pub enum CliCommand {
         keypair: Option<String>,
     },
     LocalnetClientRemove {
-        name: String,
+        name: Option<String>,
     },
     LocalnetClientList,
     ThreadCreate {
@@ -170,8 +170,8 @@ pub fn app() -> Command {
                                     Arg::new("name")
                                         .index(1)
                                         .value_name("NAME")
-                                        .required(true)
-                                        .help("Client name to remove")
+                                        .required(false)
+                                        .help("Client name to remove (interactive selection if not provided)")
                                 )
                         )
                         .subcommand(

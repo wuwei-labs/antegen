@@ -1,7 +1,6 @@
 mod cli;
 mod client;
 mod config;
-mod deps;
 mod errors;
 mod parser;
 mod print;
@@ -9,10 +8,6 @@ mod processor;
 mod utils;
 
 use {
-    crate::{
-        config::CliConfig,
-        print::print_style,
-    },
     cli::app,
     errors::CliError,
     processor::process,

@@ -62,7 +62,7 @@ fn parse_localnet_client_command(matches: &ArgMatches) -> Result<CliCommand, Cli
         }
         Some(("remove", matches)) => {
             Ok(CliCommand::LocalnetClientRemove {
-                name: parse_string("name", matches)?,
+                name: parse_optional_string("name", matches)?,
             })
         }
         Some(("list", _)) => Ok(CliCommand::LocalnetClientList),
@@ -184,6 +184,12 @@ fn parse_string(arg: &str, matches: &ArgMatches) -> Result<String, CliError> {
         .get_one::<String>(arg)
         .ok_or_else(|| CliError::BadParameter(arg.into()))?
         .to_string())
+}
+
+fn parse_optional_string(arg: &str, matches: &ArgMatches) -> Result<Option<String>, CliError> {
+    Ok(matches
+        .get_one::<String>(arg)
+        .map(|s| s.to_string()))
 }
 
 pub fn _parse_i64(arg: &str, matches: &ArgMatches) -> Result<i64, CliError> {

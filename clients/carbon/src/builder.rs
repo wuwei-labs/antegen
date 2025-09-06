@@ -38,16 +38,6 @@ impl antegen_client::builder::DatasourceBuilder for RpcDatasourceBuilder {
         info!("Clock sysvar ID: {}", sysvar::clock::ID);
         info!("RPC URL: {}", self.config.rpc_url);
 
-        // Clone sender for both pipelines
-        let sender_thread = sender.clone();
-        let sender_clock = sender;
-        
-        // Create processor for thread accounts
-        let processor_thread = ThreadAccountProcessor::new(sender_thread, self.config.thread_program_id);
-        
-        // Create metrics
-        let metrics = Arc::new(LogMetrics::new());
-        
         // Convert RPC URL to WebSocket URL if needed
         let ws_url = if self.config.rpc_url.starts_with("ws://") || self.config.rpc_url.starts_with("wss://") {
             self.config.rpc_url.clone()
@@ -57,6 +47,19 @@ impl antegen_client::builder::DatasourceBuilder for RpcDatasourceBuilder {
                 .replace("https://", "wss://")
                 .replace(":8899", ":8900")
         };
+        
+        // Wait for validator to be ready before initializing connections
+        crate::connection_waiter::wait_for_validator(&self.config.rpc_url, &ws_url).await?;
+
+        // Clone sender for both pipelines
+        let sender_thread = sender.clone();
+        let sender_clock = sender;
+        
+        // Create processor for thread accounts
+        let processor_thread = ThreadAccountProcessor::new(sender_thread, self.config.thread_program_id);
+        
+        // Create metrics
+        let metrics = Arc::new(LogMetrics::new());
         
         // Task 1: Subscribe to thread program accounts
         let thread_program_id = self.config.thread_program_id;

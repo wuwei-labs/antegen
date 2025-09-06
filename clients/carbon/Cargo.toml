@@ -15,6 +15,9 @@ carbon-helius-atlas-ws-datasource = "0.9.1"
 carbon-yellowstone-grpc-datasource = "0.9.1"
 carbon-log-metrics = "0.9.1"
 
+# URL parsing for connection waiter
+url = "2.5"
+
 # Antegen crates
 antegen-adapter = { path = "../../crates/adapter" }
 antegen-client = { path = "../../crates/client" }

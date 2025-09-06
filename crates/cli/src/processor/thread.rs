@@ -3,7 +3,7 @@ use anchor_lang::{
     solana_program::{instruction::Instruction, system_program},
     InstructionData, ToAccountMetas,
 };
-use antegen_sdk::state::{SerializableInstruction, Thread, ThreadConfig, Trigger, TriggerContext};
+use antegen_sdk::state::{SerializableInstruction, Thread, Trigger, TriggerContext};
 use solana_sdk::{
     native_token::LAMPORTS_PER_SOL,
     pubkey::Pubkey,
@@ -233,43 +233,6 @@ pub fn update(client: &Client, id: String, schedule: Option<String>) -> Result<(
     Ok(())
 }
 
-pub fn init_config(client: &Client) -> Result<(), CliError> {
-    let config_pubkey = ThreadConfig::pubkey();
-
-    // Check if config already exists
-    match client.get_account_data(&config_pubkey) {
-        Ok(_) => {
-            // Config already exists, skip initialization
-            return Ok(());
-        }
-        Err(_) => {
-            // Config doesn't exist, proceed with initialization
-        }
-    }
-
-    let ix = Instruction {
-        program_id: antegen_sdk::ID,
-        accounts: antegen_sdk::accounts::ConfigInit {
-            admin: client.payer_pubkey(),
-            config: config_pubkey,
-            system_program: system_program::ID,
-        }
-        .to_account_metas(Some(false)),
-        data: antegen_sdk::instruction::InitConfig {}.data(),
-    };
-
-    match client.send_and_confirm(&[ix], &[client.payer()]) {
-        Ok(_) => Ok(()),
-        Err(e) => {
-            // If it fails because account already exists, that's ok
-            if e.to_string().contains("already in use") {
-                Ok(())
-            } else {
-                Err(CliError::BadParameter(format!("Failed to initialize config: {}", e)))
-            }
-        }
-    }
-}
 
 pub fn create_fiber(
     client: &Client,
