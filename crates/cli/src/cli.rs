@@ -14,6 +14,15 @@ pub enum CliCommand {
         clients: Vec<String>,
         release: bool,
     },
+    LocalnetStartRpc {
+        release: bool,
+    },
+    LocalnetStartCarbon {
+        release: bool,
+    },
+    LocalnetStartGeyser {
+        release: bool,
+    },
     LocalnetStop,
     LocalnetStatus,
     LocalnetClientAdd {
@@ -116,6 +125,36 @@ pub fn app() -> Command {
                         )
                 )
                 .subcommand(
+                    Command::new("start:rpc")
+                        .about("Start localnet with RPC client")
+                        .arg(
+                            Arg::new("release")
+                                .long("release")
+                                .action(ArgAction::SetTrue)
+                                .help("Use release binaries from ~/.config/antegen instead of dev builds")
+                        )
+                )
+                .subcommand(
+                    Command::new("start:carbon")
+                        .about("Start localnet with Carbon client")
+                        .arg(
+                            Arg::new("release")
+                                .long("release")
+                                .action(ArgAction::SetTrue)
+                                .help("Use release binaries from ~/.config/antegen instead of dev builds")
+                        )
+                )
+                .subcommand(
+                    Command::new("start:geyser")
+                        .about("Start localnet with Geyser plugin enabled")
+                        .arg(
+                            Arg::new("release")
+                                .long("release")
+                                .action(ArgAction::SetTrue)
+                                .help("Use release binaries from ~/.config/antegen instead of dev builds")
+                        )
+                )
+                .subcommand(
                     Command::new("stop")
                         .about("Stop the running localnet")
                 )
@@ -137,7 +176,7 @@ pub fn app() -> Command {
                                         .value_name("TYPE")
                                         .num_args(1)
                                         .required(true)
-                                        .help("Client type (carbon)")
+                                        .help("Client type (rpc, carbon)")
                                 )
                                 .arg(
                                     Arg::new("name")

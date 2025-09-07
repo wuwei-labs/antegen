@@ -41,6 +41,18 @@ fn parse_bpf_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
                 release,
             })
         }
+        Some(("start:rpc", matches)) => {
+            let release = matches.get_flag("release");
+            Ok(CliCommand::LocalnetStartRpc { release })
+        }
+        Some(("start:carbon", matches)) => {
+            let release = matches.get_flag("release");
+            Ok(CliCommand::LocalnetStartCarbon { release })
+        }
+        Some(("start:geyser", matches)) => {
+            let release = matches.get_flag("release");
+            Ok(CliCommand::LocalnetStartGeyser { release })
+        }
         Some(("stop", _)) => Ok(CliCommand::LocalnetStop),
         Some(("status", _)) => Ok(CliCommand::LocalnetStatus),
         Some(("client", matches)) => parse_localnet_client_command(matches),

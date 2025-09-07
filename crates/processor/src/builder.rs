@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use crossbeam::channel::{Receiver, Sender};
+use crossbeam::channel::Receiver;
 use std::sync::Arc;
 
 use crate::{
@@ -8,7 +8,6 @@ use crate::{
     service::ProcessorService,
     types::{AccountUpdate, ProcessorConfig},
 };
-use antegen_sdk::ProcessorMessage;
 
 /// Builder for ProcessorService
 pub struct ProcessorBuilder {
@@ -20,7 +19,6 @@ pub struct ProcessorBuilder {
     compute_unit_multiplier: f64,
     max_compute_units: u32,
     account_receiver: Option<Receiver<AccountUpdate>>,
-    transaction_sender: Option<Sender<ProcessorMessage>>,
     metrics: Option<Arc<ProcessorMetrics>>,
     load_balancer_config: LoadBalancerConfig,
 }
@@ -37,7 +35,6 @@ impl Default for ProcessorBuilder {
             compute_unit_multiplier: config.compute_unit_multiplier,
             max_compute_units: config.max_compute_units,
             account_receiver: None,
-            transaction_sender: None,
             metrics: None,
             load_balancer_config: LoadBalancerConfig::default(),
         }
@@ -110,12 +107,6 @@ impl ProcessorBuilder {
         self
     }
 
-    /// Set transaction sender to submitter
-    pub fn transaction_sender(mut self, sender: Sender<ProcessorMessage>) -> Self {
-        self.transaction_sender = Some(sender);
-        self
-    }
-
     /// Set metrics
     pub fn metrics(mut self, meter: opentelemetry::metrics::Meter) -> Self {
         self.metrics = Some(Arc::new(ProcessorMetrics::new(&meter)));
@@ -145,7 +136,6 @@ impl ProcessorBuilder {
             compute_unit_multiplier: config.compute_unit_multiplier,
             max_compute_units: config.max_compute_units,
             account_receiver: None,
-            transaction_sender: None,
             metrics: None,
             load_balancer_config: config.load_balancer,
         }
@@ -160,9 +150,6 @@ impl ProcessorBuilder {
         let account_receiver = self
             .account_receiver
             .ok_or_else(|| anyhow!("Account receiver is required"))?;
-        let transaction_sender = self
-            .transaction_sender
-            .ok_or_else(|| anyhow!("Transaction sender is required"))?;
 
         // Create config
         let config = ProcessorConfig {
@@ -177,6 +164,6 @@ impl ProcessorBuilder {
         };
 
         // Create service
-        ProcessorService::new(config, account_receiver, transaction_sender).await
+        ProcessorService::new(config, account_receiver).await
     }
 }

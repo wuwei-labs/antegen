@@ -1,6 +1,4 @@
 use anyhow::{anyhow, Result};
-use async_trait::async_trait;
-use crossbeam::channel::{bounded, Receiver, Sender};
 use log::{error, info};
 use solana_program::pubkey::Pubkey;
 use solana_sdk::{
@@ -10,16 +8,14 @@ use solana_sdk::{
 use std::fmt::Debug;
 use tokio::runtime::Handle;
 
-use antegen_adapter::builder::AdapterBuilder;
-use antegen_adapter::events::ObservedEvent;
-use antegen_client::{AntegenClient, DatasourceBuilder};
+use antegen_client::{AntegenClient, GeyserDatasource, GeyserPluginHelper};
 use antegen_processor::builder::ProcessorBuilder;
 use antegen_submitter::builder::SubmitterBuilder;
 
-/// Worker that uses the builder pattern for simplified setup
+/// Worker that uses the builder pattern with pre-built Geyser datasource
 pub struct PluginWorkerBuilder {
-    /// Channel to send ObservedEvents from Geyser to the client
-    event_sender: Sender<ObservedEvent>,
+    /// Helper for Geyser plugin to send events
+    plugin_helper: GeyserPluginHelper,
     /// The built Antegen client
     client: Option<AntegenClient>,
 }
@@ -27,7 +23,7 @@ pub struct PluginWorkerBuilder {
 impl Debug for PluginWorkerBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PluginWorkerBuilder")
-            .field("event_sender", &"Sender<ObservedEvent>")
+            .field("plugin_helper", &"GeyserPluginHelper")
             .field("client", &self.client.is_some())
             .finish()
     }
@@ -42,12 +38,14 @@ impl PluginWorkerBuilder {
         enable_replay: bool,
         nats_url: Option<String>,
     ) -> Result<Self> {
-        info!("=== Initializing PluginWorkerBuilder ===");
+        info!("=== Initializing PluginWorkerBuilder with pre-built datasource ===");
         info!("RPC URL: {}", rpc_url);
 
-        // Create channel for Geyser -> Adapter
-        let (observed_tx, observed_rx) = bounded(1000);
-        info!("Created observed event channel (Geyser->Adapter) with capacity 1000");
+        // Create Geyser datasource with channel
+        let mut geyser_datasource = GeyserDatasource::new();
+        let plugin_sender = geyser_datasource.get_plugin_sender();
+        let plugin_helper = GeyserPluginHelper::new(plugin_sender);
+        info!("Created Geyser datasource with channel capacity 1000");
 
         // Load keypair
         let keypair = std::sync::Arc::new(load_keypair(&keypair_path)?);
@@ -57,16 +55,9 @@ impl PluginWorkerBuilder {
             keypair_path, executor_pubkey
         );
 
-        // Create Geyser datasource
-        let datasource = Box::new(GeyserDatasource::new(observed_rx));
-
-        // Build the client using the builder pattern
+        // Build the client using the pre-built Geyser datasource
         let mut client_builder = AntegenClient::builder()
-            .datasource(datasource)
-            .adapter(
-                AdapterBuilder::default()
-                    .adapter_pubkey(executor_pubkey),
-            )
+            .datasource(Box::new(geyser_datasource))
             .processor(
                 ProcessorBuilder::new()
                     .keypair(keypair_path.clone())
@@ -101,7 +92,7 @@ impl PluginWorkerBuilder {
         info!("=== PluginWorkerBuilder initialization complete ===");
 
         Ok(Self {
-            event_sender: observed_tx,
+            plugin_helper,
             client: Some(client),
         })
     }
@@ -132,56 +123,14 @@ impl PluginWorkerBuilder {
         &self,
         pubkey: Pubkey,
         account: solana_sdk::account::Account,
-        slot: u64,
+        _slot: u64,
     ) -> Result<()> {
-        let event = ObservedEvent::Account {
-            pubkey,
-            account,
-            slot,
-        };
-
-        self.event_sender
-            .send(event)
-            .map_err(|e| anyhow!("Failed to send account event: {}", e))?;
-        Ok(())
+        self.plugin_helper.send_account_update(pubkey, account)
     }
-}
-
-/// Geyser datasource that receives events from the Geyser plugin
-struct GeyserDatasource {
-    receiver: Receiver<ObservedEvent>,
-}
-
-impl GeyserDatasource {
-    fn new(receiver: Receiver<ObservedEvent>) -> Self {
-        Self { receiver }
-    }
-}
-
-#[async_trait]
-impl DatasourceBuilder for GeyserDatasource {
-    async fn run(&self, sender: Sender<ObservedEvent>) -> Result<()> {
-        info!("Starting GeyserDatasource");
-        
-        loop {
-            // Blocking receive - will wait for events
-            match self.receiver.recv() {
-                Ok(event) => {
-                    // Forward event to the adapter
-                    if let Err(e) = sender.send(event) {
-                        error!("Failed to send event to adapter: {}", e);
-                        break;
-                    }
-                }
-                Err(e) => {
-                    info!("GeyserDatasource channel disconnected: {}", e);
-                    break;
-                }
-            }
-        }
-        
-        info!("GeyserDatasource stopped");
-        Ok(())
+    
+    /// Check if the channel is still connected
+    pub fn is_connected(&self) -> bool {
+        self.plugin_helper.is_connected()
     }
 }
 

@@ -1,6 +1,6 @@
 use antegen_sdk::rpc::{CacheConfig, CachedRpcClient};
 use anyhow::{anyhow, Result};
-use crossbeam::channel::{Receiver, Sender};
+use crossbeam::channel::Receiver;
 use log::{debug, error, info, warn};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
@@ -18,7 +18,6 @@ use crate::metrics::ProcessorMetrics;
 use crate::parser::{classify_account, AccountType};
 use crate::queue::{ThreadQueue, TriggerType};
 use crate::types::{AccountUpdate, ExecutableThread, ProcessorConfig};
-use antegen_sdk::ProcessorMessage;
 
 /// Main processor service that handles thread processing
 pub struct ProcessorService {
@@ -53,7 +52,6 @@ impl ProcessorService {
     pub async fn new(
         config: ProcessorConfig,
         account_receiver: Receiver<AccountUpdate>,
-        _transaction_sender: Sender<ProcessorMessage>, // Keep for compatibility, but unused
     ) -> Result<Self> {
         // Load executor keypair
         let executor_keypair = Arc::new(

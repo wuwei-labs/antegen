@@ -5,31 +5,21 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use solana_sdk::signature::{read_keypair_file, Signer};
 
-use antegen_client::{
-    AntegenClient, 
-    CarbonConfig,
-    CarbonRpcDatasource,
-    CarbonHeliusDatasource,
-    CarbonYellowstoneDatasource,
-};
+use antegen_client::{AntegenClient, RpcDatasource, RpcConfig};
 use antegen_processor::builder::ProcessorBuilder;
 use antegen_submitter::builder::SubmitterBuilder;
 
 mod config;
-use config::{Config, DatasourceType};
+use config::Config;
 
 #[derive(Parser)]
-#[command(name = "antegen-carbon")]
-#[command(about = "Standalone Antegen worker using Carbon framework")]
+#[command(name = "antegen-rpc")]
+#[command(about = "Standalone Antegen worker using direct RPC pubsub")]
 #[command(version)]
-struct Args {
+pub struct Args {
     /// Config file path
     #[arg(short, long)]
     config: Option<PathBuf>,
-
-    /// Datasource type: rpc, helius, or yellowstone
-    #[arg(long)]
-    datasource: Option<String>,
 
     /// RPC URL for blockchain connection
     #[arg(long)]
@@ -42,22 +32,6 @@ struct Args {
     /// Thread program ID to monitor
     #[arg(long)]
     thread_program_id: Option<String>,
-
-    /// Helius WebSocket URL
-    #[arg(long)]
-    helius_ws_url: Option<String>,
-
-    /// Helius API key
-    #[arg(long)]
-    helius_api_key: Option<String>,
-
-    /// Yellowstone gRPC endpoint
-    #[arg(long)]
-    yellowstone_endpoint: Option<String>,
-
-    /// Yellowstone authentication token
-    #[arg(long)]
-    yellowstone_token: Option<String>,
 
     /// Enable debug logging
     #[arg(long)]
@@ -94,21 +68,20 @@ async fn main() -> Result<()> {
     // Initialize logging
     init_logging(config.debug);
 
-    info!("Starting Antegen Carbon worker");
-    info!("Datasource: {:?}", config.datasource);
+    info!("Starting Antegen RPC worker");
     info!("Thread program ID: {}", config.thread_program_id);
 
-    // Run the Carbon client with pre-built datasources
-    run_carbon_client(config).await
+    // Run the simplified RPC client
+    run_rpc_client(config).await
 }
 
 fn init_logging(debug: bool) {
     use env_logger::{Builder, Target};
     
     let level = if debug {
-        "debug,antegen_client=debug,antegen_processor=debug,antegen_submitter=debug,carbon_core=debug"
+        "debug,antegen_client=debug,antegen_processor=debug,antegen_submitter=debug"
     } else {
-        "info,antegen_client=info,antegen_processor=info,antegen_submitter=info,carbon_core=info"
+        "info,antegen_client=info,antegen_processor=info,antegen_submitter=info"
     };
 
     let mut builder = Builder::from_env(env_logger::Env::default().default_filter_or(level));
@@ -116,9 +89,9 @@ fn init_logging(debug: bool) {
     builder.init();
 }
 
-/// Run the Carbon client using pre-built datasources
-async fn run_carbon_client(config: Config) -> Result<()> {
-    info!("Initializing Carbon client with pre-built datasources");
+/// Run the RPC client using pre-built datasource
+async fn run_rpc_client(config: Config) -> Result<()> {
+    info!("Initializing RPC client with pre-built datasource");
 
     // Validate keypair
     let keypair = Arc::new(
@@ -128,42 +101,13 @@ async fn run_carbon_client(config: Config) -> Result<()> {
     let executor_pubkey = keypair.pubkey();
     info!("Executor pubkey: {}", executor_pubkey);
 
-    // Create Carbon configuration
-    let carbon_config = CarbonConfig::new(
-        config.thread_program_id,
-        config.rpc_url.clone(),
-    );
+    // Create RPC datasource configuration
+    let rpc_config = RpcConfig::new(config.rpc_url.clone(), config.thread_program_id)
+        .with_commitment(solana_sdk::commitment_config::CommitmentConfig::confirmed());
 
-    // Create appropriate datasource based on configuration
-    let datasource: Box<dyn antegen_client::DatasourceBuilder> = match config.datasource {
-        DatasourceType::Rpc => {
-            info!("Using Carbon RPC datasource");
-            Box::new(CarbonRpcDatasource::new(carbon_config))
-        }
-        DatasourceType::Helius => {
-            let helius_config = config.helius.as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Helius configuration required"))?;
-            info!("Using Carbon Helius datasource");
-            Box::new(CarbonHeliusDatasource::new(
-                carbon_config,
-                helius_config.ws_url.clone(),
-            ))
-        }
-        DatasourceType::Yellowstone => {
-            let yellowstone_config = config.yellowstone.as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Yellowstone configuration required"))?;
-            info!("Using Carbon Yellowstone datasource");
-            Box::new(CarbonYellowstoneDatasource::new(
-                carbon_config,
-                yellowstone_config.endpoint.clone(),
-                yellowstone_config.token.clone(),
-            ))
-        }
-    };
-
-    // Build the client using the selected datasource
+    // Build the client using the pre-built RPC datasource
     let client = AntegenClient::builder()
-        .datasource(datasource)
+        .datasource(Box::new(RpcDatasource::new(rpc_config)))
         .processor(
             ProcessorBuilder::new()
                 .keypair(config.keypair_path.to_string_lossy())
@@ -179,15 +123,15 @@ async fn run_carbon_client(config: Config) -> Result<()> {
         .build()
         .await?;
 
-    info!("Starting Carbon client");
+    info!("Starting RPC client");
 
     // Run the client
     match client.run().await {
-        Ok(()) => info!("Carbon client completed normally"),
-        Err(e) => log::error!("Carbon client error: {}", e),
+        Ok(()) => info!("RPC client completed normally"),
+        Err(e) => log::error!("RPC client error: {}", e),
     }
 
-    info!("Carbon client shutting down");
+    info!("RPC client shutting down");
     Ok(())
 }
 

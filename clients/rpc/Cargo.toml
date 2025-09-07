@@ -1,25 +1,18 @@
 [package]
-name = "antegen-client-carbon"
+name = "antegen-client-rpc"
 version = "3.0.0"
 edition = "2021"
 
 [[bin]]
-name = "antegen-carbon"
+name = "antegen-rpc"
 path = "src/main.rs"
 
 [dependencies]
-# Carbon framework datasources
-carbon-core = "0.9.1"
-carbon-rpc-program-subscribe-datasource = "0.9.1"
-carbon-helius-atlas-ws-datasource = "0.9.1"
-carbon-yellowstone-grpc-datasource = "0.9.1"
-carbon-log-metrics = "0.9.1"
-
 # URL parsing for connection waiter
 url = "2.5"
 
 # Antegen crates
-antegen-client = { path = "../../crates/client", features = ["carbon"] }
+antegen-client = { path = "../../crates/client" }
 antegen-processor = { path = "../../crates/processor" }
 antegen-thread-program = { path = "../../programs/thread" }
 antegen-submitter = { path = "../../crates/submitter" }
@@ -47,6 +40,3 @@ base64 = { workspace = true }
 bs58 = { workspace = true }
 futures = { workspace = true }
 serde_json = { workspace = true }
-
-# Required by Carbon datasources (yellowstone types)
-yellowstone-grpc-proto = "6.0.0"

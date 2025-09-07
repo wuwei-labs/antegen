@@ -10,11 +10,33 @@ crossbeam = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true }
 opentelemetry = { workspace = true }
+solana-account-decoder = { workspace = true }
+solana-client = { workspace = true }
+solana-program = { workspace = true }
 solana-sdk = { workspace = true }
 tokio = { workspace = true }
+url = { workspace = true }
 
 # Internal dependencies
-antegen-adapter = { path = "../adapter" }
 antegen-processor = { path = "../processor" }
 antegen-sdk = { path = "../sdk" }
 antegen-submitter = { path = "../submitter" }
+
+# Optional Carbon dependencies
+carbon-core = { version = "0.9.1", optional = true }
+carbon-rpc-program-subscribe-datasource = { version = "0.9.1", optional = true }
+carbon-helius-atlas-ws-datasource = { version = "0.9.1", optional = true }
+carbon-yellowstone-grpc-datasource = { version = "0.9.1", optional = true }
+carbon-log-metrics = { version = "0.9.1", optional = true }
+yellowstone-grpc-proto = { version = "6.0.0", optional = true }
+
+[features]
+default = []
+carbon = [
+    "carbon-core",
+    "carbon-rpc-program-subscribe-datasource",
+    "carbon-helius-atlas-ws-datasource",
+    "carbon-yellowstone-grpc-datasource",
+    "carbon-log-metrics",
+    "yellowstone-grpc-proto",
+]

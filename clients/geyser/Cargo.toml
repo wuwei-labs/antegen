@@ -20,7 +20,6 @@ name = "antegen_client_geyser"
 
 [dependencies]
 solana-cron = { workspace = true }
-antegen-adapter = { workspace = true }
 antegen-client = { workspace = true }
 antegen-processor = { workspace = true }
 antegen-submitter = { workspace = true }

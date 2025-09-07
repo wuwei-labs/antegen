@@ -10,18 +10,18 @@ use log::{debug, error};
 use solana_sdk::{account::Account, pubkey::Pubkey, sysvar};
 use std::sync::Arc;
 
-use antegen_adapter::events::ObservedEvent;
+use antegen_processor::types::AccountUpdate;
 
-/// Processor that converts Carbon account updates to Antegen ObservedEvents
+/// Processor that converts Carbon account updates to Antegen AccountUpdate events
 pub struct ThreadAccountProcessor {
-    /// Channel to send events to the adapter
-    sender: Sender<ObservedEvent>,
+    /// Channel to send events to the processor
+    sender: Sender<AccountUpdate>,
     /// Thread program ID to filter accounts
     thread_program_id: Pubkey,
 }
 
 impl ThreadAccountProcessor {
-    pub fn new(sender: Sender<ObservedEvent>, thread_program_id: Pubkey) -> Self {
+    pub fn new(sender: Sender<AccountUpdate>, thread_program_id: Pubkey) -> Self {
         Self {
             sender,
             thread_program_id,
@@ -42,7 +42,6 @@ impl Processor for ThreadAccountProcessor {
 
         // Extract account information
         let pubkey = metadata.pubkey;
-        let slot = metadata.slot;
 
         // Convert Carbon's decoded account to Solana SDK Account
         let account = Account {
@@ -62,23 +61,19 @@ impl Processor for ThreadAccountProcessor {
             return Ok(());
         }
 
-        // Create ObservedEvent
-        let event = ObservedEvent::Account {
-            pubkey,
-            account,
-            slot,
-        };
+        // Create AccountUpdate
+        let update = AccountUpdate { pubkey, account };
 
-        // Send event to adapter
-        if let Err(e) = self.sender.send(event) {
-            error!("Failed to send event to adapter: {}", e);
+        // Send update to processor
+        if let Err(e) = self.sender.send(update) {
+            error!("Failed to send update to processor: {}", e);
             return Err(carbon_core::error::Error::Custom(format!(
-                "Failed to send event: {}",
+                "Failed to send update: {}",
                 e
             )));
         }
 
-        debug!("Sent account update for {} at slot {}", pubkey, slot);
+        debug!("Sent account update for {}", pubkey);
 
         Ok(())
     }
@@ -92,7 +87,7 @@ impl<'a> carbon_core::account::AccountDecoder<'a> for BasicAccountDecoder {
 
     fn decode_account(
         &self,
-        account: &'a solana_account::Account,
+        account: &'a solana_sdk::account::Account,
     ) -> Option<DecodedAccount<Self::AccountType>> {
         Some(DecodedAccount {
             lamports: account.lamports,

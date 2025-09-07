@@ -132,12 +132,11 @@ pub struct ClockUpdate {
     pub unix_timestamp: i64,
 }
 
-/// Account update event from observer
+/// Account update event from datasources
 #[derive(Debug, Clone)]
 pub struct AccountUpdate {
     pub pubkey: Pubkey,
     pub account: Account,
-    pub slot: u64,
 }
 
 /// Serializable version of ExecutableThread for queue storage

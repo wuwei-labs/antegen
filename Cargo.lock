@@ -441,32 +441,6 @@ name = "antegen"
 version = "3.0.0"
 
 [[package]]
-name = "antegen-adapter"
-version = "3.0.0"
-dependencies = [
- "anchor-lang",
- "antegen-processor",
- "antegen-thread-program",
- "anyhow",
- "async-nats",
- "async-trait",
- "bincode",
- "chrono",
- "crossbeam",
- "hex",
- "log 0.4.27",
- "opentelemetry",
- "serde",
- "serde_json",
- "solana-account-decoder",
- "solana-client",
- "solana-program",
- "solana-rpc-client-nonce-utils",
- "solana-sdk",
- "tokio",
-]
-
-[[package]]
 name = "antegen-cli"
 version = "3.0.0"
 dependencies = [
@@ -514,18 +488,27 @@ dependencies = [
 name = "antegen-client"
 version = "0.1.0"
 dependencies = [
- "antegen-adapter",
  "antegen-processor",
  "antegen-sdk",
  "antegen-submitter",
  "anyhow",
  "async-trait",
+ "carbon-core",
+ "carbon-helius-atlas-ws-datasource",
+ "carbon-log-metrics",
+ "carbon-rpc-program-subscribe-datasource",
+ "carbon-yellowstone-grpc-datasource",
  "crossbeam",
  "futures",
  "log 0.4.27",
  "opentelemetry",
+ "solana-account-decoder",
+ "solana-client",
+ "solana-program",
  "solana-sdk",
  "tokio",
+ "url 2.5.7",
+ "yellowstone-grpc-proto",
 ]
 
 [[package]]
@@ -533,7 +516,6 @@ name = "antegen-client-carbon"
 version = "3.0.0"
 dependencies = [
  "anchor-lang",
- "antegen-adapter",
  "antegen-client",
  "antegen-processor",
  "antegen-submitter",
@@ -572,7 +554,6 @@ version = "3.0.0"
 dependencies = [
  "agave-geyser-plugin-interface",
  "anchor-lang",
- "antegen-adapter",
  "antegen-client",
  "antegen-processor",
  "antegen-submitter",
@@ -617,6 +598,37 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.16",
  "tokio",
+]
+
+[[package]]
+name = "antegen-client-rpc"
+version = "3.0.0"
+dependencies = [
+ "anchor-lang",
+ "antegen-client",
+ "antegen-processor",
+ "antegen-submitter",
+ "antegen-thread-program",
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bs58 0.5.1",
+ "clap 4.5.46",
+ "crossbeam",
+ "env_logger 0.10.2",
+ "futures",
+ "log 0.4.27",
+ "serde",
+ "serde_json",
+ "solana-account",
+ "solana-account-decoder",
+ "solana-client",
+ "solana-program",
+ "solana-pubsub-client",
+ "solana-sdk",
+ "tokio",
+ "toml 0.8.23",
+ "url 2.5.7",
 ]
 
 [[package]]

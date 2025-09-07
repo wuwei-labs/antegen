@@ -4,16 +4,13 @@ use log::info;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
-use antegen_adapter::events::ObservedEvent;
-use antegen_sdk::ProcessorMessage;
+use antegen_processor::types::AccountUpdate;
 use antegen_submitter::SubmissionService;
 
 /// Main Antegen client that orchestrates all components
 pub struct AntegenClient {
     /// Handles for datasource services
     datasource_handles: Vec<JoinHandle<()>>,
-    /// Handle for adapter service
-    adapter_handle: Option<JoinHandle<Result<()>>>,
     /// Handle for processor service
     processor_handle: Option<JoinHandle<Result<()>>>,
     /// Reference to submission service (shared with processor)
@@ -41,10 +38,6 @@ impl AntegenClient {
             }));
         }
 
-        // Add adapter handle
-        if let Some(handle) = self.adapter_handle {
-            handles.push(handle);
-        }
 
         // Add processor handle
         if let Some(handle) = self.processor_handle {
@@ -71,7 +64,6 @@ impl AntegenClient {
 #[derive(Default)]
 pub struct AntegenClientBuilder {
     datasource_builders: Vec<Box<dyn DatasourceBuilder>>,
-    adapter_builder: Option<antegen_adapter::builder::AdapterBuilder>,
     processor_builder: Option<antegen_processor::builder::ProcessorBuilder>,
     submitter_builder: Option<antegen_submitter::builder::SubmitterBuilder>,
     global_metrics: Option<opentelemetry::metrics::Meter>,
@@ -93,11 +85,6 @@ impl AntegenClientBuilder {
         self
     }
 
-    /// Configure the adapter
-    pub fn adapter(mut self, adapter: antegen_adapter::builder::AdapterBuilder) -> Self {
-        self.adapter_builder = Some(adapter);
-        self
-    }
 
     /// Configure the processor
     pub fn processor(mut self, processor: antegen_processor::builder::ProcessorBuilder) -> Self {
@@ -121,15 +108,14 @@ impl AntegenClientBuilder {
     pub async fn build(self) -> Result<AntegenClient> {
         let mut client = AntegenClient {
             datasource_handles: vec![],
-            adapter_handle: None,
             processor_handle: None,
             submitter: None,
         };
 
         // Create shared event channel if we have datasources
         let (event_tx, event_rx): (
-            Option<Sender<ObservedEvent>>,
-            Option<Receiver<ObservedEvent>>,
+            Option<Sender<AccountUpdate>>,
+            Option<Receiver<AccountUpdate>>,
         ) = if !self.datasource_builders.is_empty() {
             let (tx, rx) = bounded(1000);
             (Some(tx), Some(rx))
@@ -154,46 +140,13 @@ impl AntegenClientBuilder {
             );
         }
 
-        // Build adapter if configured or if we have datasources
-        let account_rx = if let Some(rx) = event_rx {
-            let mut adapter_builder = self
-                .adapter_builder
-                .unwrap_or_else(|| antegen_adapter::builder::AdapterBuilder::default());
-
-            // Apply global metrics if available
-            if let Some(meter) = &self.global_metrics {
-                adapter_builder = adapter_builder.metrics(meter.clone());
-            }
-
-            let (mut adapter_service, account_rx) = adapter_builder.event_receiver(rx).build()?;
-
-            client.adapter_handle = Some(tokio::spawn(async move { adapter_service.run().await }));
-
-            info!("Started adapter service");
-            Some(account_rx)
-        } else {
-            None
-        };
-
-        // Create transaction channel if both processor and submitter are configured
-        let (transaction_tx, transaction_rx): (
-            Option<Sender<ProcessorMessage>>,
-            Option<Receiver<ProcessorMessage>>,
-        ) = if self.processor_builder.is_some() && self.submitter_builder.is_some() {
-            let (tx, rx) = bounded(100);
-            (Some(tx), Some(rx))
-        } else {
-            (None, None)
-        };
+        // Use event_rx directly as account_rx since datasources now emit AccountUpdate
+        let account_rx = event_rx;
 
         // Build processor if configured
         if let Some(mut processor_builder) = self.processor_builder {
             let account_rx = account_rx
-                .ok_or_else(|| anyhow!("Processor requires adapter or custom event source"))?;
-
-            let transaction_tx = transaction_tx.ok_or_else(|| {
-                anyhow!("Processor requires transaction sender (submitter must be configured)")
-            })?;
+                .ok_or_else(|| anyhow!("Processor requires datasource or custom event source"))?;
 
             // Apply global metrics if available
             if let Some(meter) = &self.global_metrics {
@@ -202,7 +155,6 @@ impl AntegenClientBuilder {
 
             let processor_service = processor_builder
                 .account_receiver(account_rx)
-                .transaction_sender(transaction_tx)
                 .build()
                 .await?;
 
@@ -219,11 +171,6 @@ impl AntegenClientBuilder {
                 submitter_builder = submitter_builder.metrics(meter.clone());
             }
 
-            // Add transaction receiver if processor is configured
-            if let Some(rx) = transaction_rx {
-                submitter_builder = submitter_builder.transaction_receiver(rx);
-            }
-
             let submission_service = Arc::new(submitter_builder.build().await?);
             client.submitter = Some(submission_service);
 
@@ -238,5 +185,5 @@ impl AntegenClientBuilder {
 #[async_trait::async_trait]
 pub trait DatasourceBuilder: Send + Sync {
     /// Run the datasource, sending events to the provided channel
-    async fn run(&self, sender: Sender<ObservedEvent>) -> Result<()>;
+    async fn run(&self, sender: Sender<AccountUpdate>) -> Result<()>;
 }

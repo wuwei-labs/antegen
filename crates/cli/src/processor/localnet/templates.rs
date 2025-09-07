@@ -3,6 +3,11 @@ use std::path::PathBuf;
 use super::daemon::AppConfig;
 
 /// Create validator service configuration
+/// 
+/// To enable Geyser plugin integration:
+/// 1. Pass a geyser_config pointing to the Antegen Geyser plugin configuration
+/// 2. The plugin will automatically start processing events through the Geyser interface
+/// 3. The Geyser client uses pre-built datasources from antegen_client crate
 pub fn validator_service(
     geyser_config: Option<PathBuf>,
     runtime_dir: &PathBuf,
@@ -115,6 +120,53 @@ pub fn carbon_service(
     }
 }
 
+/// Create RPC client service configuration
+pub fn rpc_service(
+    name: &str,
+    rpc_url: &str,
+    runtime_dir: &PathBuf,
+    is_dev: bool,
+) -> AppConfig {
+    let keypair_path = runtime_dir.join("executor-keypair.json");
+    
+    let args = vec![
+        "--rpc-url".to_string(),
+        rpc_url.to_string(),
+        "--keypair".to_string(),
+        keypair_path.to_string_lossy().to_string(),
+        "--thread-program-id".to_string(),
+        "AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1".to_string(),
+        "--forgo-commission".to_string(),
+    ];
+    
+    // Get RPC binary path
+    let script = get_binary_path("antegen-rpc", runtime_dir, is_dev);
+    
+    let mut env = HashMap::new();
+    env.insert(
+        "RUST_LOG".to_string(),
+        "info,antegen_client=debug,antegen_processor=debug".to_string()
+    );
+    env.insert(
+        "ANTEGEN_INSTANCE_NAME".to_string(),
+        name.to_string()
+    );
+    
+    AppConfig {
+        name: name.to_string(),
+        script: script.to_string_lossy().to_string(),
+        args: Some(args),
+        cwd: Some(runtime_dir.to_string_lossy().to_string()),
+        env: Some(env),
+        auto_restart: Some(true),
+        max_restarts: Some(5),
+        restart_delay: Some(3000),
+        depends_on: Some(vec!["antegen-validator".to_string()]),
+        log_file: None,
+        error_file: None,
+    }
+}
+
 /// Get the path to a binary based on dev/release mode
 fn get_binary_path(binary_name: &str, runtime_dir: &PathBuf, is_dev: bool) -> PathBuf {
     if is_dev {
@@ -156,9 +208,20 @@ pub fn get_client_template(
     let is_dev = std::path::Path::new("target").exists();
     
     match client_type {
+        "rpc" => {
+            let url = rpc_url.unwrap_or_else(|| "http://localhost:8899".to_string());
+            Ok(rpc_service(name, &url, &runtime_dir, is_dev))
+        }
         "carbon" => {
             let url = rpc_url.unwrap_or_else(|| "http://localhost:8899".to_string());
             Ok(carbon_service(name, &url, &runtime_dir, is_dev))
+        }
+        "geyser" => {
+            // Geyser requires special handling as it needs to be loaded as a validator plugin
+            // To use Geyser:
+            // 1. Start a test-validator with --geyser-plugin-config pointing to the Geyser plugin config
+            // 2. The plugin will automatically create the Antegen Geyser client
+            anyhow::bail!("Geyser client requires validator plugin integration. Use 'antegen localnet start --with-geyser' instead")
         }
         _ => anyhow::bail!("Unsupported client type: {}", client_type),
     }
