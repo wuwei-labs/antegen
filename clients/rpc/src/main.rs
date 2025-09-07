@@ -107,6 +107,7 @@ async fn run_rpc_client(config: Config) -> Result<()> {
 
     // Build the client using the pre-built RPC datasource
     let client = AntegenClient::builder()
+        .rpc_url(config.rpc_url.clone())
         .datasource(Box::new(RpcDatasource::new(rpc_config)))
         .processor(
             ProcessorBuilder::new()
@@ -118,7 +119,8 @@ async fn run_rpc_client(config: Config) -> Result<()> {
             SubmitterBuilder::new()
                 .rpc_url(config.rpc_url.clone())
                 .executor_keypair(keypair.clone())
-                .replay_config(build_replay_config(&config)),
+                .replay_config(build_replay_config(&config))
+                .tpu_enabled(),
         )
         .build()
         .await?;

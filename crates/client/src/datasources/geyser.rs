@@ -81,10 +81,17 @@ impl DatasourceBuilder for GeyserDatasource {
             .ok_or_else(|| anyhow::anyhow!("Geyser datasource receiver not available"))?;
 
         // Forward events from Geyser plugin to the processor
+        let mut event_count = 0u64;
         loop {
             // Blocking receive - will wait for events
             match receiver.recv() {
                 Ok(event) => {
+                    event_count += 1;
+                    if event_count % 100 == 0 {
+                        info!("Geyser datasource forwarded {} events", event_count);
+                    }
+                    log::debug!("Forwarding account update for {}", event.pubkey);
+                    
                     // Forward event to the processor
                     if let Err(e) = sender.send(event) {
                         error!("Failed to send event to processor: {}", e);
@@ -121,10 +128,13 @@ impl GeyserPluginHelper {
         pubkey: Pubkey,
         account: solana_sdk::account::Account,
     ) -> Result<()> {
+        log::debug!("GeyserPluginHelper sending update for {}", pubkey);
         let update = AccountUpdate { pubkey, account };
         self.sender
             .send(update)
-            .map_err(|e| anyhow::anyhow!("Failed to send account update: {}", e))
+            .map_err(|e| anyhow::anyhow!("Failed to send account update: {}", e))?;
+        log::debug!("GeyserPluginHelper sent update successfully");
+        Ok(())
     }
 
     /// Check if the channel is still connected

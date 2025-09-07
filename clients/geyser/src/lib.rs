@@ -1,6 +1,5 @@
 use agave_geyser_plugin_interface::geyser_plugin_interface::GeyserPlugin;
 
-mod builder;
 mod events;
 mod metrics;
 mod plugin;
@@ -19,6 +18,9 @@ pub use plugin::AntegenPlugin;
 /// The Solana validator and this plugin must be compiled with the same Rust compiler version and Solana core version.
 /// Loading this plugin with mismatching versions is undefined behavior and will likely cause memory corruption.
 pub unsafe extern "C" fn _create_plugin() -> *mut dyn GeyserPlugin {
+    eprintln!("ANTEGEN PLUGIN: _create_plugin called");
     let plugin: Box<dyn GeyserPlugin> = Box::new(AntegenPlugin::default());
-    Box::into_raw(plugin)
+    let raw_ptr = Box::into_raw(plugin);
+    eprintln!("ANTEGEN PLUGIN: _create_plugin returning plugin pointer");
+    raw_ptr
 }

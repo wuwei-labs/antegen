@@ -1,14 +1,20 @@
 use {
-    crate::{
-        builder::PluginWorkerBuilder, config::PluginConfig, events::replica_account_to_account,
-    },
+    crate::{events::replica_account_to_update, utils::PluginConfig},
     agave_geyser_plugin_interface::geyser_plugin_interface::{
         GeyserPlugin, GeyserPluginError, ReplicaAccountInfo, ReplicaAccountInfoVersions,
         Result as PluginResult, SlotStatus,
     },
+    antegen_client::{AntegenClientBuilder, GeyserDatasource},
+    antegen_processor::{builder::ProcessorBuilder, types::AccountUpdate},
+    antegen_submitter::builder::SubmitterBuilder,
+    crossbeam::channel::Sender,
     log::{debug, error, info},
+    solana_sdk::signature::read_keypair_file,
     std::{fmt::Debug, sync::Arc},
-    tokio::runtime::{Builder, Runtime},
+    tokio::{
+        runtime::{Builder, Runtime},
+        task::JoinHandle,
+    },
 };
 
 pub struct AntegenPlugin {
@@ -24,12 +30,24 @@ impl Debug for AntegenPlugin {
     }
 }
 
-#[derive(Debug)]
 pub struct Inner {
     pub config: PluginConfig,
-    pub worker: Arc<PluginWorkerBuilder>,
     pub runtime: Arc<Runtime>,
+    pub account_sender: Sender<AccountUpdate>,
+    pub client_handle: JoinHandle<anyhow::Result<()>>,
     pub block_height: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl Debug for Inner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Inner")
+            .field("config", &self.config)
+            .field("runtime", &"Arc<Runtime>")
+            .field("account_sender", &"Sender<AccountUpdate>")
+            .field("client_handle", &"JoinHandle")
+            .field("block_height", &self.block_height)
+            .finish()
+    }
 }
 
 impl GeyserPlugin for AntegenPlugin {
@@ -37,32 +55,58 @@ impl GeyserPlugin for AntegenPlugin {
         "antegen-plugin"
     }
 
-    fn on_load(&mut self, config_file: &str, _is_reload: bool) -> PluginResult<()> {
+    fn on_load(&mut self, _config_file: &str, _is_reload: bool) -> PluginResult<()> {
         solana_logger::setup_with_default("info");
-        // Plugin version info
 
-        let config = PluginConfig::read_from(config_file)?;
+        info!("ANTEGEN PLUGIN: on_load called");
 
-        // Create runtime here
-        let runtime = build_runtime(config.clone());
+        // Read config from known location
+        info!("ANTEGEN PLUGIN: Reading config from geyser-plugin-config.json");
 
-        // Always initialize a basic meter provider for metrics collection
-        // This ensures metrics are collected even if not exposed via HTTP
-        let registry = runtime.block_on(async {
-            crate::metrics::init_basic_meter_provider().map_err(|e| {
-                GeyserPluginError::Custom(
-                    format!("Failed to initialize meter provider: {}", e).into(),
-                )
-            })
+        let config_content = std::fs::read_to_string("geyser-plugin-config.json")
+            .or_else(|_| std::fs::read_to_string("./geyser-plugin-config.json"))
+            .map_err(|e| GeyserPluginError::ConfigFileReadError {
+                msg: format!("Failed to read config file: {}", e),
+            })?;
+
+        info!("ANTEGEN PLUGIN: Config file read successfully");
+
+        let mut config: PluginConfig = serde_json::from_str(&config_content).map_err(|e| {
+            GeyserPluginError::ConfigFileReadError {
+                msg: format!("Failed to parse config JSON: {}", e),
+            }
         })?;
-        debug!("Basic meter provider initialized with registry");
 
-        // Initialize metrics HTTP server if configured
+        // Apply environment variable overrides
+        config.apply_env_overrides();
+
+        info!("ANTEGEN PLUGIN: Config parsed successfully");
+
+        // Create runtime
+        info!(
+            "ANTEGEN PLUGIN: Creating runtime with {} threads",
+            config.thread_count
+        );
+        let runtime = build_runtime(config.clone());
+        info!("ANTEGEN PLUGIN: Runtime created successfully");
+
+        // Initialize metrics if configured
         if let Some(ref metrics_config) = config.metrics {
             if metrics_config.enabled {
-                info!("=== Initializing Metrics HTTP Service ===");
+                info!("=== Initializing Metrics ===");
                 info!("Metrics backend: {:?}", metrics_config.backend);
 
+                // Initialize basic meter provider for metrics collection
+                let registry = runtime.block_on(async {
+                    crate::metrics::init_basic_meter_provider().map_err(|e| {
+                        GeyserPluginError::Custom(
+                            format!("Failed to initialize meter provider: {}", e).into(),
+                        )
+                    })
+                })?;
+                debug!("Basic meter provider initialized with registry");
+
+                // Initialize metrics HTTP server
                 let handle = runtime.handle().clone();
                 runtime.block_on(async {
                     crate::metrics::init_metrics(metrics_config, registry, handle)
@@ -74,67 +118,100 @@ impl GeyserPlugin for AntegenPlugin {
                         })
                 })?;
 
-                info!("=== Metrics HTTP Service Started ===");
+                info!("=== Metrics Service Started ===");
             } else {
-                info!("Metrics HTTP server disabled in configuration");
+                info!("Metrics disabled in configuration");
             }
         } else {
-            debug!("No metrics HTTP configuration provided");
+            debug!("No metrics configuration provided - skipping metrics initialization");
         }
 
-        // Initialize worker using builder pattern
-        info!("Initializing worker with builder pattern");
+        // Create unified Antegen client
+        info!("=== Creating Antegen Client ===");
 
-        let mut worker = runtime.block_on(async {
-            let rpc_url = config
-                .rpc_url
-                .clone()
-                .unwrap_or_else(|| "http://localhost:8899".to_string());
-            let ws_url = config
-                .ws_url
-                .clone()
-                .unwrap_or_else(|| "ws://localhost:8900".to_string());
-            let keypair_path = config.keypath.clone().unwrap_or_else(|| {
-                format!("{}/.config/solana/id.json", std::env::var("HOME").unwrap())
-            });
+        // Get configuration values
+        let rpc_url = config
+            .rpc_url
+            .clone()
+            .unwrap_or_else(|| "http://localhost:8899".to_string());
+        let keypair_path = config.keypath.clone().unwrap_or_else(|| {
+            format!("{}/.config/solana/id.json", std::env::var("HOME").unwrap())
+        });
+        let forgo_executor_commission = config.forgo_executor_commission.unwrap_or(false);
+        let enable_replay = config.enable_replay.unwrap_or(false);
+        let nats_url = config.nats_url.clone();
 
-            let forgo_executor_commission = config.forgo_executor_commission.unwrap_or(false);
-            let enable_replay = config.enable_replay.unwrap_or(false);
-            let nats_url = config.nats_url.clone();
+        info!("Configuration: RPC={}, keypair={}, replay={}", rpc_url, keypair_path, enable_replay);
 
-            match PluginWorkerBuilder::new(
-                rpc_url,
-                ws_url,
-                keypair_path,
-                forgo_executor_commission,
-                enable_replay,
-                nats_url,
-            )
-            .await
-            {
-                Ok(worker) => Ok(worker),
+        // Create Geyser datasource with channel
+        let mut geyser_datasource = GeyserDatasource::new();
+        let account_tx = geyser_datasource.get_plugin_sender();
+        info!("Created Geyser datasource with channel");
+
+        // Build the client using AntegenClientBuilder
+        let mut client_builder = AntegenClientBuilder::default()
+            .rpc_url(rpc_url.clone())
+            .datasource(Box::new(geyser_datasource))
+            .processor(
+                ProcessorBuilder::new()
+                    .keypair(keypair_path.clone())
+                    .rpc_url(rpc_url.clone())
+                    .forgo_commission(forgo_executor_commission),
+            );
+
+        // Add submitter if replay is enabled
+        if enable_replay {
+            info!("Enabling replay with NATS URL: {:?}", nats_url);
+            let mut replay_config = antegen_submitter::ReplayConfig::default();
+            replay_config.enable_replay = true;
+            replay_config.nats_url = nats_url;
+
+            client_builder = client_builder.submitter(
+                SubmitterBuilder::new()
+                    .rpc_url(rpc_url)
+                    .executor_keypair(Arc::new(read_keypair_file(&keypair_path).map_err(|e| {
+                        GeyserPluginError::Custom(format!("Failed to read keypair: {}", e).into())
+                    })?))
+                    .replay_config(replay_config)
+                    .tpu_enabled(),
+            );
+        }
+
+        // Build the client
+        let client = runtime.block_on(async {
+            client_builder.build().await.map_err(|e| {
+                GeyserPluginError::Custom(format!("Failed to build AntegenClient: {}", e).into())
+            })
+        })?;
+
+        info!("AntegenClient built successfully");
+
+        // Start the client in the background
+        let client_handle = runtime.spawn(async move {
+            info!("AntegenClient starting...");
+            match client.run().await {
+                Ok(_) => {
+                    info!("AntegenClient completed normally");
+                    Ok(())
+                }
                 Err(e) => {
-                    let error_msg = format!("Failed to create worker: {}", e);
-                    error!("{}", error_msg);
-                    Err(GeyserPluginError::Custom(error_msg.into()))
+                    error!("AntegenClient error: {}", e);
+                    Err(e)
                 }
             }
-        })?;
+        });
 
-        // Start the worker services
-        worker.start(runtime.handle().clone()).map_err(|e| {
-            GeyserPluginError::Custom(format!("Failed to start worker services: {}", e).into())
-        })?;
-
-        let worker = Arc::new(worker);
+        info!("AntegenClient task started");
 
         self.inner = Some(Arc::new(Inner {
             config,
-            worker,
             runtime,
+            account_sender: account_tx,
+            client_handle,
             block_height: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }));
 
+        info!("ANTEGEN PLUGIN: on_load completed successfully");
         Ok(())
     }
 
@@ -160,12 +237,21 @@ impl GeyserPlugin for AntegenPlugin {
         slot: u64,
         is_startup: bool,
     ) -> PluginResult<()> {
+        // Skip startup accounts
+        if is_startup {
+            debug!("update_account called during startup for slot {}", slot);
+            return Ok(());
+        }
+
         let inner = match &self.inner {
             Some(inner) => inner.clone(),
-            None => return Ok(()), // No-op if not initialized
+            None => {
+                debug!("update_account called but inner not initialized");
+                return Ok(());
+            }
         };
 
-        // Parse account info.
+        // Parse account info
         let account_info = &mut match account {
             ReplicaAccountInfoVersions::V0_0_1(account_info) => ReplicaAccountInfo {
                 pubkey: account_info.pubkey,
@@ -196,24 +282,14 @@ impl GeyserPlugin for AntegenPlugin {
             },
         };
 
-        // Convert to standard account
-        let account_result = replica_account_to_account(account_info);
+        // Convert to AccountUpdate
+        let account_update = replica_account_to_update(account_info)?;
 
-        // Process event on tokio task.
+        // Send to processor on tokio task
         inner.clone().spawn(|inner| async move {
-            // Only process account updates if we're past the startup phase.
-            if is_startup {
-                // Skip startup accounts
-                return Ok(());
-            }
-
-            // Forward all accounts to worker
-            if let Ok((pubkey, account)) = account_result {
-                inner
-                    .worker
-                    .send_account_event(pubkey, account, slot)
-                    .await
-                    .ok();
+            // Send account update to processor
+            if let Err(e) = inner.account_sender.send(account_update) {
+                debug!("Failed to send account update: {}", e);
             }
             Ok(())
         });
@@ -246,9 +322,6 @@ impl GeyserPlugin for AntegenPlugin {
                         .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
                         + 1;
                     info!("Block {} confirmed (slot {})", new_height, slot);
-
-                    // Send block height update to worker
-                    // This will be included with the next clock event
                 }
                 SlotStatus::Processed => {
                     debug!("Slot {} processed", slot);

@@ -15,6 +15,8 @@ pub struct AntegenClient {
     processor_handle: Option<JoinHandle<Result<()>>>,
     /// Reference to submission service (shared with processor)
     submitter: Option<Arc<SubmissionService>>,
+    /// Global RPC URL for all components
+    rpc_url: Option<String>,
 }
 
 impl AntegenClient {
@@ -26,6 +28,26 @@ impl AntegenClient {
     /// Run the client and wait for completion
     pub async fn run(self) -> Result<()> {
         info!("Starting AntegenClient");
+
+        // Wait for RPC connection globally before starting any services
+        if let Some(rpc_url) = &self.rpc_url {
+            let ws_url = rpc_url.replace("http://", "ws://").replace(":8899", ":8900");
+            info!("Waiting for validator to be ready before starting services...");
+            
+            // Add a small delay to let validator finish initialization
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            
+            // Wait for validator with better error handling
+            match crate::utils::wait_for_validator(rpc_url, &ws_url).await {
+                Ok(()) => {
+                    info!("Validator ready, starting all services");
+                }
+                Err(e) => {
+                    log::error!("Failed to connect to validator: {}", e);
+                    return Err(e);
+                }
+            }
+        }
 
         // Wait for all components
         let mut handles = vec![];
@@ -67,6 +89,7 @@ pub struct AntegenClientBuilder {
     processor_builder: Option<antegen_processor::builder::ProcessorBuilder>,
     submitter_builder: Option<antegen_submitter::builder::SubmitterBuilder>,
     global_metrics: Option<opentelemetry::metrics::Meter>,
+    rpc_url: Option<String>,
 }
 
 impl AntegenClientBuilder {
@@ -104,12 +127,19 @@ impl AntegenClientBuilder {
         self
     }
 
+    /// Set RPC URL for all components
+    pub fn rpc_url<S: Into<String>>(mut self, url: S) -> Self {
+        self.rpc_url = Some(url.into());
+        self
+    }
+
     /// Build the client with automatic wiring
     pub async fn build(self) -> Result<AntegenClient> {
         let mut client = AntegenClient {
             datasource_handles: vec![],
             processor_handle: None,
             submitter: None,
+            rpc_url: self.rpc_url.clone(),
         };
 
         // Create shared event channel if we have datasources

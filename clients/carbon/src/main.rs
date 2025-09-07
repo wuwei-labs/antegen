@@ -163,6 +163,7 @@ async fn run_carbon_client(config: Config) -> Result<()> {
 
     // Build the client using the selected datasource
     let client = AntegenClient::builder()
+        .rpc_url(config.rpc_url.clone())
         .datasource(datasource)
         .processor(
             ProcessorBuilder::new()

@@ -50,9 +50,17 @@ async fn check_validator_ready(rpc_url: &str, ws_url: &str) -> bool {
 
 /// Check if RPC endpoint is ready
 async fn check_rpc_ready(rpc_url: &str) -> bool {
-    match RpcClient::new(rpc_url.to_string()).get_version() {
-        Ok(_) => true,
-        Err(_) => false,
+    // Use tokio::task::spawn_blocking to safely handle potentially blocking RPC call
+    match tokio::task::spawn_blocking({
+        let url = rpc_url.to_string();
+        move || {
+            std::panic::catch_unwind(|| {
+                RpcClient::new(url).get_version()
+            })
+        }
+    }).await {
+        Ok(Ok(Ok(_))) => true,
+        _ => false,
     }
 }
 

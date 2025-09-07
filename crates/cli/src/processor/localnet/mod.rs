@@ -7,6 +7,7 @@ pub mod templates;
 use crate::errors::CliError;
 use once_cell::sync::Lazy;
 use serde_json;
+use std::process::Command;
 use tokio::runtime::Runtime;
 
 use self::config::ConfigBuilder;
@@ -16,6 +17,52 @@ use self::daemon::LocalnetDaemon;
 static RUNTIME: Lazy<Runtime> =
     Lazy::new(|| Runtime::new().expect("Failed to create tokio runtime"));
 
+// Required Solana version for compatibility with Geyser plugin
+const REQUIRED_SOLANA_VERSION: &str = "2.2";
+
+/// Check if the installed Solana version matches requirements
+fn check_solana_version() -> Result<(), CliError> {
+    // Run solana --version command
+    let output = Command::new("solana")
+        .arg("--version")
+        .output()
+        .map_err(|e| CliError::FailedLocalnet(format!("Failed to check Solana version: {}", e)))?;
+
+    if !output.status.success() {
+        return Err(CliError::FailedLocalnet(
+            "Failed to get Solana version. Is Solana CLI installed?".to_string()
+        ));
+    }
+
+    let version_str = String::from_utf8_lossy(&output.stdout);
+    
+    // Parse version (format: "solana-cli 2.2.1 (src:xxx; feat:xxx, client:Agave)")
+    if let Some(version_part) = version_str.split_whitespace().nth(1) {
+        // Check if it starts with 2.2
+        if version_part.starts_with(REQUIRED_SOLANA_VERSION) {
+            println!("✓ Solana version {} is compatible", version_part);
+            return Ok(());
+        } else {
+            eprintln!("⚠️  Solana version mismatch detected!");
+            eprintln!("   Current version: {}", version_part);
+            eprintln!("   Required version: {}.*", REQUIRED_SOLANA_VERSION);
+            eprintln!("");
+            eprintln!("   The Geyser plugin requires Solana {} for ABI compatibility.", REQUIRED_SOLANA_VERSION);
+            eprintln!("   Please install the correct version:");
+            eprintln!("");
+            eprintln!("   sh -c \"$(curl -sSfL https://release.anza.xyz/v2.2.1/install)\"");
+            eprintln!("");
+            return Err(CliError::FailedLocalnet(
+                format!("Solana version {} required, found {}", REQUIRED_SOLANA_VERSION, version_part)
+            ));
+        }
+    }
+
+    Err(CliError::FailedLocalnet(
+        "Could not parse Solana version".to_string()
+    ))
+}
+
 /// Start the localnet with specified configuration
 pub fn start(
     _config_path: Option<String>,
@@ -23,6 +70,9 @@ pub fn start(
     clients: Vec<String>,
     release: bool,
 ) -> Result<(), CliError> {
+    // Check Solana version compatibility first
+    check_solana_version()?;
+
     // Default to dev mode (release = false means dev mode)
     let is_dev = !release;
 
@@ -94,16 +144,24 @@ pub fn start_with_geyser(release: bool) -> Result<(), CliError> {
 
         // Create Geyser plugin config file
         let geyser_config_path = runtime_dir.join("geyser-plugin-config.json");
+        let lib_extension = if cfg!(target_os = "macos") { "dylib" } else { "so" };
         let geyser_config = serde_json::json!({
             "libpath": if is_dev {
-                "./target/debug/libantegen_geyser.so".to_string()
+                // Use absolute path to the library in dev mode
+                std::env::current_dir()
+                    .unwrap()
+                    .join(format!("target/debug/libantegen_client_geyser.{}", lib_extension))
+                    .to_string_lossy()
+                    .to_string()
             } else {
-                runtime_dir.join("libantegen_geyser.so").to_string_lossy().to_string()
+                runtime_dir.join(format!("libantegen_client_geyser.{}", lib_extension)).to_string_lossy().to_string()
             },
+            "name": "antegen",
             "rpc_url": "http://localhost:8899",
-            "keypair_path": runtime_dir.join("executor-keypair.json").to_string_lossy(),
-            "forgo_commission": true,
-            "enable_replay": false
+            "ws_url": "ws://localhost:8900",
+            "keypath": runtime_dir.join("executor-keypair.json").to_string_lossy(),
+            "thread_count": 10,
+            "transaction_timeout_threshold": 150
         });
 
         std::fs::write(

@@ -361,6 +361,9 @@ impl ThreadQueue {
         let metrics = self.metrics.clone();
         let clock = self.clock.clone();
         
+        // Capture the runtime handle before entering blocking context
+        let handle = tokio::runtime::Handle::current();
+        
         // Use blocking task to handle channel iterator (truly event-driven)
         tokio::task::spawn_blocking(move || {
             // Use iter() which blocks on each item - this is truly event-driven!
@@ -387,8 +390,7 @@ impl ThreadQueue {
                 let executor_clone = thread_executor.clone();
                 let clock_clone = clock.clone();
                 
-                // Need to spawn async task from blocking context
-                let handle = tokio::runtime::Handle::current();
+                // Use the captured handle to spawn async task
                 let task = handle.spawn(async move {
                     let blockchain_time = clock_clone.get_timestamp().await;
                     info!("QUEUE: Task spawned for thread {} at blockchain time {}", 

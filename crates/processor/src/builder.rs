@@ -141,6 +141,11 @@ impl ProcessorBuilder {
         }
     }
 
+    /// Get the RPC URL from the builder
+    pub fn get_rpc_url(&self) -> &str {
+        &self.rpc_url
+    }
+
     /// Build the processor service
     pub async fn build(self) -> Result<ProcessorService> {
         // Validate required fields

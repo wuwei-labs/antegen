@@ -59,7 +59,7 @@ impl PluginConfig {
     }
     
     /// Apply environment variable overrides to the configuration
-    fn apply_env_overrides(&mut self) {
+    pub fn apply_env_overrides(&mut self) {
         // Override keypath if env var is set
         if let Ok(keypath) = std::env::var("ANTEGEN_KEYPATH") {
             self.keypath = Some(keypath);

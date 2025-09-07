@@ -53,7 +53,11 @@ pub fn validator_service(
     env.insert(
         "RUST_LOG".to_string(),
         "solana_runtime::system_instruction_processor=error,\
-         solana_runtime::bank=error".to_string()
+         solana_runtime::bank=error,\
+         antegen_client_geyser=info,\
+         antegen_client=info,\
+         antegen_processor=info,\
+         antegen_submitter=info".to_string()
     );
     
     AppConfig {
