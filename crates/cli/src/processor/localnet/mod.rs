@@ -4,9 +4,10 @@ pub mod templates;
 
 // Public API functions for CLI integration
 
-use crate::errors::CliError;
+use crate::{client::Client, errors::CliError};
 use once_cell::sync::Lazy;
 use serde_json;
+use solana_sdk::signature::read_keypair_file;
 use std::process::Command;
 use tokio::runtime::Runtime;
 
@@ -19,6 +20,48 @@ static RUNTIME: Lazy<Runtime> =
 
 // Required Solana version for compatibility with Geyser plugin
 const REQUIRED_SOLANA_VERSION: &str = "2.2";
+
+/// Initialize the thread program config
+fn initialize_thread_config() -> Result<(), CliError> {
+    // Get the executor keypair path
+    let runtime_dir = dirs_next::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".antegen")
+        .join("localnet");
+    
+    let keypair_path = runtime_dir.join("executor-keypair.json");
+    
+    // Load the executor keypair
+    let payer = read_keypair_file(&keypair_path)
+        .map_err(|e| CliError::FailedLocalnet(format!("Failed to read executor keypair: {}", e)))?;
+    
+    // Create a client with localnet RPC
+    let client = Client::new(payer, "http://localhost:8899".to_string());
+    
+    // Airdrop SOL to the executor account
+    println!("  Airdropping SOL to executor account...");
+    let airdrop_result = Command::new("solana")
+        .args(&[
+            "airdrop",
+            "10",
+            &client.payer_pubkey().to_string(),
+            "--url", "http://localhost:8899"
+        ])
+        .output();
+    
+    if let Err(e) = airdrop_result {
+        eprintln!("  Warning: Failed to airdrop SOL: {}", e);
+    }
+    
+    // Wait a moment for airdrop to be confirmed
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    
+    // Initialize the config using the executor as admin
+    crate::processor::config::init(&client, None)
+        .map_err(|e| CliError::FailedLocalnet(format!("Failed to initialize config: {}", e)))?;
+    
+    Ok(())
+}
 
 /// Check if the installed Solana version matches requirements
 fn check_solana_version() -> Result<(), CliError> {
@@ -113,6 +156,18 @@ pub fn start(
             .map_err(|e| CliError::FailedLocalnet(e.to_string()))?;
         println!("✓ All services started");
 
+        // Wait a moment for validator to be ready
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        
+        // Initialize thread config
+        println!("✓ Initializing thread program config...");
+        if let Err(e) = initialize_thread_config() {
+            eprintln!("⚠️  Failed to initialize thread config: {}", e);
+            eprintln!("   You can manually initialize it with: antegen config init");
+        } else {
+            println!("✅ Thread config initialized");
+        }
+
         Ok(())
     })
 }
@@ -192,6 +247,18 @@ pub fn start_with_geyser(release: bool) -> Result<(), CliError> {
             .await
             .map_err(|e| CliError::FailedLocalnet(e.to_string()))?;
 
+        // Wait a moment for validator to be ready
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        
+        // Initialize thread config
+        println!("✓ Initializing thread program config...");
+        if let Err(e) = initialize_thread_config() {
+            eprintln!("⚠️  Failed to initialize thread config: {}", e);
+            eprintln!("   You can manually initialize it with: antegen config init");
+        } else {
+            println!("✅ Thread config initialized");
+        }
+        
         println!("\n✨ Localnet with Geyser plugin is running!");
         println!("\n📝 Available endpoints:");
         println!("  • RPC:     http://localhost:8899");

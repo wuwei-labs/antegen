@@ -1,57 +1,50 @@
 use antegen_sdk::rpc::{CacheConfig, CachedRpcClient};
 use anyhow::{anyhow, Result};
-use crossbeam::channel::Receiver;
 use log::{debug, error, info, warn};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
-    pubkey::Pubkey,
+    commitment_config::CommitmentConfig,
     signature::{read_keypair_file, Keypair},
     signer::Signer,
 };
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc, Semaphore};
 
 use crate::clock::SharedClock;
 use crate::executor::ExecutorLogic;
 use crate::load_balancer::{LoadBalancer, ProcessDecision};
 use crate::metrics::ProcessorMetrics;
 use crate::parser::{classify_account, AccountType};
-use crate::queue::{ThreadQueue, TriggerType};
+use crate::queue::ThreadQueue;
 use crate::types::{AccountUpdate, ExecutableThread, ProcessorConfig};
 
 /// Main processor service that handles thread processing
 pub struct ProcessorService {
-    /// Configuration
-    #[allow(dead_code)]
-    config: ProcessorConfig,
-    /// RPC client for reading blockchain state
-    #[allow(dead_code)]
-    rpc_client: Arc<RpcClient>,
     /// Executor logic for building transactions
     executor_logic: Arc<ExecutorLogic>,
     /// Thread queue for scheduling
     thread_queue: Arc<ThreadQueue>,
-    /// Metrics collector
-    #[allow(dead_code)]
-    metrics: Arc<ProcessorMetrics>,
     /// Executor keypair
-    #[allow(dead_code)]
     executor_keypair: Arc<Keypair>,
     /// Account update receiver from adapter
-    account_receiver: Receiver<AccountUpdate>,
+    account_receiver: mpsc::Receiver<AccountUpdate>,
     /// Clock broadcaster for retry timing
     clock_broadcaster: broadcast::Sender<solana_sdk::clock::Clock>,
     /// Cached RPC client
     cached_rpc: Arc<CachedRpcClient>,
     /// Load balancer for distributed thread processing
     load_balancer: Arc<LoadBalancer>,
+    /// Shared transaction submitter
+    submitter: Arc<antegen_submitter::TransactionSubmitter>,
+    /// Semaphore to limit concurrent thread executions
+    task_semaphore: Arc<Semaphore>,
 }
 
 impl ProcessorService {
     /// Create a new processor service
     pub async fn new(
         config: ProcessorConfig,
-        account_receiver: Receiver<AccountUpdate>,
+        account_receiver: mpsc::Receiver<AccountUpdate>,
     ) -> Result<Self> {
         // Load executor keypair
         let executor_keypair = Arc::new(
@@ -62,15 +55,12 @@ impl ProcessorService {
         // Create metrics
         let processor_metrics = Arc::new(ProcessorMetrics::default());
 
-        // Create RPC client for reading state
-        let rpc_client = Arc::new(RpcClient::new(config.rpc_url.clone()));
-
         // Create shared blockchain clock
         let clock = SharedClock::new();
 
         // Create a cached RPC client wrapper for the executor
         let cached_rpc = Arc::new(CachedRpcClient::new(
-            RpcClient::new(config.rpc_url.clone()),
+            RpcClient::new_with_commitment(config.rpc_url.clone(), CommitmentConfig::confirmed()),
             CacheConfig::default(),
         ));
 
@@ -83,69 +73,64 @@ impl ProcessorService {
             processor_metrics.clone(),
         ));
 
-        // Create thread queue with metrics and shared clock
+        // Create thread queue with metrics
         let thread_queue = Arc::new(ThreadQueue::with_metrics(
-            config.max_concurrent_threads,
-            clock.clone(),
             processor_metrics.clone(),
-        )?);
+        ));
 
         // Create clock broadcaster for retry timing
-        let (clock_broadcaster, _) = broadcast::channel(100);
+        let (clock_broadcaster, clock_rx) = broadcast::channel(100);
         
         // Create load balancer with config settings
         let load_balancer = Arc::new(LoadBalancer::new(
             executor_keypair.pubkey(),
             config.load_balancer.clone(),
         ));
+        
+        // Create shared transaction submitter
+        let submitter = Arc::new(antegen_submitter::TransactionSubmitter::new(
+            config.rpc_url.clone(),
+            None, // TPU config could be added to ProcessorConfig
+            Arc::new(antegen_submitter::SubmitterMetrics::default()),
+            clock_rx,
+        )?);
+        
+        // Initialize TPU if available
+        if let Err(e) = submitter.initialize_tpu().await {
+            debug!("TPU initialization failed (will use RPC): {}", e);
+        }
+        
+        // Create semaphore for limiting concurrent thread executions
+        let task_semaphore = Arc::new(Semaphore::new(config.max_concurrent_threads));
+        info!("PROCESSOR: Initialized with max {} concurrent thread executions", config.max_concurrent_threads);
 
         Ok(Self {
-            config,
-            rpc_client,
             executor_logic,
             thread_queue,
-            metrics: processor_metrics,
             executor_keypair,
             account_receiver,
             clock_broadcaster,
             cached_rpc,
             load_balancer,
+            submitter,
+            task_semaphore,
         })
     }
 
-    /// Start a task to continuously process threads as they become ready (event-driven)
-    fn start_thread_processing<F, Fut>(&self, processor_fn: F)
-    where
-        F: Fn(Pubkey, antegen_thread_program::state::Thread) -> Fut + Send + Sync + 'static + Clone,
-        Fut:
-            std::future::Future<Output = Result<solana_sdk::signature::Signature>> + Send + 'static,
-    {
-        let queue = self.thread_queue.clone();
-        tokio::spawn(async move {
-            // Event-driven: blocks waiting for threads to execute
-            queue.spawn_execution_tasks_continuous(processor_fn).await;
-        });
-    }
-
     /// Main processing loop (event-driven)
-    pub async fn run(self) -> Result<()> {
-        // Start the continuous event-driven thread processor
-        let processor_fn = self.create_processor_fn();
-        self.start_thread_processing(processor_fn);
-
-        // Event-driven main loop - wrap blocking recv() in spawn_blocking
+    pub async fn run(mut self) -> Result<()> {
+        info!("PROCESSOR: Starting processor service");
+        
+        // Event-driven main loop - now fully async
         loop {
-            let receiver = self.account_receiver.clone();
-            let account_update = tokio::task::spawn_blocking(move || receiver.recv()).await?;
-
-            match account_update {
-                Ok(account_update) => {
+            match self.account_receiver.recv().await {
+                Some(account_update) => {
                     if let Err(e) = self.process_account_update(account_update).await {
                         error!("Error processing account update: {}", e);
                     }
                 }
-                Err(_) => {
-                    warn!("Account receiver disconnected, shutting down");
+                None => {
+                    info!("Account receiver disconnected, shutting down");
                     break;
                 }
             }
@@ -153,8 +138,6 @@ impl ProcessorService {
 
         // Shutdown
         info!("Processor service shutting down");
-        // ThreadQueue will be dropped and cleaned up automatically
-
         Ok(())
     }
 
@@ -195,12 +178,23 @@ impl ProcessorService {
                 };
                 let _ = self.clock_broadcaster.send(clock);
 
-                // Check timestamp-based triggers (execution happens automatically)
-                self.thread_queue
-                    .check_single_trigger(TriggerType::Time, unix_timestamp as u64)
+                // Check for ready threads and execute them
+                info!("PROCESSOR: Checking for ready threads at time {}", unix_timestamp);
+                let ready_threads = self.thread_queue
+                    .get_ready_threads(unix_timestamp, slot, epoch)
                     .await;
+                
+                info!("PROCESSOR: {} threads ready for execution", ready_threads.len());
+                
+                // Spawn execution tasks for ready threads
+                for thread in ready_threads {
+                    self.spawn_thread_execution(thread).await;
+                }
             }
             AccountType::Thread(thread) => {
+                info!("PROCESSOR: Thread update for {} - fibers: {}, exec_count: {}", 
+                     account_update.pubkey, thread.fibers.len(), thread.exec_count);
+                
                 // Check if we should process this Thread update based on exec_count
                 if !self
                     .cached_rpc
@@ -234,22 +228,35 @@ impl ProcessorService {
                     overdue_seconds,
                 ).await?;
                 
+                info!("PROCESSOR: Load balancer decision for thread {}: {:?}", 
+                     account_update.pubkey, decision);
+                
                 match decision {
                     ProcessDecision::Process => {
+                        // Check if thread has fibers before scheduling
+                        if thread.fibers.is_empty() {
+                            info!("PROCESSOR: Thread {} has no fibers, waiting for update with fibers", account_update.pubkey);
+                            return Ok(());
+                        }
+                        
                         // Schedule thread for processing
+                        info!("PROCESSOR: Scheduling thread {} for processing (has {} fibers)", 
+                             account_update.pubkey, thread.fibers.len());
                         if let Err(e) = self
                             .thread_queue
                             .schedule_thread(account_update.pubkey, thread)
                             .await
                         {
                             warn!("Failed to schedule thread {}: {}", account_update.pubkey, e);
+                        } else {
+                            info!("PROCESSOR: Successfully scheduled thread {}", account_update.pubkey);
                         }
                     }
                     ProcessDecision::Skip => {
-                        debug!("Load balancer: skipping thread {} (owned by another processor)", account_update.pubkey);
+                        info!("PROCESSOR: Load balancer skipping thread {} (owned by another processor)", account_update.pubkey);
                     }
                     ProcessDecision::AtCapacity => {
-                        debug!("Load balancer: at capacity, skipping non-critical thread {}", account_update.pubkey);
+                        info!("PROCESSOR: Load balancer at capacity, skipping thread {}", account_update.pubkey);
                     }
                 }
             }
@@ -267,98 +274,94 @@ impl ProcessorService {
         Ok(())
     }
 
-    /// Create the processor function for thread execution
-    fn create_processor_fn(
-        &self,
-    ) -> impl Fn(
-        Pubkey,
-        antegen_thread_program::state::Thread,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<solana_sdk::signature::Signature>> + Send>,
-    > + Send
-           + Sync
-           + Clone {
-        let executor = self.executor_logic.clone();
-        let rpc_url = self.config.rpc_url.clone();
-        let executor_keypair = self.executor_keypair.clone();
-        let clock_broadcaster = self.clock_broadcaster.clone();
-        let load_balancer = self.load_balancer.clone();
-
-        move |thread_pubkey, thread| {
-            let executor = executor.clone();
-            let rpc_url = rpc_url.clone();
-            let executor_keypair = executor_keypair.clone();
-            let clock_rx = clock_broadcaster.subscribe();
-            let load_balancer = load_balancer.clone();
-
-            Box::pin(async move {
-                let blockchain_time = executor.current_timestamp().await;
-                info!(
-                    "PROCESSOR: Building transaction for thread {} at blockchain time {}",
-                    thread_pubkey, blockchain_time
-                );
-
-                // Build instructions
-                let executable = ExecutableThread {
-                    thread_pubkey,
-                    thread: thread.clone(),
-                    slot: 0, // Current slot, could be passed in if needed
-                };
-                let (instructions, priority_fee) = executor
-                    .build_execute_transaction(
-                        &executable,
-                        None, // fiber state
-                        None, // compute units (let submitter optimize)
-                    )
-                    .await?;
-
-                // Create TransactionSubmitter for this task
-                let submitter = antegen_submitter::TransactionSubmitter::new(
-                    rpc_url,
-                    None, // TPU config - could add to ProcessorConfig if needed
-                    Arc::new(antegen_submitter::SubmitterMetrics::default()),
-                    clock_rx,
-                )?;
-
-                // Initialize TPU if configured
-                if let Err(e) = submitter.initialize_tpu().await {
-                    debug!("Failed to initialize TPU: {}", e);
-                    // Continue with RPC submission
-                }
-
-                // Submit with honeybadger retry (blocks until timeout)
-                info!(
-                    "Starting honeybadger submission for thread {}",
-                    thread_pubkey
-                );
-                
-                // Attempt submission and track result
-                let current_time = executor.current_timestamp().await;
-                submitter.submit(instructions, executor_keypair, Some(priority_fee)).await.map_err(|e| {
-                    // Record failed execution (someone else likely beat us)
-                    let balancer = load_balancer.clone();
-                    let thread_pk = thread_pubkey.clone();
-                    tokio::spawn(async move {
-                        let _ = balancer.record_execution_result(
-                            &thread_pk,
-                            false,
-                            current_time,
-                        ).await;
-                    });
-                    e
-                })?;
-                
-                // Record successful execution
-                let _ = load_balancer.record_execution_result(
-                    &thread_pubkey,
-                    true,
-                    current_time,
-                ).await;
-                
-                // This returns on timeout (error) - submitter doesn't return signature
-                Err(anyhow!("Submission timed out for thread {}", thread_pubkey))
-            })
+    /// Spawn an atomic task to execute a thread
+    async fn spawn_thread_execution(&self, executable: ExecutableThread) {
+        let thread_pubkey = executable.thread_pubkey;
+        let thread = executable.thread;
+        
+        // Check if thread has fibers before spawning task
+        if thread.fibers.is_empty() {
+            info!("PROCESSOR: Thread {} has no fibers yet, skipping execution", thread_pubkey);
+            return;
         }
+        
+        // Clone resources for the task
+        let executor = self.executor_logic.clone();
+        let submitter = self.submitter.clone();
+        let executor_keypair = self.executor_keypair.clone();
+        let load_balancer = self.load_balancer.clone();
+        let queue = self.thread_queue.clone();
+        let semaphore = self.task_semaphore.clone();
+        
+        // Spawn atomic execution task
+        let handle = tokio::spawn(async move {
+            // Acquire permit before executing
+            let _permit = match semaphore.acquire().await {
+                Ok(permit) => permit,
+                Err(_) => {
+                    error!("PROCESSOR: Failed to acquire semaphore permit for thread {}", thread_pubkey);
+                    queue.task_completed(&thread_pubkey);
+                    return;
+                }
+            };
+            
+            debug!("PROCESSOR: Acquired execution permit for thread {}", thread_pubkey);
+            info!("PROCESSOR: Starting execution task for thread {}", thread_pubkey);
+            
+            // Build transaction
+            let blockchain_time = executor.current_timestamp().await;
+            info!("PROCESSOR: Building transaction for thread {} at time {}", 
+                 thread_pubkey, blockchain_time);
+            
+            let executable = ExecutableThread {
+                thread_pubkey,
+                thread: thread.clone(),
+                slot: 0, // Could be passed if needed
+            };
+            
+            match executor.build_execute_transaction(&executable, None, None).await {
+                Ok((instructions, priority_fee)) => {
+                    info!("PROCESSOR: Built {} instructions with priority fee {} for thread {}",
+                          instructions.len(), priority_fee, thread_pubkey);
+                    
+                    // Submit with honeybadger retry
+                    info!("PROCESSOR: Starting submission for thread {}", thread_pubkey);
+                    match submitter.submit(
+                        instructions,
+                        executor_keypair,
+                        Some(priority_fee)
+                    ).await {
+                        Ok(_) => {
+                            info!("PROCESSOR: Successfully submitted thread {}", thread_pubkey);
+                            let _ = load_balancer.record_execution_result(
+                                &thread_pubkey,
+                                true,
+                                blockchain_time,
+                            ).await;
+                        }
+                        Err(e) => {
+                            error!("PROCESSOR: Failed to submit thread {}: {}", thread_pubkey, e);
+                            let _ = load_balancer.record_execution_result(
+                                &thread_pubkey,
+                                false,
+                                blockchain_time,
+                            ).await;
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("PROCESSOR: Failed to build transaction for thread {}: {}", 
+                           thread_pubkey, e);
+                }
+            }
+            
+            // Remove from active tasks
+            queue.task_completed(&thread_pubkey);
+            info!("PROCESSOR: Completed execution task for thread {}", thread_pubkey);
+        });
+        
+        // Track the active task
+        self.thread_queue.track_task(thread_pubkey, handle);
     }
     
     /// Calculate if a thread is overdue and by how much

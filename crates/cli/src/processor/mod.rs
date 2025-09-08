@@ -1,10 +1,11 @@
+mod config;
 mod crontab;
 mod localnet;
 mod thread;
 
 use {
     crate::{
-        cli::CliCommand, client::Client, config::CliConfig, errors::CliError,
+        cli::{CliCommand, ConfigSubcommand}, client::Client, config::CliConfig, errors::CliError,
         processor::thread::parse_pubkey_from_id_or_address,
     },
     anyhow::Result,
@@ -84,6 +85,30 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             durable_ratio,
             fiber_count,
         } => thread::stress_test(&client, count, interval, jitter, prefix, with_fibers, batch_size, durable_ratio, fiber_count),
+        CliCommand::Config { subcommand } => match subcommand {
+            ConfigSubcommand::Init { admin } => config::init(&client, admin),
+            ConfigSubcommand::Show => config::show(&client),
+            ConfigSubcommand::Update {
+                commission_fee,
+                executor_fee_bps,
+                core_team_bps,
+                grace_period,
+                fee_decay,
+                pause,
+                unpause,
+                multisig,
+            } => config::update(
+                &client,
+                commission_fee,
+                executor_fee_bps,
+                core_team_bps,
+                grace_period,
+                fee_decay,
+                pause,
+                unpause,
+                multisig,
+            ),
+        },
     }
 }
 

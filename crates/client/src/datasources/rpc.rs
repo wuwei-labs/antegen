@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use crossbeam::channel::Sender;
 use futures::StreamExt;
+use tokio::sync::mpsc;
 use log::{error, info};
 use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -101,7 +101,7 @@ impl RpcDatasource {
 
 #[async_trait]
 impl DatasourceBuilder for RpcDatasource {
-    async fn run(&self, sender: Sender<AccountUpdate>) -> Result<()> {
+    async fn run(&self, sender: mpsc::Sender<AccountUpdate>) -> Result<()> {
         info!("Starting RPC datasource");
         info!("Program ID: {}", self.config.program_id);
         info!("RPC URL: {}", self.config.rpc_url);
@@ -176,7 +176,7 @@ impl DatasourceBuilder for RpcDatasource {
 async fn subscribe_to_program_accounts(
     ws_url: String,
     program_id: Pubkey,
-    sender: Sender<AccountUpdate>,
+    sender: mpsc::Sender<AccountUpdate>,
     commitment: CommitmentConfig,
     filters: Vec<RpcFilterType>,
 ) -> Result<()> {
@@ -216,7 +216,7 @@ async fn subscribe_to_program_accounts(
 
         let update = AccountUpdate { pubkey, account };
 
-        if let Err(e) = sender.send(update) {
+        if let Err(e) = sender.send(update).await {
             error!("Failed to send account update: {}", e);
             break;
         }
@@ -228,7 +228,7 @@ async fn subscribe_to_program_accounts(
 /// Track Clock sysvar updates
 async fn track_clock(
     ws_url: String,
-    sender: Sender<AccountUpdate>,
+    sender: mpsc::Sender<AccountUpdate>,
     rpc_client: Arc<RpcClient>,
 ) -> Result<()> {
     // First, fetch the current Clock account
@@ -239,7 +239,7 @@ async fn track_clock(
         account: clock_account,
     };
 
-    if let Err(e) = sender.send(update) {
+    if let Err(e) = sender.send(update).await {
         error!("Failed to send initial Clock update: {}", e);
         return Ok(());
     }
@@ -278,7 +278,7 @@ async fn track_clock(
             account,
         };
 
-        if let Err(e) = sender.send(update) {
+        if let Err(e) = sender.send(update).await {
             error!("Failed to send Clock update: {}", e);
             break;
         }

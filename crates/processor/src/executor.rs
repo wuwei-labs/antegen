@@ -97,9 +97,11 @@ impl ExecutorLogic {
         fiber: Option<&FiberState>,
         compute_units: Option<u32>,
     ) -> Result<(Vec<Instruction>, u64)> {
+        info!("EXECUTOR: build_execute_transaction called");
         let thread_pubkey = &executable.thread_pubkey;
         let thread = &executable.thread;
         
+        info!("EXECUTOR: Getting blockchain time");
         let blockchain_time = self.clock.get_timestamp().await;
         info!("EXECUTOR: Building transaction for thread {} at blockchain time {}",
             thread_pubkey, blockchain_time);
@@ -109,9 +111,16 @@ impl ExecutorLogic {
             Some(f) => f.clone(),
             None => {
                 // Get fiber PDA using the thread method
+                // Thread must have fibers if we got here (checked in ProcessorService)
                 let fiber_pubkey = thread.fiber(thread_pubkey);
-                // Get fiber account and deserialize (retry logic is in get_account)
+                info!("EXECUTOR: Getting fiber account at {} (with cached retry) for thread {} with exec_index {}", 
+                    fiber_pubkey, thread_pubkey, thread.exec_index);
+                info!("EXECUTOR: Thread has {} fibers: {:?}", thread.fibers.len(), thread.fibers);
+                
+                // Use cached RPC client which has built-in retry logic for AccountNotFound
                 let account = self.rpc_client.get_account(&fiber_pubkey).await?;
+                info!("EXECUTOR: Got fiber account, deserializing {} bytes", account.data.len());
+                
                 FiberState::try_deserialize(&mut account.data.as_slice())
                     .map_err(|e| anyhow!("Failed to deserialize fiber: {}", e))?
             }
@@ -132,6 +141,8 @@ impl ExecutorLogic {
         }
 
         ixs.push(execute_ix);
+        info!("EXECUTOR: Built {} instructions with priority fee {} for thread {}", 
+              ixs.len(), priority_fee, thread_pubkey);
         Ok((ixs, priority_fee))
     }
 

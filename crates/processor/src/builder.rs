@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
-use crossbeam::channel::Receiver;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use crate::{
     load_balancer::LoadBalancerConfig,
@@ -18,7 +18,7 @@ pub struct ProcessorBuilder {
     simulate_before_submit: bool,
     compute_unit_multiplier: f64,
     max_compute_units: u32,
-    account_receiver: Option<Receiver<AccountUpdate>>,
+    account_receiver: Option<mpsc::Receiver<AccountUpdate>>,
     metrics: Option<Arc<ProcessorMetrics>>,
     load_balancer_config: LoadBalancerConfig,
 }
@@ -102,7 +102,7 @@ impl ProcessorBuilder {
     }
 
     /// Set account receiver from adapter
-    pub fn account_receiver(mut self, receiver: Receiver<AccountUpdate>) -> Self {
+    pub fn account_receiver(mut self, receiver: mpsc::Receiver<AccountUpdate>) -> Self {
         self.account_receiver = Some(receiver);
         self
     }

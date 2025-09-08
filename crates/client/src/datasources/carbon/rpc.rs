@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use carbon_core::pipeline::Pipeline;
 use carbon_log_metrics::LogMetrics;
 use carbon_rpc_program_subscribe_datasource::{Filters, RpcProgramSubscribe};
-use crossbeam::channel::Sender;
+use tokio::sync::mpsc;
 use futures::StreamExt;
 use log::info;
 use solana_client::nonblocking::rpc_client::RpcClient;
@@ -33,7 +33,7 @@ impl CarbonRpcDatasource {
 
 #[async_trait]
 impl DatasourceBuilder for CarbonRpcDatasource {
-    async fn run(&self, sender: Sender<AccountUpdate>) -> Result<()> {
+    async fn run(&self, sender: mpsc::Sender<AccountUpdate>) -> Result<()> {
         info!("Starting Carbon RPC datasource");
         info!("Thread program ID: {}", self.config.thread_program_id);
         info!("Clock sysvar ID: {}", sysvar::clock::ID);
@@ -114,7 +114,7 @@ impl DatasourceBuilder for CarbonRpcDatasource {
 /// Track Clock sysvar updates
 async fn track_clock(
     ws_url: String,
-    sender: Sender<AccountUpdate>,
+    sender: mpsc::Sender<AccountUpdate>,
     rpc_client: Arc<RpcClient>,
 ) -> Result<()> {
     use solana_client::nonblocking::pubsub_client::PubsubClient;
@@ -129,7 +129,7 @@ async fn track_clock(
         account: clock_account,
     };
 
-    if let Err(e) = sender.send(update) {
+    if let Err(e) = sender.send(update).await {
         log::error!("Failed to send initial Clock update: {}", e);
         return Ok(());
     }
@@ -168,7 +168,7 @@ async fn track_clock(
             account,
         };
 
-        if let Err(e) = sender.send(update) {
+        if let Err(e) = sender.send(update).await {
             log::error!("Failed to send Clock update: {}", e);
             break;
         }

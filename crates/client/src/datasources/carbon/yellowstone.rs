@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use carbon_core::pipeline::Pipeline;
 use carbon_log_metrics::LogMetrics;
 use carbon_yellowstone_grpc_datasource::{YellowstoneGrpcGeyserClient, BlockFilters};
-use crossbeam::channel::Sender;
+use tokio::sync::mpsc;
 use log::info;
 use solana_sdk::sysvar;
 use std::collections::{HashMap, HashSet};
@@ -46,7 +46,7 @@ impl CarbonYellowstoneDatasource {
 
 #[async_trait]
 impl DatasourceBuilder for CarbonYellowstoneDatasource {
-    async fn run(&self, sender: Sender<AccountUpdate>) -> Result<()> {
+    async fn run(&self, sender: mpsc::Sender<AccountUpdate>) -> Result<()> {
         info!("Starting Carbon Yellowstone gRPC datasource");
         info!("Thread program ID: {}", self.config.carbon_config.thread_program_id);
         info!("Clock sysvar ID: {}", sysvar::clock::ID);

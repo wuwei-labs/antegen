@@ -5,7 +5,7 @@ use carbon_core::{
     metrics::MetricsCollection,
     processor::Processor,
 };
-use crossbeam::channel::Sender;
+use tokio::sync::mpsc;
 use log::{debug, error};
 use solana_sdk::{account::Account, pubkey::Pubkey, sysvar};
 use std::sync::Arc;
@@ -15,13 +15,13 @@ use antegen_processor::types::AccountUpdate;
 /// Processor that converts Carbon account updates to Antegen AccountUpdate events
 pub struct ThreadAccountProcessor {
     /// Channel to send events to the processor
-    sender: Sender<AccountUpdate>,
+    sender: mpsc::Sender<AccountUpdate>,
     /// Thread program ID to filter accounts
     thread_program_id: Pubkey,
 }
 
 impl ThreadAccountProcessor {
-    pub fn new(sender: Sender<AccountUpdate>, thread_program_id: Pubkey) -> Self {
+    pub fn new(sender: mpsc::Sender<AccountUpdate>, thread_program_id: Pubkey) -> Self {
         Self {
             sender,
             thread_program_id,
@@ -65,7 +65,7 @@ impl Processor for ThreadAccountProcessor {
         let update = AccountUpdate { pubkey, account };
 
         // Send update to processor
-        if let Err(e) = self.sender.send(update) {
+        if let Err(e) = self.sender.try_send(update) {
             error!("Failed to send update to processor: {}", e);
             return Err(carbon_core::error::Error::Custom(format!(
                 "Failed to send update: {}",

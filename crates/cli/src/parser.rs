@@ -5,7 +5,7 @@ use clap::ArgMatches;
 use serde::{Deserialize as JsonDeserialize, Serialize as JsonSerialize};
 use solana_sdk::pubkey::Pubkey;
 
-use crate::{cli::CliCommand, errors::CliError};
+use crate::{cli::{CliCommand, ConfigSubcommand}, errors::CliError};
 
 impl TryFrom<&ArgMatches> for CliCommand {
     type Error = CliError;
@@ -15,6 +15,7 @@ impl TryFrom<&ArgMatches> for CliCommand {
             Some(("crontab", matches)) => parse_crontab_command(matches),
             Some(("localnet", matches)) => parse_bpf_command(matches),
             Some(("thread", matches)) => parse_thread_command(matches),
+            Some(("config", matches)) => parse_config_command(matches),
             _ => Err(CliError::CommandNotRecognized(
                 matches.subcommand().unwrap().0.into(),
             )),
@@ -211,6 +212,18 @@ pub fn _parse_i64(arg: &str, matches: &ArgMatches) -> Result<i64, CliError> {
         .unwrap())
 }
 
+fn parse_u64(arg: &str, matches: &ArgMatches) -> Result<u64, CliError> {
+    Ok(parse_string(arg, matches)?
+        .parse::<u64>()
+        .map_err(|_err| CliError::BadParameter(arg.into()))?)
+}
+
+fn parse_i64(arg: &str, matches: &ArgMatches) -> Result<i64, CliError> {
+    Ok(parse_string(arg, matches)?
+        .parse::<i64>()
+        .map_err(|_err| CliError::BadParameter(arg.into()))?)
+}
+
 
 // Json parsers
 
@@ -263,6 +276,48 @@ impl TryFrom<&JsonAccountMetaData> for SerializableAccountMeta {
             is_signer: value.is_signer,
             is_writable: value.is_writable,
         })
+    }
+}
+
+fn parse_config_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
+    match matches.subcommand() {
+        Some(("init", matches)) => {
+            let admin = parse_pubkey("admin", matches).ok();
+            Ok(CliCommand::Config { 
+                subcommand: ConfigSubcommand::Init { admin }
+            })
+        }
+        Some(("show", _)) => {
+            Ok(CliCommand::Config { 
+                subcommand: ConfigSubcommand::Show 
+            })
+        }
+        Some(("update", matches)) => {
+            let commission_fee = parse_u64("commission-fee", matches).ok();
+            let executor_fee_bps = parse_u64("executor-fee-bps", matches).ok().map(|v| v as u16);
+            let core_team_bps = parse_u64("core-team-bps", matches).ok().map(|v| v as u16);
+            let grace_period = parse_i64("grace-period", matches).ok();
+            let fee_decay = parse_i64("fee-decay", matches).ok();
+            let pause = matches.get_flag("pause");
+            let unpause = matches.get_flag("unpause");
+            let multisig = matches.get_flag("multisig");
+            
+            Ok(CliCommand::Config {
+                subcommand: ConfigSubcommand::Update {
+                    commission_fee,
+                    executor_fee_bps,
+                    core_team_bps,
+                    grace_period,
+                    fee_decay,
+                    pause,
+                    unpause,
+                    multisig,
+                }
+            })
+        }
+        _ => Err(CliError::CommandNotRecognized(
+            matches.subcommand().unwrap().0.into(),
+        )),
     }
 }
 

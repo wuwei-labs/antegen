@@ -67,38 +67,44 @@ impl CachedRpcClient {
 
     /// Get account with caching and retry logic for race conditions
     pub async fn get_account(&self, pubkey: &Pubkey) -> Result<Account> {
-        use log::warn;
+        use log::{info, warn};
         use std::cmp;
-        use tokio::time::sleep;
+        use tokio::time::{sleep, timeout};
         
         // Check cache first
         if let Some(account) = self.account_cache.get(pubkey).await {
-            // Cache hit
+            debug!("Cache hit for account {}", pubkey);
             return Ok(account);
         }
+
+        info!("Cache miss for account {}, fetching from RPC", pubkey);
 
         // Cache miss - fetch with retry logic
         let mut attempt = 0;
         let mut delay = Duration::from_millis(500);
         let max_delay = Duration::from_secs(5);
+        let timeout_duration = Duration::from_secs(30); // 30 second timeout per attempt
         let start_time = std::time::Instant::now();
         let mut last_log = std::time::Instant::now();
         
         loop {
             attempt += 1;
+            info!("RPC get_account attempt {} for {}", attempt, pubkey);
             
-            match self.inner.get_account(pubkey).await {
-                Ok(account) => {
+            // Wrap the RPC call in a timeout
+            let rpc_future = self.inner.get_account(pubkey);
+            match timeout(timeout_duration, rpc_future).await {
+                Ok(Ok(account)) => {
+                    info!("Successfully fetched account {} on attempt {}", pubkey, attempt);
                     if attempt > 1 {
-                        debug!("Successfully fetched account {} on attempt {} (waited ~{:.1}s total)",
-                            pubkey, attempt, 
-                            start_time.elapsed().as_secs_f32());
+                        debug!("Waited ~{:.1}s total", start_time.elapsed().as_secs_f32());
                     }
                     self.account_cache.insert(*pubkey, account.clone()).await;
                     return Ok(account);
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     let error_str = e.to_string();
+                    info!("RPC error on attempt {} for {}: {}", attempt, pubkey, error_str);
                     
                     // Check if it's an account not found error (expected during race conditions)
                     if error_str.contains("AccountNotFound") || error_str.contains("could not find account") {
@@ -117,6 +123,24 @@ impl CachedRpcClient {
                     
                     sleep(delay).await;
                     // Exponential backoff with cap at max_delay
+                    delay = cmp::min(delay * 2, max_delay);
+                }
+                Err(_) => {
+                    // Timeout occurred
+                    warn!("RPC call timed out after {} seconds for account {} (attempt {})", 
+                          timeout_duration.as_secs(), pubkey, attempt);
+                    
+                    // Check if we've been trying for too long
+                    if start_time.elapsed() > Duration::from_secs(300) {
+                        // 5 minutes total timeout
+                        return Err(anyhow::anyhow!(
+                            "Failed to fetch account {} after 5 minutes of retries", 
+                            pubkey
+                        ));
+                    }
+                    
+                    // Continue retrying with backoff
+                    sleep(delay).await;
                     delay = cmp::min(delay * 2, max_delay);
                 }
             }
@@ -152,22 +176,33 @@ impl CachedRpcClient {
         self.account_cache.invalidate_all();
     }
 
-    /// Check if we should process this Thread update based on exec_count
+    /// Check if we should process this Thread update based on exec_count and fiber changes
     /// Returns true if:
     /// - Thread is not in cache (new thread)
     /// - Thread's exec_count is greater than cached version
+    /// - Thread has fibers when cached version doesn't (fibers were added)
     pub async fn should_process_thread(&self, pubkey: &Pubkey, new_thread: &Thread) -> bool {
+        use log::info;
+        
         // Check if we have a cached version
         if let Some(cached_account) = self.account_cache.get(pubkey).await {
             // Try to deserialize cached thread to check exec_count
             if let Ok(cached_thread) = Thread::try_deserialize(&mut cached_account.data.as_slice()) {
-                // Only process if exec_count increased
-                let should_process = new_thread.exec_count > cached_thread.exec_count;
+                // Process if exec_count increased OR if fibers were added
+                let exec_count_increased = new_thread.exec_count > cached_thread.exec_count;
+                let fibers_added = cached_thread.fibers.is_empty() && !new_thread.fibers.is_empty();
+                
+                let should_process = exec_count_increased || fibers_added;
+                
+                info!("Thread {} update check - cached exec_count: {}, new exec_count: {}, cached fibers: {}, new fibers: {}, should_process: {}",
+                    pubkey, cached_thread.exec_count, new_thread.exec_count, 
+                    cached_thread.fibers.len(), new_thread.fibers.len(), should_process);
                 
                 return should_process;
             }
         }
         
+        info!("Thread {} not in cache - processing", pubkey);
         // Not cached or failed to deserialize - process it
         true
     }

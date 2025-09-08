@@ -7,12 +7,12 @@ use {
     antegen_client::{AntegenClientBuilder, GeyserDatasource},
     antegen_processor::{builder::ProcessorBuilder, types::AccountUpdate},
     antegen_submitter::builder::SubmitterBuilder,
-    crossbeam::channel::Sender,
     log::{debug, error, info},
     solana_sdk::signature::read_keypair_file,
     std::{fmt::Debug, sync::Arc},
     tokio::{
         runtime::{Builder, Runtime},
+        sync::mpsc,
         task::JoinHandle,
     },
 };
@@ -33,7 +33,7 @@ impl Debug for AntegenPlugin {
 pub struct Inner {
     pub config: PluginConfig,
     pub runtime: Arc<Runtime>,
-    pub account_sender: Sender<AccountUpdate>,
+    pub account_sender: mpsc::Sender<AccountUpdate>,
     pub client_handle: JoinHandle<anyhow::Result<()>>,
     pub block_height: Arc<std::sync::atomic::AtomicU64>,
 }
@@ -285,14 +285,11 @@ impl GeyserPlugin for AntegenPlugin {
         // Convert to AccountUpdate
         let account_update = replica_account_to_update(account_info)?;
 
-        // Send to processor on tokio task
-        inner.clone().spawn(|inner| async move {
-            // Send account update to processor
-            if let Err(e) = inner.account_sender.send(account_update) {
-                debug!("Failed to send account update: {}", e);
-            }
-            Ok(())
-        });
+        // Send to processor using try_send (non-blocking)
+        // Since we're not in an async context, use try_send
+        if let Err(e) = inner.account_sender.try_send(account_update) {
+            debug!("Failed to send account update: {}", e);
+        }
         Ok(())
     }
 

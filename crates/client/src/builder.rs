@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
-use crossbeam::channel::{bounded, Receiver, Sender};
 use log::info;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use antegen_processor::types::AccountUpdate;
@@ -144,10 +144,10 @@ impl AntegenClientBuilder {
 
         // Create shared event channel if we have datasources
         let (event_tx, event_rx): (
-            Option<Sender<AccountUpdate>>,
-            Option<Receiver<AccountUpdate>>,
+            Option<mpsc::Sender<AccountUpdate>>,
+            Option<mpsc::Receiver<AccountUpdate>>,
         ) = if !self.datasource_builders.is_empty() {
-            let (tx, rx) = bounded(1000);
+            let (tx, rx) = mpsc::channel(1000);
             (Some(tx), Some(rx))
         } else {
             (None, None)
@@ -215,5 +215,5 @@ impl AntegenClientBuilder {
 #[async_trait::async_trait]
 pub trait DatasourceBuilder: Send + Sync {
     /// Run the datasource, sending events to the provided channel
-    async fn run(&self, sender: Sender<AccountUpdate>) -> Result<()>;
+    async fn run(&self, sender: mpsc::Sender<AccountUpdate>) -> Result<()>;
 }

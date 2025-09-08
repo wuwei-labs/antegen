@@ -64,7 +64,27 @@ pub enum CliCommand {
         durable_ratio: u8,
         fiber_count: u8,
     },
+    Config {
+        subcommand: ConfigSubcommand,
+    },
+}
 
+#[derive(Debug, PartialEq)]
+pub enum ConfigSubcommand {
+    Init {
+        admin: Option<Pubkey>,
+    },
+    Show,
+    Update {
+        commission_fee: Option<u64>,
+        executor_fee_bps: Option<u16>,
+        core_team_bps: Option<u16>,
+        grace_period: Option<i64>,
+        fee_decay: Option<i64>,
+        pause: bool,
+        unpause: bool,
+        multisig: bool,
+    },
 }
 
 pub fn app() -> Command {
@@ -412,5 +432,76 @@ pub fn app() -> Command {
                                 .help("Maximum number of fibers per thread (each thread gets 1 to MAX_FIBERS fibers), max 50")
                         ),
                 ),
+        )
+        .subcommand(
+            Command::new("config")
+                .about("Manage thread program configuration")
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("init")
+                        .about("Initialize thread program config")
+                        .arg(
+                            Arg::new("admin")
+                                .long("admin")
+                                .value_name("PUBKEY")
+                                .help("Admin pubkey (defaults to keypair)")
+                        )
+                )
+                .subcommand(
+                    Command::new("show")
+                        .about("Display current thread config")
+                )
+                .subcommand(
+                    Command::new("update")
+                        .about("Update thread config parameters")
+                        .arg(
+                            Arg::new("commission-fee")
+                                .long("commission-fee")
+                                .value_name("LAMPORTS")
+                                .help("Base commission fee in lamports")
+                        )
+                        .arg(
+                            Arg::new("executor-fee-bps")
+                                .long("executor-fee-bps")
+                                .value_name("BPS")
+                                .help("Executor fee percentage in basis points (100 = 1%)")
+                        )
+                        .arg(
+                            Arg::new("core-team-bps")
+                                .long("core-team-bps")
+                                .value_name("BPS")
+                                .help("Core team fee percentage in basis points")
+                        )
+                        .arg(
+                            Arg::new("grace-period")
+                                .long("grace-period")
+                                .value_name("SECONDS")
+                                .help("Grace period in seconds")
+                        )
+                        .arg(
+                            Arg::new("fee-decay")
+                                .long("fee-decay")
+                                .value_name("SECONDS")
+                                .help("Fee decay period in seconds")
+                        )
+                        .arg(
+                            Arg::new("pause")
+                                .long("pause")
+                                .action(ArgAction::SetTrue)
+                                .help("Pause the thread program")
+                        )
+                        .arg(
+                            Arg::new("unpause")
+                                .long("unpause")
+                                .action(ArgAction::SetTrue)
+                                .help("Unpause the thread program")
+                        )
+                        .arg(
+                            Arg::new("multisig")
+                                .long("multisig")
+                                .action(ArgAction::SetTrue)
+                                .help("Use SQUADs multisig for the update")
+                        )
+                )
         )
 }
