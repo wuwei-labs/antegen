@@ -199,6 +199,10 @@ impl ProcessorService {
                 info!("Thread update for {} - fibers: {}, exec_count: {}", 
                      account_update.pubkey, thread.fibers.len(), thread.exec_count);
                 
+                // Always check if there's an active task for this thread and abort it
+                // This handles cases where the thread was already executed elsewhere
+                self.thread_queue.abort_task_if_active(&account_update.pubkey);
+                
                 // Check if we should process this Thread update based on exec_count
                 if !self
                     .cached_rpc
@@ -237,6 +241,12 @@ impl ProcessorService {
                 
                 match decision {
                     ProcessDecision::Process => {
+                        // Check if thread is paused
+                        if thread.paused {
+                            debug!("Thread {} is paused, skipping scheduling", account_update.pubkey);
+                            return Ok(());
+                        }
+                        
                         // Check if thread has fibers before scheduling
                         if thread.fibers.is_empty() {
                             debug!("Thread {} has no fibers, waiting for update with fibers", account_update.pubkey);

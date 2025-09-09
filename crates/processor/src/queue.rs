@@ -220,6 +220,15 @@ impl ThreadQueue {
         self.update_metrics();
     }
 
+    /// Abort any active task for a thread without scheduling a new one
+    pub fn abort_task_if_active(&self, thread_pubkey: &Pubkey) {
+        if let Some((_, task)) = self.active_tasks.remove(thread_pubkey) {
+            task.abort();
+            debug!("Aborted active task for thread {} due to update", thread_pubkey);
+            self.update_metrics();
+        }
+    }
+
     /// Update metrics
     fn update_metrics(&self) {
         if let Some(ref metrics) = self.metrics {

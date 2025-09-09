@@ -84,8 +84,9 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             with_fibers,
             batch_size,
             durable_ratio,
-            fiber_count,
-        } => thread::stress_test(&client, count, interval, jitter, prefix, with_fibers, batch_size, durable_ratio, fiber_count),
+            min_fiber_count,
+            max_fiber_count,
+        } => thread::stress_test(&client, count, interval, jitter, prefix, with_fibers, batch_size, durable_ratio, min_fiber_count, max_fiber_count),
         CliCommand::Config { subcommand } => match subcommand {
             ConfigSubcommand::Init { admin } => config::init(&client, admin),
             ConfigSubcommand::Show => config::show(&client),

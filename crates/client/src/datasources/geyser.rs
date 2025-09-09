@@ -85,15 +85,10 @@ impl DatasourceBuilder for GeyserDatasource {
             .ok_or_else(|| anyhow::anyhow!("Geyser datasource receiver not available"))?;
 
         // Forward events from Geyser plugin to the processor
-        let mut event_count = 0u64;
         loop {
             // Async receive - will wait for events
             match receiver.recv().await {
                 Some(event) => {
-                    event_count += 1;
-                    if event_count % 100 == 0 {
-                        info!("Geyser datasource forwarded {} events", event_count);
-                    }
                     log::debug!("Forwarding account update for {}", event.pubkey);
                     
                     // Forward event to the processor (async send)

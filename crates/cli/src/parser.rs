@@ -126,13 +126,33 @@ fn parse_thread_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
                 return Err(CliError::BadParameter("durable-ratio must be between 0 and 100".into()));
             }
             
-            let fiber_count = parse_string("fiber-count", matches)?
+            // Parse min-fibers (required)
+            let min_fiber_count = parse_string("min-fibers", matches)?
                 .parse::<u8>()
-                .map_err(|_| CliError::BadParameter("fiber-count must be a number".into()))?;
+                .map_err(|_| CliError::BadParameter("min-fibers must be a number".into()))?;
             
-            if fiber_count == 0 || fiber_count > 50 {
-                return Err(CliError::BadParameter("fiber-count must be between 1 and 50".into()));
+            if min_fiber_count == 0 || min_fiber_count > 50 {
+                return Err(CliError::BadParameter("min-fibers must be between 1 and 50".into()));
             }
+            
+            // Parse max-fibers (optional, defaults to min-fibers)
+            let max_fiber_count = if let Ok(max_str) = parse_string("max-fibers", matches) {
+                let max = max_str.parse::<u8>()
+                    .map_err(|_| CliError::BadParameter("max-fibers must be a number".into()))?;
+                
+                if max == 0 || max > 50 {
+                    return Err(CliError::BadParameter("max-fibers must be between 1 and 50".into()));
+                }
+                
+                if max < min_fiber_count {
+                    return Err(CliError::BadParameter("max-fibers must be greater than or equal to min-fibers".into()));
+                }
+                
+                max
+            } else {
+                // Default to min-fibers value
+                min_fiber_count
+            };
             
             Ok(CliCommand::ThreadStressTest {
                 count: parse_string("count", matches)?
@@ -150,7 +170,8 @@ fn parse_thread_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
                     .parse::<u32>()
                     .map_err(|_| CliError::BadParameter("batch-size must be a number".into()))?,
                 durable_ratio,
-                fiber_count,
+                min_fiber_count,
+                max_fiber_count,
             })
         }
         _ => Err(CliError::CommandNotRecognized(

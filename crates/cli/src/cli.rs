@@ -66,7 +66,8 @@ pub enum CliCommand {
         with_fibers: bool,
         batch_size: u32,
         durable_ratio: u8,
-        fiber_count: u8,
+        min_fiber_count: u8,
+        max_fiber_count: u8,
     },
     Config {
         subcommand: ConfigSubcommand,
@@ -456,12 +457,17 @@ pub fn app() -> Command {
                                 .help("Percentage of threads to create as durable (with nonce accounts), 0-100")
                         )
                         .arg(
-                            Arg::new("fiber-count")
-                                .long("fiber-count")
-                                .short('f')
-                                .value_name("MAX_FIBERS")
+                            Arg::new("min-fibers")
+                                .long("min-fibers")
+                                .value_name("MIN")
                                 .default_value("1")
-                                .help("Maximum number of fibers per thread (each thread gets 1 to MAX_FIBERS fibers), max 50")
+                                .help("Minimum number of fibers per thread (1-50)")
+                        )
+                        .arg(
+                            Arg::new("max-fibers")
+                                .long("max-fibers")
+                                .value_name("MAX")
+                                .help("Maximum number of fibers per thread (defaults to min-fibers value)")
                         ),
                 ),
         )

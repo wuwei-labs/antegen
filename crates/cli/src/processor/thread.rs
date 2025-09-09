@@ -125,6 +125,7 @@ pub fn get(client: &Client, address: Pubkey) -> Result<(), CliError> {
     println!("\nThread Details:");
     println!("  Address: {}", address);
     println!("  Authority: {}", thread.authority);
+    println!("  Last Executor: {}", thread.last_executor);
     println!("  ID: {}", String::from_utf8_lossy(&thread.id));
     println!("  Paused: {}", thread.paused);
 
@@ -311,10 +312,11 @@ pub fn stress_test(
     interval: u64,
     jitter: u64,
     prefix: String,
-    _with_fibers: bool,  // Kept for backward compatibility, fiber_count now controls fibers
+    _with_fibers: bool,  // Kept for backward compatibility, min/max fiber counts now control fibers
     batch_size: u32,
     durable_ratio: u8,
-    fiber_count: u8,
+    min_fiber_count: u8,
+    max_fiber_count: u8,
 ) -> Result<(), CliError> {
     use crate::print_status;
     use rand::Rng;
@@ -327,7 +329,11 @@ pub fn stress_test(
     println!("   Thread ID prefix: '{}'", prefix);
     println!("   Batch size: {} threads per batch", batch_size);
     println!("   Durable thread ratio: {}%", durable_ratio);
-    println!("   Max fibers per thread: {}", fiber_count);
+    if min_fiber_count == max_fiber_count {
+        println!("   Fibers per thread: {}", min_fiber_count);
+    } else {
+        println!("   Fibers per thread: {}-{}", min_fiber_count, max_fiber_count);
+    }
 
     let mut rng = rand::thread_rng();
     let mut created = 0;
@@ -335,8 +341,8 @@ pub fn stress_test(
     let mut durable_count = 0;
     let mut regular_count = 0;
     let mut total_fibers_created = 0;
-    let mut min_fibers = fiber_count;
-    let mut max_fibers = 0u8;
+    let mut actual_min_fibers = max_fiber_count;  // Track actual min used
+    let mut actual_max_fibers = min_fiber_count;  // Track actual max used
 
     // Process in batches to avoid rate limiting
     for batch_num in 0..(count as f32 / batch_size as f32).ceil() as u32 {
@@ -388,16 +394,18 @@ pub fn stress_test(
                         regular_count += 1;
                     }
 
-                    // Randomly choose number of fibers for this thread
-                    let num_fibers = if fiber_count > 1 {
-                        rng.gen_range(1..=fiber_count)
+                    // Choose number of fibers for this thread
+                    let num_fibers = if min_fiber_count == max_fiber_count {
+                        // Exact count, no randomization needed
+                        min_fiber_count
                     } else {
-                        1
+                        // Random between min and max (inclusive)
+                        rng.gen_range(min_fiber_count..=max_fiber_count)
                     };
                     
-                    // Track min/max fibers for statistics
-                    min_fibers = min_fibers.min(num_fibers);
-                    max_fibers = max_fibers.max(num_fibers);
+                    // Track actual min/max fibers for statistics
+                    actual_min_fibers = actual_min_fibers.min(num_fibers);
+                    actual_max_fibers = actual_max_fibers.max(num_fibers);
                     
                     // Create fibers for the thread
                     let memo_program_id =
@@ -496,8 +504,13 @@ pub fn stress_test(
             "   Average fibers per thread: {:.2}",
             total_fibers_created as f64 / created as f64
         );
-        println!("   Min fibers per thread: {}", min_fibers);
-        println!("   Max fibers per thread: {}", max_fibers);
+        if min_fiber_count == max_fiber_count {
+            println!("   Fibers per thread: {} (exact)", min_fiber_count);
+        } else {
+            println!("   Configured range: {}-{}", min_fiber_count, max_fiber_count);
+            println!("   Actual min used: {}", actual_min_fibers);
+            println!("   Actual max used: {}", actual_max_fibers);
+        }
     }
 
     if failed > 0 {

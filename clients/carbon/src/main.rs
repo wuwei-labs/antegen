@@ -175,7 +175,8 @@ async fn run_carbon_client(config: Config) -> Result<()> {
             SubmitterBuilder::new()
                 .rpc_url(config.rpc_url.clone())
                 .executor_keypair(keypair.clone())
-                .replay_config(build_replay_config(&config)),
+                .replay_config(build_replay_config(&config))
+                .tpu_enabled(),
         )
         .build()
         .await?;

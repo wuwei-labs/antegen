@@ -314,11 +314,9 @@ impl GeyserPlugin for AntegenPlugin {
             match status {
                 SlotStatus::Confirmed | SlotStatus::Rooted => {
                     // Increment block height for confirmed/finalized slots
-                    let new_height = inner
+                    inner
                         .block_height
-                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                        + 1;
-                    info!("Block {} confirmed (slot {})", new_height, slot);
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 }
                 SlotStatus::Processed => {
                     debug!("Slot {} processed", slot);

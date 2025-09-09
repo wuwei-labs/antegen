@@ -56,9 +56,29 @@ fn initialize_thread_config() -> Result<(), CliError> {
     // Wait a moment for airdrop to be confirmed
     std::thread::sleep(std::time::Duration::from_secs(1));
     
-    // Initialize the config using the executor as admin
-    crate::processor::config::init(&client, None)
-        .map_err(|e| CliError::FailedLocalnet(format!("Failed to initialize config: {}", e)))?;
+    // Try to initialize the config with retries (program may not be fully deployed yet)
+    let mut attempts = 0;
+    let max_attempts = 3;
+    
+    while attempts < max_attempts {
+        attempts += 1;
+        
+        match crate::processor::config::init(&client, None) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                if attempts == max_attempts {
+                    // On final attempt, log the error but don't fail
+                    eprintln!("  Warning: Could not initialize thread config after {} attempts: {}", max_attempts, e);
+                    eprintln!("  You can manually initialize it later with: antegen config init");
+                    return Ok(()); // Return success anyway - config can be initialized later
+                } else {
+                    // Wait before retry
+                    println!("  Config initialization attempt {} failed, retrying...", attempts);
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+            }
+        }
+    }
     
     Ok(())
 }
@@ -162,12 +182,7 @@ pub fn start(
         
         // Initialize thread config
         println!("✓ Initializing thread program config...");
-        if let Err(e) = initialize_thread_config() {
-            eprintln!("⚠️  Failed to initialize thread config: {}", e);
-            eprintln!("   You can manually initialize it with: antegen config init");
-        } else {
-            println!("✅ Thread config initialized");
-        }
+        initialize_thread_config().ok(); // Best effort - warning already printed if fails
 
         Ok(())
     })
@@ -253,12 +268,7 @@ pub fn start_with_geyser(release: bool, verbose: bool) -> Result<(), CliError> {
         
         // Initialize thread config
         println!("✓ Initializing thread program config...");
-        if let Err(e) = initialize_thread_config() {
-            eprintln!("⚠️  Failed to initialize thread config: {}", e);
-            eprintln!("   You can manually initialize it with: antegen config init");
-        } else {
-            println!("✅ Thread config initialized");
-        }
+        initialize_thread_config().ok(); // Best effort - warning already printed if fails
         
         println!("\n✨ Localnet with Geyser plugin is running!");
         println!("\n📝 Available endpoints:");

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use super::daemon::AppConfig;
+use solana_sdk::signature::{write_keypair_file, read_keypair_file, Keypair, Signer};
 
 /// Create validator service configuration
 /// 
@@ -83,7 +84,14 @@ pub fn carbon_service(
     is_dev: bool,
     verbose: bool,
 ) -> AppConfig {
-    let keypair_path = runtime_dir.join("executor-keypair.json");
+    // Get or create unique keypair for this service
+    let keypair_path = match get_or_create_service_keypair(name, runtime_dir) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("Warning: Failed to create service keypair: {}. Using default.", e);
+            runtime_dir.join("executor-keypair.json")
+        }
+    };
     
     let mut args = vec![
         "--datasource".to_string(),
@@ -139,7 +147,14 @@ pub fn rpc_service(
     is_dev: bool,
     verbose: bool,
 ) -> AppConfig {
-    let keypair_path = runtime_dir.join("executor-keypair.json");
+    // Get or create unique keypair for this service
+    let keypair_path = match get_or_create_service_keypair(name, runtime_dir) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("Warning: Failed to create service keypair: {}. Using default.", e);
+            runtime_dir.join("executor-keypair.json")
+        }
+    };
     
     let mut args = vec![
         "--rpc-url".to_string(),
@@ -185,6 +200,65 @@ pub fn rpc_service(
     }
 }
 
+/// Get or create a keypair for a service
+fn get_or_create_service_keypair(service_name: &str, runtime_dir: &PathBuf) -> anyhow::Result<PathBuf> {
+    // Create keypairs directory if it doesn't exist
+    let keypairs_dir = runtime_dir.join("keypairs");
+    std::fs::create_dir_all(&keypairs_dir)?;
+    
+    // Generate keypair path based on service name
+    let keypair_path = keypairs_dir.join(format!("{}-keypair.json", service_name));
+    
+    // Generate keypair if it doesn't exist
+    if !keypair_path.exists() {
+        let keypair = Keypair::new();
+        write_keypair_file(&keypair, &keypair_path)
+            .map_err(|e| anyhow::anyhow!("Failed to write keypair: {}", e))?;
+        println!("  Generated new keypair for service '{}': {}", service_name, keypair.pubkey());
+        
+        // Airdrop SOL to the new keypair
+        airdrop_to_keypair(&keypair.pubkey());
+    } else {
+        // Read existing keypair to show pubkey
+        if let Ok(keypair) = read_keypair_file(&keypair_path) {
+            println!("  Using existing keypair for service '{}': {}", service_name, keypair.pubkey());
+            
+            // Ensure the keypair has SOL (in case it's an existing keypair with no balance)
+            airdrop_to_keypair(&keypair.pubkey());
+        }
+    }
+    
+    Ok(keypair_path)
+}
+
+/// Airdrop SOL to a keypair (best effort, non-blocking)
+fn airdrop_to_keypair(pubkey: &solana_sdk::pubkey::Pubkey) {
+    // Run airdrop in background - don't block service startup
+    let pubkey_str = pubkey.to_string();
+    std::thread::spawn(move || {
+        // Wait a moment for validator to be ready
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        
+        let output = std::process::Command::new("solana")
+            .args(&[
+                "airdrop",
+                "10",
+                &pubkey_str,
+                "--url", "http://localhost:8899"
+            ])
+            .output();
+        
+        match output {
+            Ok(result) if result.status.success() => {
+                println!("  ✓ Airdropped 10 SOL to {}", pubkey_str);
+            }
+            _ => {
+                // Silently fail - airdrop is best effort
+            }
+        }
+    });
+}
+
 /// Get the path to a binary based on dev/release mode
 fn get_binary_path(binary_name: &str, runtime_dir: &PathBuf, is_dev: bool) -> PathBuf {
     if is_dev {
@@ -216,7 +290,7 @@ pub fn get_client_template(
     client_type: &str,
     name: &str,
     rpc_url: Option<String>,
-    _keypair: Option<String>,
+    keypair: Option<String>,
 ) -> anyhow::Result<AppConfig> {
     let runtime_dir = dirs_next::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -224,6 +298,13 @@ pub fn get_client_template(
         .join("localnet");
     
     let is_dev = std::path::Path::new("target").exists();
+    
+    // Handle custom keypair if provided
+    if let Some(_custom_keypair) = keypair {
+        // TODO: Copy custom keypair to service-specific location
+        // For now, we'll just use the service-specific generation
+        eprintln!("Note: Custom keypair support coming soon. Using auto-generated keypair.");
+    }
     
     match client_type {
         "rpc" => {
