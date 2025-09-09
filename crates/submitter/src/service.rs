@@ -16,6 +16,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Signature,
     signature::Keypair,
+    signer::Signer,
     transaction::{Transaction, VersionedTransaction},
 };
 use std::{cmp, sync::Arc, time::{Duration, Instant}};
@@ -204,8 +205,6 @@ impl SubmissionService {
                 signers,
             )?;
             
-            debug!("Starting simulation at {}",
-                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
             let (optimized_cu, _logs) = self.simulate_and_optimize_transaction(
                 &initial_tx,
                 thread_pubkey.unwrap(),
@@ -213,8 +212,6 @@ impl SubmissionService {
                 1_400_000,  // Default max CU
                 None,  // No min context slot
             ).await?;
-            debug!("Simulation complete, CU: {} at {}",
-                optimized_cu, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
             
             // Rebuild with optimized CU
             let mut final_instructions = vec![
@@ -402,6 +399,22 @@ impl SubmissionService {
         if let Some(err) = sim_result.value.err {
             let logs = sim_result.value.logs.clone().unwrap_or_default();
             warn!("Simulation failed for thread {}: {:?}", thread_pubkey, err);
+            
+            // Try to extract more details from the error
+            let error_str = format!("{:?}", err);
+            if error_str.contains("AccountNotFound") {
+                warn!("AccountNotFound error detected. Transaction may be referencing a non-existent account.");
+                warn!("Check the debug logs above to identify which account is missing.");
+            }
+            
+            // Log the simulation logs for more context
+            if !logs.is_empty() {
+                warn!("Simulation logs:");
+                for log in &logs {
+                    warn!("  {}", log);
+                }
+            }
+            
             return Err(anyhow!("Simulation failed: {:?}, logs: {:?}", err, logs));
         }
         
@@ -793,6 +806,35 @@ impl SubmissionService {
         
         // Initialize service (wait for RPC) before processing
         self.initialize().await?;
+        
+        // Check executor keypair balance to ensure account exists
+        let executor_pubkey = executor_keypair.pubkey();
+        info!("Checking executor account balance: {}", executor_pubkey);
+        
+        match self.rpc_client.get_balance(&executor_pubkey).await {
+            Ok(balance) => {
+                if balance == 0 {
+                    return Err(anyhow!(
+                        "Executor account {} has zero balance. Please fund the account with SOL before starting.\n\
+                        You can airdrop SOL on localnet with: solana airdrop 10 {}",
+                        executor_pubkey, executor_pubkey
+                    ));
+                }
+                info!("Executor account balance: {} lamports ({:.6} SOL)", 
+                    balance, 
+                    balance as f64 / 1_000_000_000.0
+                );
+            }
+            Err(e) => {
+                // Account might not exist (which also returns an error)
+                return Err(anyhow!(
+                    "Failed to check executor account balance for {}: {}\n\
+                    The account may not exist. Please fund the account with SOL before starting.\n\
+                    You can airdrop SOL on localnet with: solana airdrop 10 {}",
+                    executor_pubkey, e, executor_pubkey
+                ));
+            }
+        }
         
         // Simple message routing loop - wrap blocking recv in spawn_blocking
         loop {

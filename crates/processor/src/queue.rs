@@ -241,6 +241,32 @@ impl ThreadQueue {
     pub fn active_task_count(&self) -> usize {
         self.active_tasks.len()
     }
+
+    /// Get detailed queue statistics
+    pub async fn get_queue_stats(&self) -> QueueStats {
+        let time_queue_size = self.time_queue.lock().await.len();
+        let slot_queue_size = self.slot_queue.lock().await.len();
+        let epoch_queue_size = self.epoch_queue.lock().await.len();
+        let active_tasks = self.active_tasks.len();
+        
+        QueueStats {
+            timestamp_threads: time_queue_size,
+            slot_threads: slot_queue_size,
+            epoch_threads: epoch_queue_size,
+            total_monitored: time_queue_size + slot_queue_size + epoch_queue_size,
+            active_executions: active_tasks,
+        }
+    }
+}
+
+/// Statistics about thread queue state
+#[derive(Debug, Clone)]
+pub struct QueueStats {
+    pub timestamp_threads: usize,
+    pub slot_threads: usize,
+    pub epoch_threads: usize,
+    pub total_monitored: usize,
+    pub active_executions: usize,
 }
 
 impl Clone for ThreadQueue {

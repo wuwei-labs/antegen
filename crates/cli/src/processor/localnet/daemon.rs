@@ -82,63 +82,18 @@ impl LocalnetDaemon {
     /// Stop all services
     pub async fn stop(&mut self) -> Result<()> {
         let processes = self.process_manager.list().await?;
+        
+        // Get the list of service names to stop
+        let service_names: Vec<String> = processes.iter().map(|p| p.name.clone()).collect();
 
-        for process in processes {
-            println!("  Stopping {} (PID: {:?})", process.name, process.pid);
-
-            // Store the PID before calling stop (in case PMDaemon clears it)
-            let original_pid = process.pid;
-
-            // Call PMDaemon's stop - this might just mark it as stopped without killing
-            if let Err(e) = self.process_manager.stop(&process.name).await {
-                println!("    Warning: PMDaemon stop failed: {}", e);
-            }
-
-            // PMDaemon's stop doesn't reliably kill processes, so we need to ensure it's dead
-            if let Some(pid) = original_pid {
-                // Give it a moment to stop gracefully
-                tokio::time::sleep(Duration::from_millis(500)).await;
-
-                // Check if it's actually stopped
-                let check = std::process::Command::new("kill")
-                    .arg("-0")
-                    .arg(pid.to_string())
-                    .output();
-
-                if let Ok(output) = check {
-                    if output.status.success() {
-                        // Process still exists, need to kill it
-                        println!("    Process {} still running, sending SIGTERM...", pid);
-                        let _ = std::process::Command::new("kill")
-                            .arg(pid.to_string())
-                            .output();
-
-                        // Wait a bit for graceful shutdown
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-
-                        // Check again
-                        let check = std::process::Command::new("kill")
-                            .arg("-0")
-                            .arg(pid.to_string())
-                            .output();
-
-                        if let Ok(output) = check {
-                            if output.status.success() {
-                                // Still running, force kill
-                                println!("    Process {} still running, sending SIGKILL...", pid);
-                                let _ = std::process::Command::new("kill")
-                                    .arg("-9")
-                                    .arg(pid.to_string())
-                                    .output();
-                            }
-                        }
-                    }
-                }
-                println!("    ✓ {} stopped", process.name);
+        for service_name in service_names {
+            // Use the helper to stop and kill each service
+            if let Err(e) = self.stop_service_with_kill(&service_name).await {
+                println!("    Warning: Failed to stop {}: {}", service_name, e);
             }
 
             // Clean up from PMDaemon's tracking
-            let _ = self.process_manager.delete(&process.name).await;
+            let _ = self.process_manager.delete(&service_name).await;
         }
 
         Ok(())
@@ -185,6 +140,79 @@ impl LocalnetDaemon {
         bail!("Process {} did not stop within timeout", name)
     }
 
+    /// Stop a service and ensure its process is killed
+    async fn stop_service_with_kill(&mut self, service_name: &str) -> Result<()> {
+        // Get the process info before stopping
+        let processes = self.process_manager.list().await?;
+        let process = processes
+            .iter()
+            .find(|p| p.name == service_name);
+        
+        // If process not found, it might already be stopped
+        let process = match process {
+            Some(p) => p,
+            None => {
+                println!("  Service {} not found in process list", service_name);
+                return Ok(());
+            }
+        };
+        
+        println!("  Stopping {} (PID: {:?})", service_name, process.pid);
+        
+        // Store the PID before calling stop (in case PMDaemon clears it)
+        let original_pid = process.pid;
+        
+        // Call PMDaemon's stop - this might just mark it as stopped without killing
+        if let Err(e) = self.process_manager.stop(service_name).await {
+            println!("    Warning: PMDaemon stop failed: {}", e);
+        }
+        
+        // PMDaemon's stop doesn't reliably kill processes, so we need to ensure it's dead
+        if let Some(pid) = original_pid {
+            // Give it a moment to stop gracefully
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            
+            // Check if it's actually stopped
+            let check = std::process::Command::new("kill")
+                .arg("-0")
+                .arg(pid.to_string())
+                .output();
+            
+            if let Ok(output) = check {
+                if output.status.success() {
+                    // Process still exists, need to kill it
+                    println!("    Process {} still running, sending SIGTERM...", pid);
+                    let _ = std::process::Command::new("kill")
+                        .arg(pid.to_string())
+                        .output();
+                    
+                    // Wait a bit for graceful shutdown
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    
+                    // Check again
+                    let check = std::process::Command::new("kill")
+                        .arg("-0")
+                        .arg(pid.to_string())
+                        .output();
+                    
+                    if let Ok(output) = check {
+                        if output.status.success() {
+                            // Still running, force kill
+                            println!("    Process {} still running, sending SIGKILL...", pid);
+                            let _ = std::process::Command::new("kill")
+                                .arg("-9")
+                                .arg(pid.to_string())
+                                .output();
+                        }
+                    }
+                }
+            }
+        }
+        
+        println!("    ✓ {} stopped", service_name);
+        Ok(())
+    }
+
     /// Add a new service dynamically
     pub async fn add_service(&mut self, app: AppConfig) -> Result<()> {
         // Start the service
@@ -199,8 +227,10 @@ impl LocalnetDaemon {
 
     /// Remove a service
     pub async fn remove_service(&mut self, service_name: &str) -> Result<()> {
-        // Stop the service
-        self.process_manager.stop(service_name).await?;
+        // Stop the service and ensure it's killed
+        self.stop_service_with_kill(service_name).await?;
+        
+        // Clean up from PMDaemon's tracking
         self.process_manager.delete(service_name).await?;
 
         // Update config.json

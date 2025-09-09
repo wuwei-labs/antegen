@@ -76,6 +76,7 @@ fn parse_localnet_client_command(matches: &ArgMatches) -> Result<CliCommand, Cli
                 name: matches.get_one::<String>("name").cloned(),
                 rpc_url: matches.get_one::<String>("rpc-url").cloned(),
                 keypair: matches.get_one::<String>("keypair").cloned(),
+                verbose: matches.get_flag("verbose"),
             })
         }
         Some(("remove", matches)) => {

@@ -4,6 +4,7 @@ use log::{debug, error, info, warn};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
+    pubkey::Pubkey,
     signature::{read_keypair_file, Keypair},
     signer::Signer,
 };
@@ -121,6 +122,9 @@ impl ProcessorService {
     pub async fn run(mut self) -> Result<()> {
         info!("Starting processor service");
         
+        // Spawn periodic stats logging task
+        let stats_task = self.spawn_stats_logger();
+        
         // Event-driven main loop - now fully async
         loop {
             match self.account_receiver.recv().await {
@@ -137,6 +141,7 @@ impl ProcessorService {
         }
 
         // Shutdown
+        stats_task.abort();
         info!("Processor service shutting down");
         Ok(())
     }
@@ -187,7 +192,14 @@ impl ProcessorService {
                 if ready_threads.is_empty() {
                     debug!("0 threads ready for execution");
                 } else {
-                    debug!("{} threads ready for execution", ready_threads.len());
+                    info!("{} threads ready for execution at slot {} (time: {})", 
+                         ready_threads.len(), slot, unix_timestamp);
+                    
+                    // Log current processor state
+                    let queue_stats = self.thread_queue.get_queue_stats().await;
+                    let lb_stats = self.load_balancer.get_stats().await;
+                    info!("Current processor state - Monitored: {}, Owned: {}, Active: {}", 
+                         queue_stats.total_monitored, lb_stats.owned_threads, queue_stats.active_executions);
                 }
                 
                 // Spawn execution tasks for ready threads
@@ -239,6 +251,9 @@ impl ProcessorService {
                 debug!("Load balancer decision for thread {}: {:?}", 
                      account_update.pubkey, decision);
                 
+                // Log scheduling details
+                self.log_thread_scheduling(&account_update.pubkey, &decision).await;
+                
                 match decision {
                     ProcessDecision::Process => {
                         // Check if thread is paused
@@ -263,7 +278,12 @@ impl ProcessorService {
                         {
                             warn!("Failed to schedule thread {}: {}", account_update.pubkey, e);
                         } else {
-                            debug!("Successfully scheduled thread {}", account_update.pubkey);
+                            info!("Successfully scheduled thread {} for processing", account_update.pubkey);
+                            
+                            // Log updated queue stats after scheduling
+                            let queue_stats = self.thread_queue.get_queue_stats().await;
+                            debug!("Queue stats after scheduling - Total monitored: {}, Active: {}", 
+                                 queue_stats.total_monitored, queue_stats.active_executions);
                         }
                     }
                     ProcessDecision::Skip => {
@@ -402,5 +422,64 @@ impl ProcessorService {
                 (false, 0)
             }
         }
+    }
+    
+    /// Spawn a background task to periodically log processor statistics
+    fn spawn_stats_logger(&self) -> tokio::task::JoinHandle<()> {
+        let thread_queue = self.thread_queue.clone();
+        let load_balancer = self.load_balancer.clone();
+        let executor_pubkey = self.executor_keypair.pubkey();
+        
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+            
+            loop {
+                interval.tick().await;
+                
+                // Get queue statistics
+                let queue_stats = thread_queue.get_queue_stats().await;
+                
+                // Get load balancer statistics
+                let lb_stats = load_balancer.get_stats().await;
+                
+                // Log comprehensive statistics
+                info!("=== Thread Processor Statistics ===");
+                info!("Executor: {}", executor_pubkey);
+                info!("--- Queue Status ---");
+                info!("  Total threads monitored: {}", queue_stats.total_monitored);
+                info!("    - Timestamp-triggered: {}", queue_stats.timestamp_threads);
+                info!("    - Slot-triggered: {}", queue_stats.slot_threads);
+                info!("    - Epoch-triggered: {}", queue_stats.epoch_threads);
+                info!("  Active executions: {}", queue_stats.active_executions);
+                
+                info!("--- Load Balancer Status ---");
+                info!("  Threads owned by this client: {}", lb_stats.owned_threads);
+                info!("  Total threads tracked: {}", lb_stats.total_tracked);
+                info!("  Threads with recent losses: {}", lb_stats.threads_with_losses);
+                info!("  At capacity: {}", lb_stats.at_capacity);
+                
+                info!("--- Processing Responsibility ---");
+                let responsibility_pct = if lb_stats.total_tracked > 0 {
+                    lb_stats.owned_threads as f64 / lb_stats.total_tracked as f64 * 100.0
+                } else {
+                    0.0
+                };
+                info!("  This client is responsible for {}/{} threads ({:.1}%)", 
+                      lb_stats.owned_threads, lb_stats.total_tracked, responsibility_pct);
+                info!("==================================");
+            }
+        })
+    }
+    
+    /// Log thread processing details when scheduling
+    async fn log_thread_scheduling(&self, thread_pubkey: &Pubkey, decision: &ProcessDecision) {
+        let queue_stats = self.thread_queue.get_queue_stats().await;
+        let lb_stats = self.load_balancer.get_stats().await;
+        
+        debug!("Thread {} scheduling decision: {:?}", thread_pubkey, decision);
+        debug!("  Current queue state - Total: {}, Active: {}", 
+              queue_stats.total_monitored, queue_stats.active_executions);
+        debug!("  Load balancer state - Owned: {}, Tracked: {}", 
+              lb_stats.owned_threads, lb_stats.total_tracked);
     }
 }

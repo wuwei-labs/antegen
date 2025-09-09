@@ -216,47 +216,51 @@ fn get_or_create_service_keypair(service_name: &str, runtime_dir: &PathBuf) -> a
             .map_err(|e| anyhow::anyhow!("Failed to write keypair: {}", e))?;
         println!("  Generated new keypair for service '{}': {}", service_name, keypair.pubkey());
         
-        // Airdrop SOL to the new keypair
-        airdrop_to_keypair(&keypair.pubkey());
+        // Airdrop SOL to the new keypair (wait for completion)
+        airdrop_to_keypair(&keypair.pubkey())
+            .map_err(|e| anyhow::anyhow!("Failed to airdrop to new keypair: {}", e))?;
     } else {
         // Read existing keypair to show pubkey
         if let Ok(keypair) = read_keypair_file(&keypair_path) {
             println!("  Using existing keypair for service '{}': {}", service_name, keypair.pubkey());
             
             // Ensure the keypair has SOL (in case it's an existing keypair with no balance)
-            airdrop_to_keypair(&keypair.pubkey());
+            // Log warning if airdrop fails but don't fail the entire operation
+            if let Err(e) = airdrop_to_keypair(&keypair.pubkey()) {
+                eprintln!("  Warning: Failed to airdrop to existing keypair: {}", e);
+                eprintln!("  The service may fail if the keypair has insufficient balance");
+            }
         }
     }
     
     Ok(keypair_path)
 }
 
-/// Airdrop SOL to a keypair (best effort, non-blocking)
-fn airdrop_to_keypair(pubkey: &solana_sdk::pubkey::Pubkey) {
-    // Run airdrop in background - don't block service startup
+/// Airdrop SOL to a keypair (synchronous, blocking)
+fn airdrop_to_keypair(pubkey: &solana_sdk::pubkey::Pubkey) -> anyhow::Result<()> {
+    // Wait a moment for validator to be ready if just started
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    
     let pubkey_str = pubkey.to_string();
-    std::thread::spawn(move || {
-        // Wait a moment for validator to be ready
-        std::thread::sleep(std::time::Duration::from_secs(2));
-        
-        let output = std::process::Command::new("solana")
-            .args(&[
-                "airdrop",
-                "10",
-                &pubkey_str,
-                "--url", "http://localhost:8899"
-            ])
-            .output();
-        
-        match output {
-            Ok(result) if result.status.success() => {
-                println!("  ✓ Airdropped 10 SOL to {}", pubkey_str);
-            }
-            _ => {
-                // Silently fail - airdrop is best effort
-            }
-        }
-    });
+    println!("  Airdropping 10 SOL to {}...", pubkey_str);
+    
+    let output = std::process::Command::new("solana")
+        .args(&[
+            "airdrop",
+            "10",
+            &pubkey_str,
+            "--url", "http://localhost:8899"
+        ])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to execute airdrop command: {}", e))?;
+    
+    if output.status.success() {
+        println!("  ✓ Successfully airdropped 10 SOL to {}", pubkey_str);
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(anyhow::anyhow!("Airdrop failed: {}", stderr))
+    }
 }
 
 /// Get the path to a binary based on dev/release mode
@@ -291,6 +295,7 @@ pub fn get_client_template(
     name: &str,
     rpc_url: Option<String>,
     keypair: Option<String>,
+    verbose: bool,
 ) -> anyhow::Result<AppConfig> {
     let runtime_dir = dirs_next::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -309,11 +314,11 @@ pub fn get_client_template(
     match client_type {
         "rpc" => {
             let url = rpc_url.unwrap_or_else(|| "http://localhost:8899".to_string());
-            Ok(rpc_service(name, &url, &runtime_dir, is_dev, false))
+            Ok(rpc_service(name, &url, &runtime_dir, is_dev, verbose))
         }
         "carbon" => {
             let url = rpc_url.unwrap_or_else(|| "http://localhost:8899".to_string());
-            Ok(carbon_service(name, &url, &runtime_dir, is_dev, false))
+            Ok(carbon_service(name, &url, &runtime_dir, is_dev, verbose))
         }
         "geyser" => {
             // Geyser requires special handling as it needs to be loaded as a validator plugin

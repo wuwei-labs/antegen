@@ -34,6 +34,7 @@ pub enum CliCommand {
         name: Option<String>,
         rpc_url: Option<String>,
         keypair: Option<String>,
+        verbose: bool,
     },
     LocalnetClientRemove {
         name: Option<String>,
@@ -253,6 +254,13 @@ pub fn app() -> Command {
                                         .value_name("PATH")
                                         .num_args(1)
                                         .help("Path to keypair file")
+                                )
+                                .arg(
+                                    Arg::new("verbose")
+                                        .long("verbose")
+                                        .short('v')
+                                        .action(ArgAction::SetTrue)
+                                        .help("Enable debug logging")
                                 )
                         )
                         .subcommand(

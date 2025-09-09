@@ -349,6 +349,7 @@ pub fn add_client(
     name: Option<String>,
     rpc_url: Option<String>,
     keypair: Option<String>,
+    verbose: bool,
 ) -> Result<(), CliError> {
     RUNTIME.block_on(async {
         // Create a daemon instance to connect to existing processes
@@ -374,7 +375,7 @@ pub fn add_client(
 
         // Get client template
         let app_config =
-            templates::get_client_template(&client_type, &client_name, rpc_url, keypair)
+            templates::get_client_template(&client_type, &client_name, rpc_url, keypair, verbose)
                 .map_err(|e| CliError::FailedLocalnet(e.to_string()))?;
 
         // Add the service

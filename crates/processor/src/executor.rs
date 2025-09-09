@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use log::{debug, info};
+use log::info;
 use solana_program::{pubkey::Pubkey, sysvar};
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction, instruction::Instruction, signature::Keypair,
@@ -97,14 +97,8 @@ impl ExecutorLogic {
         fiber: Option<&FiberState>,
         compute_units: Option<u32>,
     ) -> Result<(Vec<Instruction>, u64)> {
-        debug!("build_execute_transaction called");
         let thread_pubkey = &executable.thread_pubkey;
         let thread = &executable.thread;
-        
-        debug!("Getting blockchain time");
-        let blockchain_time = self.clock.get_timestamp().await;
-        debug!("Building transaction for thread {} at blockchain time {}",
-            thread_pubkey, blockchain_time);
 
         // Get fiber state if not provided
         let fiber_state = match fiber {
@@ -113,13 +107,9 @@ impl ExecutorLogic {
                 // Get fiber PDA using the thread method
                 // Thread must have fibers if we got here (checked in ProcessorService)
                 let fiber_pubkey = thread.fiber(thread_pubkey);
-                debug!("Getting fiber account at {} (with cached retry) for thread {} with exec_index {}", 
-                    fiber_pubkey, thread_pubkey, thread.exec_index);
-                debug!("Thread has {} fibers: {:?}", thread.fibers.len(), thread.fibers);
                 
                 // Use cached RPC client which has built-in retry logic for AccountNotFound
                 let account = self.rpc_client.get_account(&fiber_pubkey).await?;
-                debug!("Got fiber account, deserializing {} bytes", account.data.len());
                 
                 FiberState::try_deserialize(&mut account.data.as_slice())
                     .map_err(|e| anyhow!("Failed to deserialize fiber: {}", e))?
@@ -141,8 +131,6 @@ impl ExecutorLogic {
         }
 
         ixs.push(execute_ix);
-        debug!("Built {} instructions with priority fee {} for thread {}", 
-              ixs.len(), priority_fee, thread_pubkey);
         Ok((ixs, priority_fee))
     }
 
@@ -183,6 +171,8 @@ impl ExecutorLogic {
         // Process fiber accounts
 
         // Build base accounts using Anchor-generated types
+        let has_nonce = thread.has_nonce_account();
+        
         let mut accounts = ThreadExec {
             executor: self.keypair.pubkey(),
             thread: *thread_pubkey,
@@ -190,12 +180,12 @@ impl ExecutorLogic {
             config: config_pubkey,
             thread_authority: thread.authority,
             admin: config.admin,
-            nonce_account: if thread.has_nonce_account() {
+            nonce_account: if has_nonce {
                 Some(thread.nonce_account)
             } else {
                 None
             },
-            recent_blockhashes: if thread.has_nonce_account() {
+            recent_blockhashes: if has_nonce {
                 Some(sysvar::recent_blockhashes::ID)
             } else {
                 None
@@ -241,11 +231,13 @@ impl ExecutorLogic {
         .data();
 
         // Create the instruction
-        Ok(Instruction {
+        let instruction = Instruction {
             program_id: antegen_thread_program::ID,
             accounts,
             data,
-        })
+        };
+        
+        Ok(instruction)
     }
 
     /// Get executor pubkey
