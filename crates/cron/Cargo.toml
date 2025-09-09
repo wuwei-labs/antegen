@@ -18,4 +18,3 @@ name = "solana_cron"
 [dependencies]
 chrono = { workspace = true }
 nom = { workspace = true }
-once_cell = { workspace = true }

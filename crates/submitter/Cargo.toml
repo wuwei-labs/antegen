@@ -19,9 +19,7 @@ solana-quic-client = { workspace = true }
 solana-rpc-client-nonce-utils = { workspace = true }
 solana-account-decoder = { workspace = true }
 
-# Anchor for account deserialization
-anchor-lang = { workspace = true }
-antegen-thread-program = { workspace = true }
+# Removed unused anchor dependencies
 antegen-sdk = { workspace = true }
 
 # Internal dependencies (none - to avoid circular deps)
@@ -39,13 +37,10 @@ serde_json = { workspace = true }
 base64 = { workspace = true }
 futures = { workspace = true }
 
-# Caching
-moka = { workspace = true }
+# Removed unused moka caching
 
 # NATS for replay functionality
 async-nats = { workspace = true }
 
 # Metrics
 opentelemetry = { workspace = true }
-opentelemetry-prometheus = { workspace = true }
-prometheus = { workspace = true }

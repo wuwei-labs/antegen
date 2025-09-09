@@ -23,39 +23,24 @@ antegen-sdk = { workspace = true }
 # antegen-test-program = { workspace = true }
 
 anchor-lang = { workspace = true }
-anchor-spl = { workspace = true }
 anyhow = { workspace = true }
 bincode = { workspace = true }
-bs58 = { workspace = true }
-bzip2 = { workspace = true }
 clap = { workspace = true }
 chrono = { workspace = true }
-dialoguer = "0.11"
+dialoguer = { workspace = true }
 dirs-next = { workspace = true }
-indicatif = { workspace = true }
-reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml = { workspace = true }
-solana-account-decoder = { workspace = true }
 solana-client = { workspace = true }
-solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-program = { workspace = true }
 solana-sdk = { workspace = true }
-spl-associated-token-account = { workspace = true }
-spl-memo = { workspace = true }
-spl-token = { workspace = true }
-tar = { workspace = true }
 thiserror = { workspace = true }
 termcolor = { workspace = true }
-terminal-link = { workspace = true }
-toml = { workspace = true }
 once_cell = { workspace = true }
 rand = { workspace = true }
-pmdaemon = "0.1.4"
-async-trait = "0.1"
-tokio = { version = "1", features = ["full"] }
+pmdaemon = "=0.1.4"
+tokio = { workspace = true, features = ["full"] }
 
 [[bin]]
 name = "antegen"
@@ -63,4 +48,4 @@ path = "src/main.rs"
 
 [build-dependencies]
 cargo_metadata = "=0.19.1"
-cargo_toml = "0.15.0"
+cargo_toml = "=0.15.3"

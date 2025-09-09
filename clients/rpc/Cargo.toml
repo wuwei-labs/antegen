@@ -8,13 +8,11 @@ name = "antegen-rpc"
 path = "src/main.rs"
 
 [dependencies]
-# URL parsing for connection waiter
-url = "2.5"
+# Removed unused dependencies
 
 # Antegen crates
 antegen-client = { path = "../../crates/client" }
 antegen-processor = { path = "../../crates/processor" }
-antegen-thread-program = { path = "../../programs/thread" }
 antegen-submitter = { path = "../../crates/submitter" }
 
 # Workspace dependencies
@@ -26,17 +24,5 @@ anyhow = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 solana-sdk = { workspace = true }
-solana-program = { workspace = true }
-solana-client = { workspace = true }
-solana-pubsub-client = { workspace = true }
-solana-account = { workspace = true }
-solana-account-decoder = { workspace = true }
-crossbeam = { workspace = true }
-anchor-lang = { workspace = true }
 
-# Additional specific dependencies
-async-trait = { workspace = true }
-base64 = { workspace = true }
-bs58 = { workspace = true }
-futures = { workspace = true }
-serde_json = { workspace = true }
+# Additional specific dependencies - removed unused ones

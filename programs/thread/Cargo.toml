@@ -21,7 +21,7 @@ crate-type = ["cdylib", "lib"]
 default = []
 anchor-debug = []
 cpi = ["no-entrypoint"]
-idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+idl-build = ["anchor-lang/idl-build"]
 no-entrypoint = []
 no-log-ix-name = []
 no-idl = []
@@ -31,8 +31,5 @@ init-if-needed = ["anchor-lang/init-if-needed"]
 solana-cron = { workspace = true }
 
 anchor-lang = { workspace = true }
-anchor-spl = { workspace = true }
 
 chrono = { workspace = true }
-static-pubkey = { workspace = true }
-version = { workspace = true }

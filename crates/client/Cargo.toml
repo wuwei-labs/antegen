@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-crossbeam = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true }
 opentelemetry = { workspace = true }
@@ -19,13 +18,11 @@ url = { workspace = true }
 
 # Internal dependencies
 antegen-processor = { path = "../processor" }
-antegen-sdk = { path = "../sdk" }
 antegen-submitter = { path = "../submitter" }
 
 # Optional Carbon dependencies
 carbon-core = { version = "0.9.1", optional = true }
 carbon-rpc-program-subscribe-datasource = { version = "0.9.1", optional = true }
-carbon-helius-atlas-ws-datasource = { version = "0.9.1", optional = true }
 carbon-yellowstone-grpc-datasource = { version = "0.9.1", optional = true }
 carbon-log-metrics = { version = "0.9.1", optional = true }
 yellowstone-grpc-proto = { version = "6.0.0", optional = true }
@@ -35,7 +32,6 @@ default = []
 carbon = [
     "carbon-core",
     "carbon-rpc-program-subscribe-datasource",
-    "carbon-helius-atlas-ws-datasource",
     "carbon-yellowstone-grpc-datasource",
     "carbon-log-metrics",
     "yellowstone-grpc-proto",

@@ -8,20 +8,11 @@ name = "antegen-carbon"
 path = "src/main.rs"
 
 [dependencies]
-# Carbon framework datasources
-carbon-core = "0.9.1"
-carbon-rpc-program-subscribe-datasource = "0.9.1"
-carbon-helius-atlas-ws-datasource = "0.9.1"
-carbon-yellowstone-grpc-datasource = "0.9.1"
-carbon-log-metrics = "0.9.1"
-
-# URL parsing for connection waiter
-url = "2.5"
+# Carbon framework datasources - removed unused ones
 
 # Antegen crates
 antegen-client = { path = "../../crates/client", features = ["carbon"] }
 antegen-processor = { path = "../../crates/processor" }
-antegen-thread-program = { path = "../../programs/thread" }
 antegen-submitter = { path = "../../crates/submitter" }
 
 # Workspace dependencies
@@ -33,20 +24,5 @@ anyhow = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
 solana-sdk = { workspace = true }
-solana-program = { workspace = true }
-solana-client = { workspace = true }
-solana-pubsub-client = { workspace = true }
-solana-account = { workspace = true }
-solana-account-decoder = { workspace = true }
-crossbeam = { workspace = true }
-anchor-lang = { workspace = true }
 
-# Additional specific dependencies
-async-trait = { workspace = true }
-base64 = { workspace = true }
-bs58 = { workspace = true }
-futures = { workspace = true }
-serde_json = { workspace = true }
-
-# Required by Carbon datasources (yellowstone types)
-yellowstone-grpc-proto = "6.0.0"
+# Additional specific dependencies - removed unused ones

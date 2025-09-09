@@ -23,11 +23,8 @@ solana-sdk = { workspace = true }
 solana-client = { workspace = true }
 
 anyhow = { workspace = true }
-chrono = { workspace = true }
 log = { workspace = true }
 moka = { workspace = true }
-nom = { workspace = true }
-once_cell = { workspace = true }
 opentelemetry = { workspace = true, optional = true }
 serde = { workspace = true }
 tokio = { workspace = true }
