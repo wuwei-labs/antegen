@@ -97,7 +97,7 @@ impl TransactionSubmitter {
                 self.submission_mode,
                 SubmissionMode::Tpu | SubmissionMode::TpuWithFallback | SubmissionMode::Both
             ) {
-                info!("Creating TPU client with config: {:?}", config);
+                debug!("Creating TPU client with config: {:?}", config);
 
                 let tpu_client = TpuClient::new(
                     "antegen-submitter",
@@ -111,7 +111,7 @@ impl TransactionSubmitter {
                 .context("Failed to create TPU client")?;
 
                 *self.tpu_client.write().await = Some(Arc::new(tpu_client));
-                info!("TPU client initialized successfully");
+                debug!("TPU client initialized successfully");
             }
         }
         Ok(())
@@ -134,7 +134,7 @@ impl TransactionSubmitter {
         let mut attempt_count = 0;
         let mut last_signature: Option<Signature> = None;
 
-        info!(
+        debug!(
             "Starting honeybadger submission for transaction with {} instructions",
             instructions.len()
         );
@@ -217,8 +217,8 @@ impl TransactionSubmitter {
 
                     match self.submit_transaction(&versioned_tx).await {
                         Ok(sig) => {
-                            info!(
-                                "Transaction {} submitted (attempt {}), continuing honeybadger retry",
+                            debug!(
+                                "Transaction {} submitted (attempt {})",
                                 sig, attempt_count
                             );
                             last_signature = Some(sig);

@@ -13,15 +13,19 @@ pub enum CliCommand {
         validator: Option<String>,
         clients: Vec<String>,
         release: bool,
+        verbose: bool,
     },
     LocalnetStartRpc {
         release: bool,
+        verbose: bool,
     },
     LocalnetStartCarbon {
         release: bool,
+        verbose: bool,
     },
     LocalnetStartGeyser {
         release: bool,
+        verbose: bool,
     },
     LocalnetStop,
     LocalnetStatus,
@@ -143,6 +147,13 @@ pub fn app() -> Command {
                                 .action(ArgAction::SetTrue)
                                 .help("Use release binaries from ~/.config/antegen instead of dev builds")
                         )
+                        .arg(
+                            Arg::new("verbose")
+                                .long("verbose")
+                                .short('V')
+                                .action(ArgAction::SetTrue)
+                                .help("Enable verbose/debug logging for all services")
+                        )
                 )
                 .subcommand(
                     Command::new("start:rpc")
@@ -152,6 +163,13 @@ pub fn app() -> Command {
                                 .long("release")
                                 .action(ArgAction::SetTrue)
                                 .help("Use release binaries from ~/.config/antegen instead of dev builds")
+                        )
+                        .arg(
+                            Arg::new("verbose")
+                                .long("verbose")
+                                .short('V')
+                                .action(ArgAction::SetTrue)
+                                .help("Enable verbose/debug logging for all services")
                         )
                 )
                 .subcommand(
@@ -163,6 +181,13 @@ pub fn app() -> Command {
                                 .action(ArgAction::SetTrue)
                                 .help("Use release binaries from ~/.config/antegen instead of dev builds")
                         )
+                        .arg(
+                            Arg::new("verbose")
+                                .long("verbose")
+                                .short('V')
+                                .action(ArgAction::SetTrue)
+                                .help("Enable verbose/debug logging for all services")
+                        )
                 )
                 .subcommand(
                     Command::new("start:geyser")
@@ -172,6 +197,13 @@ pub fn app() -> Command {
                                 .long("release")
                                 .action(ArgAction::SetTrue)
                                 .help("Use release binaries from ~/.config/antegen instead of dev builds")
+                        )
+                        .arg(
+                            Arg::new("verbose")
+                                .long("verbose")
+                                .short('V')
+                                .action(ArgAction::SetTrue)
+                                .help("Enable verbose/debug logging for all services")
                         )
                 )
                 .subcommand(

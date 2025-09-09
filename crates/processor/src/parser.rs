@@ -1,6 +1,6 @@
 use anchor_lang::{AccountDeserialize, Discriminator};
 use antegen_thread_program::state::Thread;
-use log::{debug, error, info};
+use log::{debug, error};
 use solana_sdk::{account::Account, clock::Clock, pubkey::Pubkey, sysvar};
 
 /// Classified account type for processing
@@ -25,7 +25,7 @@ pub fn classify_account(pubkey: &Pubkey, account: &Account) -> AccountType {
         // Parse clock data
         match bincode::deserialize::<Clock>(&account.data) {
             Ok(clock) => {
-                info!("Clock update: slot={}, epoch={}, timestamp={}", 
+                debug!("Clock update: slot={}, epoch={}, timestamp={}", 
                     clock.slot, clock.epoch, clock.unix_timestamp);
                 return AccountType::Clock {
                     unix_timestamp: clock.unix_timestamp,
@@ -49,7 +49,7 @@ pub fn classify_account(pubkey: &Pubkey, account: &Account) -> AccountType {
             // Parse thread data (includes discriminator)
             match Thread::try_deserialize(&mut account.data.as_slice()) {
                 Ok(thread) => {
-                    info!("Thread parsed: {}", pubkey);
+                    debug!("Thread parsed: {}", pubkey);
                     return AccountType::Thread(thread);
                 }
                 Err(e) => {

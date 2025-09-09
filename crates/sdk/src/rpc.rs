@@ -1,7 +1,7 @@
 use anchor_lang::{AccountDeserialize, Discriminator};
 use antegen_thread_program::state::{FiberState, Thread, ThreadConfig};
 use anyhow::Result;
-use log::debug;
+use log::{debug, info};
 use moka::future::Cache;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{account::Account, pubkey::Pubkey};
@@ -77,7 +77,7 @@ impl CachedRpcClient {
             return Ok(account);
         }
 
-        info!("Cache miss for account {}, fetching from RPC", pubkey);
+        debug!("Cache miss for account {}, fetching from RPC", pubkey);
 
         // Cache miss - fetch with retry logic
         let mut attempt = 0;
@@ -89,13 +89,13 @@ impl CachedRpcClient {
         
         loop {
             attempt += 1;
-            info!("RPC get_account attempt {} for {}", attempt, pubkey);
+            debug!("RPC get_account attempt {} for {}", attempt, pubkey);
             
             // Wrap the RPC call in a timeout
             let rpc_future = self.inner.get_account(pubkey);
             match timeout(timeout_duration, rpc_future).await {
                 Ok(Ok(account)) => {
-                    info!("Successfully fetched account {} on attempt {}", pubkey, attempt);
+                    debug!("Successfully fetched account {} on attempt {}", pubkey, attempt);
                     if attempt > 1 {
                         debug!("Waited ~{:.1}s total", start_time.elapsed().as_secs_f32());
                     }
@@ -182,7 +182,6 @@ impl CachedRpcClient {
     /// - Thread's exec_count is greater than cached version
     /// - Thread has fibers when cached version doesn't (fibers were added)
     pub async fn should_process_thread(&self, pubkey: &Pubkey, new_thread: &Thread) -> bool {
-        use log::info;
         
         // Check if we have a cached version
         if let Some(cached_account) = self.account_cache.get(pubkey).await {
@@ -194,7 +193,7 @@ impl CachedRpcClient {
                 
                 let should_process = exec_count_increased || fibers_added;
                 
-                info!("Thread {} update check - cached exec_count: {}, new exec_count: {}, cached fibers: {}, new fibers: {}, should_process: {}",
+                debug!("Thread {} update check - cached exec_count: {}, new exec_count: {}, cached fibers: {}, new fibers: {}, should_process: {}",
                     pubkey, cached_thread.exec_count, new_thread.exec_count, 
                     cached_thread.fibers.len(), new_thread.fibers.len(), should_process);
                 
@@ -202,7 +201,7 @@ impl CachedRpcClient {
             }
         }
         
-        info!("Thread {} not in cache - processing", pubkey);
+        debug!("Thread {} not in cache - processing", pubkey);
         // Not cached or failed to deserialize - process it
         true
     }

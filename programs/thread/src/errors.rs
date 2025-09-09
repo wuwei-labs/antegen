@@ -17,15 +17,15 @@ pub enum AntegenThreadError {
     #[msg("The trigger variant cannot be changed")]
     InvalidTriggerVariant,
 
-    /// TThe provided nonce account is invalid.
-    #[msg("The trigger variant cannot be changed")]
+    /// The provided nonce account is invalid.
+    #[msg("The provided nonce account is invalid")]
     InvalidNonceAccount,
 
     /// Thrown if a exec instruction is invalid because the thread's trigger condition has not been met.
     #[msg("The trigger condition has not been activated")]
     TriggerConditionFailed,
 
-    #[msg("This operation cannot be processes because the thread is currently busy")]
+    #[msg("This operation cannot be processed because the thread is currently busy")]
     ThreadBusy,
 
     /// Thrown if a request is invalid because the thread is currently paused.

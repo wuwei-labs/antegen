@@ -59,8 +59,8 @@ struct Args {
     #[arg(long)]
     yellowstone_token: Option<String>,
 
-    /// Enable debug logging
-    #[arg(long)]
+    /// Enable verbose/debug logging
+    #[arg(long, short = 'v', alias = "verbose")]
     debug: bool,
 
     /// Forgo executor commission

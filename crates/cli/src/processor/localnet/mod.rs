@@ -112,6 +112,7 @@ pub fn start(
     validator: Option<String>,
     clients: Vec<String>,
     release: bool,
+    verbose: bool,
 ) -> Result<(), CliError> {
     // Check Solana version compatibility first
     check_solana_version()?;
@@ -130,7 +131,7 @@ pub fn start(
         println!("✓ PMDaemon initialized");
 
         // Build configuration
-        let mut config_builder = ConfigBuilder::new(is_dev);
+        let mut config_builder = ConfigBuilder::new(is_dev, verbose);
 
         // Add validator
         let validator_type = validator.unwrap_or_else(|| "solana".to_string());
@@ -173,7 +174,7 @@ pub fn start(
 }
 
 /// Start localnet with Geyser plugin enabled
-pub fn start_with_geyser(release: bool) -> Result<(), CliError> {
+pub fn start_with_geyser(release: bool, verbose: bool) -> Result<(), CliError> {
     let is_dev = !release;
 
     RUNTIME.block_on(async {
@@ -228,7 +229,7 @@ pub fn start_with_geyser(release: bool) -> Result<(), CliError> {
         println!("✓ Created Geyser plugin configuration");
 
         // Build configuration with Geyser-enabled validator
-        let mut config_builder = ConfigBuilder::new(is_dev);
+        let mut config_builder = ConfigBuilder::new(is_dev, verbose);
 
         // Add validator with Geyser plugin
         config_builder.add_validator_with_geyser(Some(geyser_config_path));

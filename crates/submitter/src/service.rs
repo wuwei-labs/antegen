@@ -204,7 +204,7 @@ impl SubmissionService {
                 signers,
             )?;
             
-            info!("SUBMITTER: Starting simulation at {}",
+            debug!("Starting simulation at {}",
                 std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
             let (optimized_cu, _logs) = self.simulate_and_optimize_transaction(
                 &initial_tx,
@@ -213,7 +213,7 @@ impl SubmissionService {
                 1_400_000,  // Default max CU
                 None,  // No min context slot
             ).await?;
-            info!("SUBMITTER: Simulation complete, CU: {} at {}",
+            debug!("Simulation complete, CU: {} at {}",
                 optimized_cu, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
             
             // Rebuild with optimized CU

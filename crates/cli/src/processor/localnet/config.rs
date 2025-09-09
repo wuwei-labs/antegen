@@ -9,11 +9,12 @@ pub struct ConfigBuilder {
     apps: Vec<AppConfig>,
     runtime_dir: PathBuf,
     is_dev: bool,
+    verbose: bool,
 }
 
 impl ConfigBuilder {
     /// Create a new configuration builder
-    pub fn new(is_dev: bool) -> Self {
+    pub fn new(is_dev: bool, verbose: bool) -> Self {
         let runtime_dir = dirs_next::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".antegen")
@@ -23,6 +24,7 @@ impl ConfigBuilder {
             apps: Vec::new(),
             runtime_dir,
             is_dev,
+            verbose,
         }
     }
     
@@ -45,7 +47,7 @@ impl ConfigBuilder {
     /// Add an RPC client
     pub fn add_rpc_client(&mut self, name: &str, rpc_url: Option<&str>) -> &mut Self {
         let url = rpc_url.unwrap_or("http://localhost:8899");
-        let config = templates::rpc_service(name, url, &self.runtime_dir, self.is_dev);
+        let config = templates::rpc_service(name, url, &self.runtime_dir, self.is_dev, self.verbose);
         self.apps.push(config);
         self
     }
@@ -53,7 +55,7 @@ impl ConfigBuilder {
     /// Add a carbon client
     pub fn add_carbon_client(&mut self, name: &str, rpc_url: Option<&str>) -> &mut Self {
         let url = rpc_url.unwrap_or("http://localhost:8899");
-        let config = templates::carbon_service(name, url, &self.runtime_dir, self.is_dev);
+        let config = templates::carbon_service(name, url, &self.runtime_dir, self.is_dev, self.verbose);
         self.apps.push(config);
         self
     }

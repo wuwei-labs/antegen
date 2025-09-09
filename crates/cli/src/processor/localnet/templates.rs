@@ -81,10 +81,11 @@ pub fn carbon_service(
     rpc_url: &str,
     runtime_dir: &PathBuf,
     is_dev: bool,
+    verbose: bool,
 ) -> AppConfig {
     let keypair_path = runtime_dir.join("executor-keypair.json");
     
-    let args = vec![
+    let mut args = vec![
         "--datasource".to_string(),
         "rpc".to_string(),
         "--rpc-url".to_string(),
@@ -95,14 +96,20 @@ pub fn carbon_service(
         "AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1".to_string(),
     ];
     
+    if verbose {
+        args.push("--verbose".to_string());
+    }
+    
     // Get carbon binary path
     let script = get_binary_path("antegen-carbon", runtime_dir, is_dev);
     
     let mut env = HashMap::new();
-    env.insert(
-        "RUST_LOG".to_string(),
-        "info,antegen_carbon=debug,antegen_processor=debug".to_string()
-    );
+    let log_level = if verbose {
+        "debug,antegen_carbon=debug,antegen_processor=debug,antegen_submitter=debug"
+    } else {
+        "info,antegen_carbon=info,antegen_processor=info,antegen_submitter=info"
+    };
+    env.insert("RUST_LOG".to_string(), log_level.to_string());
     // Pass the instance name as an environment variable so carbon can use it for logging
     env.insert(
         "ANTEGEN_INSTANCE_NAME".to_string(),
@@ -130,10 +137,11 @@ pub fn rpc_service(
     rpc_url: &str,
     runtime_dir: &PathBuf,
     is_dev: bool,
+    verbose: bool,
 ) -> AppConfig {
     let keypair_path = runtime_dir.join("executor-keypair.json");
     
-    let args = vec![
+    let mut args = vec![
         "--rpc-url".to_string(),
         rpc_url.to_string(),
         "--keypair".to_string(),
@@ -143,14 +151,20 @@ pub fn rpc_service(
         "--forgo-commission".to_string(),
     ];
     
+    if verbose {
+        args.push("--verbose".to_string());
+    }
+    
     // Get RPC binary path
     let script = get_binary_path("antegen-rpc", runtime_dir, is_dev);
     
     let mut env = HashMap::new();
-    env.insert(
-        "RUST_LOG".to_string(),
-        "info,antegen_client=debug,antegen_processor=debug".to_string()
-    );
+    let log_level = if verbose {
+        "debug,antegen_client=debug,antegen_processor=debug,antegen_submitter=debug"
+    } else {
+        "info,antegen_client=info,antegen_processor=info,antegen_submitter=info"
+    };
+    env.insert("RUST_LOG".to_string(), log_level.to_string());
     env.insert(
         "ANTEGEN_INSTANCE_NAME".to_string(),
         name.to_string()
@@ -214,11 +228,11 @@ pub fn get_client_template(
     match client_type {
         "rpc" => {
             let url = rpc_url.unwrap_or_else(|| "http://localhost:8899".to_string());
-            Ok(rpc_service(name, &url, &runtime_dir, is_dev))
+            Ok(rpc_service(name, &url, &runtime_dir, is_dev, false))
         }
         "carbon" => {
             let url = rpc_url.unwrap_or_else(|| "http://localhost:8899".to_string());
-            Ok(carbon_service(name, &url, &runtime_dir, is_dev))
+            Ok(carbon_service(name, &url, &runtime_dir, is_dev, false))
         }
         "geyser" => {
             // Geyser requires special handling as it needs to be loaded as a validator plugin

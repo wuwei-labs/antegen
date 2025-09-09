@@ -41,18 +41,19 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             validator,
             clients,
             release,
-        } => localnet::start(config_path, validator, clients, release),
-        CliCommand::LocalnetStartRpc { release } => {
+            verbose,
+        } => localnet::start(config_path, validator, clients, release, verbose),
+        CliCommand::LocalnetStartRpc { release, verbose } => {
             // Start with RPC client
-            localnet::start(None, None, vec!["rpc".to_string()], release)
+            localnet::start(None, None, vec!["rpc".to_string()], release, verbose)
         }
-        CliCommand::LocalnetStartCarbon { release } => {
+        CliCommand::LocalnetStartCarbon { release, verbose } => {
             // Start with Carbon client
-            localnet::start(None, None, vec!["carbon".to_string()], release)
+            localnet::start(None, None, vec!["carbon".to_string()], release, verbose)
         }
-        CliCommand::LocalnetStartGeyser { release } => {
+        CliCommand::LocalnetStartGeyser { release, verbose } => {
             // Start with Geyser plugin enabled
-            localnet::start_with_geyser(release)
+            localnet::start_with_geyser(release, verbose)
         }
         CliCommand::LocalnetStop => localnet::stop(),
         CliCommand::LocalnetStatus => localnet::status(),

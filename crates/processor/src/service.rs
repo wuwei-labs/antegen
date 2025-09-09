@@ -102,7 +102,7 @@ impl ProcessorService {
         
         // Create semaphore for limiting concurrent thread executions
         let task_semaphore = Arc::new(Semaphore::new(config.max_concurrent_threads));
-        info!("PROCESSOR: Initialized with max {} concurrent thread executions", config.max_concurrent_threads);
+        info!("Initialized with max {} concurrent thread executions", config.max_concurrent_threads);
 
         Ok(Self {
             executor_logic,
@@ -119,7 +119,7 @@ impl ProcessorService {
 
     /// Main processing loop (event-driven)
     pub async fn run(mut self) -> Result<()> {
-        info!("PROCESSOR: Starting processor service");
+        info!("Starting processor service");
         
         // Event-driven main loop - now fully async
         loop {
@@ -150,8 +150,8 @@ impl ProcessorService {
                 slot,
                 epoch,
             } => {
-                info!(
-                    "PROCESSOR: Clock update - slot: {}, epoch: {}, time: {}",
+                debug!(
+                    "Clock update - slot: {}, epoch: {}, time: {}",
                     slot, epoch, unix_timestamp
                 );
 
@@ -179,12 +179,16 @@ impl ProcessorService {
                 let _ = self.clock_broadcaster.send(clock);
 
                 // Check for ready threads and execute them
-                info!("PROCESSOR: Checking for ready threads at time {}", unix_timestamp);
+                debug!("Checking for ready threads at time {}", unix_timestamp);
                 let ready_threads = self.thread_queue
                     .get_ready_threads(unix_timestamp, slot, epoch)
                     .await;
                 
-                info!("PROCESSOR: {} threads ready for execution", ready_threads.len());
+                if ready_threads.is_empty() {
+                    debug!("0 threads ready for execution");
+                } else {
+                    debug!("{} threads ready for execution", ready_threads.len());
+                }
                 
                 // Spawn execution tasks for ready threads
                 for thread in ready_threads {
@@ -192,7 +196,7 @@ impl ProcessorService {
                 }
             }
             AccountType::Thread(thread) => {
-                info!("PROCESSOR: Thread update for {} - fibers: {}, exec_count: {}", 
+                info!("Thread update for {} - fibers: {}, exec_count: {}", 
                      account_update.pubkey, thread.fibers.len(), thread.exec_count);
                 
                 // Check if we should process this Thread update based on exec_count
@@ -228,19 +232,19 @@ impl ProcessorService {
                     overdue_seconds,
                 ).await?;
                 
-                info!("PROCESSOR: Load balancer decision for thread {}: {:?}", 
+                debug!("Load balancer decision for thread {}: {:?}", 
                      account_update.pubkey, decision);
                 
                 match decision {
                     ProcessDecision::Process => {
                         // Check if thread has fibers before scheduling
                         if thread.fibers.is_empty() {
-                            info!("PROCESSOR: Thread {} has no fibers, waiting for update with fibers", account_update.pubkey);
+                            debug!("Thread {} has no fibers, waiting for update with fibers", account_update.pubkey);
                             return Ok(());
                         }
                         
                         // Schedule thread for processing
-                        info!("PROCESSOR: Scheduling thread {} for processing (has {} fibers)", 
+                        debug!("Scheduling thread {} for processing (has {} fibers)", 
                              account_update.pubkey, thread.fibers.len());
                         if let Err(e) = self
                             .thread_queue
@@ -249,14 +253,14 @@ impl ProcessorService {
                         {
                             warn!("Failed to schedule thread {}: {}", account_update.pubkey, e);
                         } else {
-                            info!("PROCESSOR: Successfully scheduled thread {}", account_update.pubkey);
+                            debug!("Successfully scheduled thread {}", account_update.pubkey);
                         }
                     }
                     ProcessDecision::Skip => {
-                        info!("PROCESSOR: Load balancer skipping thread {} (owned by another processor)", account_update.pubkey);
+                        debug!("Load balancer skipping thread {} (owned by another processor)", account_update.pubkey);
                     }
                     ProcessDecision::AtCapacity => {
-                        info!("PROCESSOR: Load balancer at capacity, skipping thread {}", account_update.pubkey);
+                        debug!("Load balancer at capacity, skipping thread {}", account_update.pubkey);
                     }
                 }
             }
@@ -281,7 +285,7 @@ impl ProcessorService {
         
         // Check if thread has fibers before spawning task
         if thread.fibers.is_empty() {
-            info!("PROCESSOR: Thread {} has no fibers yet, skipping execution", thread_pubkey);
+            debug!("Thread {} has no fibers yet, skipping execution", thread_pubkey);
             return;
         }
         
@@ -299,18 +303,18 @@ impl ProcessorService {
             let _permit = match semaphore.acquire().await {
                 Ok(permit) => permit,
                 Err(_) => {
-                    error!("PROCESSOR: Failed to acquire semaphore permit for thread {}", thread_pubkey);
+                    error!("Failed to acquire semaphore permit for thread {}", thread_pubkey);
                     queue.task_completed(&thread_pubkey);
                     return;
                 }
             };
             
-            debug!("PROCESSOR: Acquired execution permit for thread {}", thread_pubkey);
-            info!("PROCESSOR: Starting execution task for thread {}", thread_pubkey);
+            debug!("Acquired execution permit for thread {}", thread_pubkey);
+            info!("Starting execution task for thread {}", thread_pubkey);
             
             // Build transaction
             let blockchain_time = executor.current_timestamp().await;
-            info!("PROCESSOR: Building transaction for thread {} at time {}", 
+            debug!("Building transaction for thread {} at time {}", 
                  thread_pubkey, blockchain_time);
             
             let executable = ExecutableThread {
@@ -321,18 +325,18 @@ impl ProcessorService {
             
             match executor.build_execute_transaction(&executable, None, None).await {
                 Ok((instructions, priority_fee)) => {
-                    info!("PROCESSOR: Built {} instructions with priority fee {} for thread {}",
+                    debug!("Built {} instructions with priority fee {} for thread {}",
                           instructions.len(), priority_fee, thread_pubkey);
                     
                     // Submit with honeybadger retry
-                    info!("PROCESSOR: Starting submission for thread {}", thread_pubkey);
+                    debug!("Starting submission for thread {}", thread_pubkey);
                     match submitter.submit(
                         instructions,
                         executor_keypair,
                         Some(priority_fee)
                     ).await {
                         Ok(_) => {
-                            info!("PROCESSOR: Successfully submitted thread {}", thread_pubkey);
+                            info!("Successfully submitted thread {}", thread_pubkey);
                             let _ = load_balancer.record_execution_result(
                                 &thread_pubkey,
                                 true,
@@ -340,7 +344,7 @@ impl ProcessorService {
                             ).await;
                         }
                         Err(e) => {
-                            error!("PROCESSOR: Failed to submit thread {}: {}", thread_pubkey, e);
+                            error!("Failed to submit thread {}: {}", thread_pubkey, e);
                             let _ = load_balancer.record_execution_result(
                                 &thread_pubkey,
                                 false,
@@ -350,14 +354,14 @@ impl ProcessorService {
                     }
                 }
                 Err(e) => {
-                    error!("PROCESSOR: Failed to build transaction for thread {}: {}", 
+                    error!("Failed to build transaction for thread {}: {}", 
                            thread_pubkey, e);
                 }
             }
             
             // Remove from active tasks
             queue.task_completed(&thread_pubkey);
-            info!("PROCESSOR: Completed execution task for thread {}", thread_pubkey);
+            info!("Completed execution task for thread {}", thread_pubkey);
         });
         
         // Track the active task

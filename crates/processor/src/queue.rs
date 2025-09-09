@@ -1,6 +1,6 @@
 use anyhow::Result;
 use dashmap::DashMap;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use solana_program::pubkey::Pubkey;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -78,12 +78,12 @@ impl ThreadQueue {
 
     /// Schedule a thread for execution when its trigger condition is met
     pub async fn schedule_thread(&self, thread_pubkey: Pubkey, thread: Thread) -> Result<()> {
-        info!("QUEUE: Scheduling thread {}", thread_pubkey);
+        debug!("Scheduling thread {}", thread_pubkey);
         
         // Cancel any existing execution for this thread
         if let Some((_, task)) = self.active_tasks.remove(&thread_pubkey) {
             task.abort();
-            info!("QUEUE: Cancelled existing execution for thread {} due to update", thread_pubkey);
+            debug!("Cancelled existing execution for thread {} due to update", thread_pubkey);
         }
 
         // Determine which queue to add to based on trigger type
@@ -97,13 +97,13 @@ impl ThreadQueue {
                     Trigger::Slot { .. } => ("slot", *next),
                     Trigger::Epoch { .. } => ("epoch", *next),
                     _ => {
-                        warn!("QUEUE: Unexpected trigger type for Block context");
+                        warn!("Unexpected trigger type for Block context");
                         return Ok(());
                     }
                 }
             }
             TriggerContext::Account { .. } => {
-                warn!("QUEUE: Account triggers not yet supported for thread {}", thread_pubkey);
+                warn!("Account triggers not yet supported for thread {}", thread_pubkey);
                 return Ok(());
             }
         };
@@ -119,17 +119,17 @@ impl ThreadQueue {
             "timestamp" => {
                 let mut queue = self.time_queue.lock().await;
                 queue.push(Reverse(scheduled));
-                info!("QUEUE: Thread {} scheduled for timestamp {}", thread_pubkey, trigger_value);
+                debug!("Thread {} scheduled for timestamp {}", thread_pubkey, trigger_value);
             }
             "slot" => {
                 let mut queue = self.slot_queue.lock().await;
                 queue.push(Reverse(scheduled));
-                debug!("QUEUE: Thread {} scheduled for slot {}", thread_pubkey, trigger_value);
+                debug!("Thread {} scheduled for slot {}", thread_pubkey, trigger_value);
             }
             "epoch" => {
                 let mut queue = self.epoch_queue.lock().await;
                 queue.push(Reverse(scheduled));
-                debug!("QUEUE: Thread {} scheduled for epoch {}", thread_pubkey, trigger_value);
+                debug!("Thread {} scheduled for epoch {}", thread_pubkey, trigger_value);
             }
             _ => unreachable!(),
         }
@@ -154,7 +154,7 @@ impl ThreadQueue {
             while let Some(Reverse(scheduled)) = queue.peek() {
                 if scheduled.trigger_value <= timestamp_u64 {
                     let Reverse(scheduled) = queue.pop().unwrap();
-                    info!("QUEUE: Thread {} ready at timestamp {}", 
+                    debug!("Thread {} ready at timestamp {}", 
                           scheduled.thread_pubkey, timestamp);
                     ready.push(ExecutableThread {
                         thread_pubkey: scheduled.thread_pubkey,
@@ -173,7 +173,7 @@ impl ThreadQueue {
             while let Some(Reverse(scheduled)) = queue.peek() {
                 if scheduled.trigger_value <= slot {
                     let Reverse(scheduled) = queue.pop().unwrap();
-                    debug!("QUEUE: Thread {} ready at slot {}", 
+                    debug!("Thread {} ready at slot {}", 
                            scheduled.thread_pubkey, slot);
                     ready.push(ExecutableThread {
                         thread_pubkey: scheduled.thread_pubkey,
@@ -192,7 +192,7 @@ impl ThreadQueue {
             while let Some(Reverse(scheduled)) = queue.peek() {
                 if scheduled.trigger_value <= epoch {
                     let Reverse(scheduled) = queue.pop().unwrap();
-                    debug!("QUEUE: Thread {} ready at epoch {}", 
+                    debug!("Thread {} ready at epoch {}", 
                            scheduled.thread_pubkey, epoch);
                     ready.push(ExecutableThread {
                         thread_pubkey: scheduled.thread_pubkey,
