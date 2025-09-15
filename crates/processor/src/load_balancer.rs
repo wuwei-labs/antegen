@@ -19,7 +19,7 @@ impl Default for LoadBalancerConfig {
     fn default() -> Self {
         Self {
             capacity_threshold: 5,  // Enter "at capacity" after 5 consecutive losses
-            takeover_delay_seconds: 30,  // Wait 30 seconds before takeover attempts
+            takeover_delay_seconds: 10,  // Wait 10 seconds before takeover attempts
             enabled: true,  // Load balancing enabled by default
         }
     }
@@ -131,8 +131,8 @@ impl LoadBalancer {
             // Thread is overdue beyond takeover delay - attempt takeover
             Ok(ProcessDecision::Process)
         } else if at_capacity {
-            // We're at capacity - only process critically overdue threads
-            if is_overdue && overdue_seconds > self.config.takeover_delay_seconds * 2 {
+            // We're at capacity - only process critically overdue threads (1.5x takeover delay)
+            if is_overdue && overdue_seconds > (self.config.takeover_delay_seconds * 3) / 2 {
                 Ok(ProcessDecision::Process)
             } else {
                 Ok(ProcessDecision::AtCapacity)

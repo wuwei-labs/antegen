@@ -1,14 +1,15 @@
 use anyhow::Result;
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use log::{debug, warn};
 use solana_program::pubkey::Pubkey;
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use antegen_thread_program::state::{Thread, Trigger, TriggerContext};
+use crate::load_balancer::{LoadBalancer, ProcessDecision};
 use crate::metrics::ProcessorMetrics;
 use crate::types::ExecutableThread;
 
@@ -53,8 +54,12 @@ pub struct ThreadQueue {
     epoch_queue: Arc<Mutex<BinaryHeap<Reverse<ScheduledThread>>>>,
     /// Track currently executing tasks
     active_tasks: Arc<DashMap<Pubkey, JoinHandle<()>>>,
+    /// Track which threads are currently queued
+    queued_threads: Arc<DashSet<Pubkey>>,
     /// Optional metrics collection
     metrics: Option<Arc<ProcessorMetrics>>,
+    /// Load balancer for ownership decisions
+    load_balancer: Option<Arc<LoadBalancer>>,
 }
 
 impl ThreadQueue {
@@ -65,7 +70,9 @@ impl ThreadQueue {
             slot_queue: Arc::new(Mutex::new(BinaryHeap::new())),
             epoch_queue: Arc::new(Mutex::new(BinaryHeap::new())),
             active_tasks: Arc::new(DashMap::new()),
+            queued_threads: Arc::new(DashSet::new()),
             metrics: None,
+            load_balancer: None,
         }
     }
 
@@ -75,16 +82,25 @@ impl ThreadQueue {
         queue.metrics = Some(metrics);
         queue
     }
+    
+    /// Set the load balancer
+    pub fn set_load_balancer(&mut self, load_balancer: Arc<LoadBalancer>) {
+        self.load_balancer = Some(load_balancer);
+    }
 
     /// Schedule a thread for execution when its trigger condition is met
     pub async fn schedule_thread(&self, thread_pubkey: Pubkey, thread: Thread) -> Result<()> {
-        debug!("Scheduling thread {}", thread_pubkey);
+        debug!("Scheduling thread {} with exec_count {}", thread_pubkey, thread.exec_count);
         
         // Cancel any existing execution for this thread
         if let Some((_, task)) = self.active_tasks.remove(&thread_pubkey) {
             task.abort();
             debug!("Cancelled existing execution for thread {} due to update", thread_pubkey);
         }
+
+        // Mark thread as queued (or update if already present)
+        // We allow duplicates in the heap - they'll be filtered during processing
+        self.queued_threads.insert(thread_pubkey);
 
         // Determine which queue to add to based on trigger type
         let (queue_type, trigger_value) = match &thread.trigger_context {
@@ -98,12 +114,14 @@ impl ThreadQueue {
                     Trigger::Epoch { .. } => ("epoch", *next),
                     _ => {
                         warn!("Unexpected trigger type for Block context");
+                        self.queued_threads.remove(&thread_pubkey);
                         return Ok(());
                     }
                 }
             }
             TriggerContext::Account { .. } => {
                 warn!("Account triggers not yet supported for thread {}", thread_pubkey);
+                self.queued_threads.remove(&thread_pubkey);
                 return Ok(());
             }
         };
@@ -151,22 +169,85 @@ impl ThreadQueue {
         // Check timestamp-triggered threads
         {
             let mut queue = self.time_queue.lock().await;
+            let mut to_requeue = Vec::new();
+            let mut latest_exec_count: HashMap<Pubkey, u64> = HashMap::new();
+            
+            // Pop all ready threads
             while let Some(Reverse(scheduled)) = queue.peek() {
                 if scheduled.trigger_value <= timestamp_u64 {
                     let Reverse(scheduled) = queue.pop().unwrap();
-                    debug!("Thread {} ready at timestamp {}", 
-                          scheduled.thread_pubkey, timestamp);
-                    ready.push(ExecutableThread {
-                        thread_pubkey: scheduled.thread_pubkey,
-                        thread: scheduled.thread,
-                        slot,
-                    });
+                    
+                    // Check if this is a stale version
+                    if let Some(&latest) = latest_exec_count.get(&scheduled.thread_pubkey) {
+                        if scheduled.thread.exec_count < latest {
+                            debug!("Skipping stale thread {} with exec_count {} (latest: {})", 
+                                  scheduled.thread_pubkey, scheduled.thread.exec_count, latest);
+                            continue; // Don't process or re-queue stale versions
+                        }
+                    }
+                    latest_exec_count.insert(scheduled.thread_pubkey, scheduled.thread.exec_count);
+                    
+                    // Calculate overdue seconds for timestamp triggers
+                    let overdue_seconds = timestamp - (scheduled.trigger_value as i64);
+                    
+                    // Check with load balancer
+                    let should_process = if let Some(ref load_balancer) = self.load_balancer {
+                        match load_balancer.should_process(
+                            &scheduled.thread_pubkey,
+                            &scheduled.thread.last_executor,
+                            true, // is_overdue
+                            overdue_seconds,
+                        ).await {
+                            Ok(ProcessDecision::Process) => {
+                                debug!("Thread {} ready at timestamp {} (overdue by {}s, will process)", 
+                                      scheduled.thread_pubkey, timestamp, overdue_seconds);
+                                true
+                            }
+                            Ok(ProcessDecision::Skip) | Ok(ProcessDecision::AtCapacity) => {
+                                debug!("Thread {} ready but skipped by load balancer (overdue by {}s)", 
+                                      scheduled.thread_pubkey, overdue_seconds);
+                                false
+                            }
+                            Err(e) => {
+                                warn!("Load balancer error for thread {}: {}", scheduled.thread_pubkey, e);
+                                false
+                            }
+                        }
+                    } else {
+                        // No load balancer, process all ready threads
+                        debug!("Thread {} ready at timestamp {} (no load balancer)", 
+                              scheduled.thread_pubkey, timestamp);
+                        true
+                    };
+                    
+                    if should_process {
+                        // Remove from queued set since we're processing it
+                        self.queued_threads.remove(&scheduled.thread_pubkey);
+                        ready.push(ExecutableThread {
+                            thread_pubkey: scheduled.thread_pubkey,
+                            thread: scheduled.thread,
+                            slot,
+                        });
+                    } else {
+                        // Re-queue for next check (only latest versions)
+                        to_requeue.push(scheduled);
+                    }
                 } else {
+                    // Not ready yet, stop checking
                     break;
                 }
             }
+            
+            // Re-queue threads we're not processing
+            for scheduled in to_requeue {
+                queue.push(Reverse(scheduled));
+            }
         }
 
+        // For slot and epoch triggers, we don't have a good way to calculate overdue seconds
+        // So for now, just process them without load balancing
+        // TODO: Implement proper overdue calculation for slot/epoch triggers
+        
         // Check slot-triggered threads
         {
             let mut queue = self.slot_queue.lock().await;
@@ -175,6 +256,8 @@ impl ThreadQueue {
                     let Reverse(scheduled) = queue.pop().unwrap();
                     debug!("Thread {} ready at slot {}", 
                            scheduled.thread_pubkey, slot);
+                    // Remove from queued set since we're processing it
+                    self.queued_threads.remove(&scheduled.thread_pubkey);
                     ready.push(ExecutableThread {
                         thread_pubkey: scheduled.thread_pubkey,
                         thread: scheduled.thread,
@@ -194,6 +277,8 @@ impl ThreadQueue {
                     let Reverse(scheduled) = queue.pop().unwrap();
                     debug!("Thread {} ready at epoch {}", 
                            scheduled.thread_pubkey, epoch);
+                    // Remove from queued set since we're processing it
+                    self.queued_threads.remove(&scheduled.thread_pubkey);
                     ready.push(ExecutableThread {
                         thread_pubkey: scheduled.thread_pubkey,
                         thread: scheduled.thread,
@@ -276,7 +361,9 @@ impl Clone for ThreadQueue {
             slot_queue: self.slot_queue.clone(),
             epoch_queue: self.epoch_queue.clone(),
             active_tasks: self.active_tasks.clone(),
+            queued_threads: self.queued_threads.clone(),
             metrics: self.metrics.clone(),
+            load_balancer: self.load_balancer.clone(),
         }
     }
 }

@@ -12,7 +12,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::Instruction;
 use state::{SerializableInstruction, Trigger};
 
-declare_id!("AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1");
+declare_id!("AgV3xRAdyTe1wW4gTW2oAnzHiAGofsxC7jBVGGkzUQbY");
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub enum ThreadId {
