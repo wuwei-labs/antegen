@@ -47,10 +47,10 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             // Start with RPC client
             localnet::start(None, None, vec!["rpc".to_string()], release, verbose)
         }
-        CliCommand::LocalnetStartCarbon { release, verbose } => {
-            // Start with Carbon client
-            localnet::start(None, None, vec!["carbon".to_string()], release, verbose)
-        }
+        // TODO: Add custom data source start command when implemented
+        // CliCommand::LocalnetStartCustom { release, verbose } => {
+        //     localnet::start(None, None, vec!["custom".to_string()], release, verbose)
+        // }
         CliCommand::LocalnetStartGeyser { release, verbose } => {
             // Start with Geyser plugin enabled
             localnet::start_with_geyser(release, verbose)

@@ -49,11 +49,12 @@ fn parse_bpf_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
             let verbose = matches.get_flag("verbose");
             Ok(CliCommand::LocalnetStartRpc { release, verbose })
         }
-        Some(("start:carbon", matches)) => {
-            let release = matches.get_flag("release");
-            let verbose = matches.get_flag("verbose");
-            Ok(CliCommand::LocalnetStartCarbon { release, verbose })
-        }
+        // TODO: Add custom data source start command when implemented
+        // Some(("start:custom", matches)) => {
+        //     let release = matches.get_flag("release");
+        //     let verbose = matches.get_flag("verbose");
+        //     Ok(CliCommand::LocalnetStartCustom { release, verbose })
+        // }
         Some(("start:geyser", matches)) => {
             let release = matches.get_flag("release");
             let verbose = matches.get_flag("verbose");

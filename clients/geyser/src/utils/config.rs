@@ -20,9 +20,8 @@ pub struct PluginConfig {
     pub rpc_url: Option<String>,
     pub ws_url: Option<String>,
     pub forgo_executor_commission: Option<bool>,
-    pub enable_replay: Option<bool>,
-    pub nats_url: Option<String>,
-    pub replay_delay_ms: Option<u64>,
+    // TODO: Add replay service configuration when implemented
+    // pub replay_config: Option<ReplayServiceConfig>,
     pub metrics: Option<crate::metrics::MetricsConfig>,
 }
 
@@ -37,9 +36,6 @@ impl Default for PluginConfig {
             rpc_url: Some("http://localhost:8899".to_string()),
             ws_url: Some("ws://localhost:8900".to_string()),
             forgo_executor_commission: None,
-            enable_replay: None,
-            nats_url: None,
-            replay_delay_ms: None,
             metrics: None,
         }
     }
@@ -97,23 +93,24 @@ impl PluginConfig {
             );
         }
         
-        // Override enable_replay if env var is set
-        if let Ok(replay) = std::env::var("ANTEGEN_ENABLE_REPLAY") {
-            self.enable_replay = Some(
-                replay.to_lowercase() == "true" || replay == "1"
-            );
-        }
-        
-        // Override NATS URL if env var is set
-        if let Ok(nats_url) = std::env::var("ANTEGEN_NATS_URL") {
-            self.nats_url = Some(nats_url);
-        }
-        
-        // Override replay delay if env var is set
-        if let Ok(delay) = std::env::var("ANTEGEN_REPLAY_DELAY_MS") {
-            if let Ok(delay_ms) = delay.parse::<u64>() {
-                self.replay_delay_ms = Some(delay_ms);
-            }
-        }
+        // TODO: Add replay configuration overrides when message queue is implemented
+        // // Override enable_replay if env var is set
+        // if let Ok(replay) = std::env::var("ANTEGEN_ENABLE_REPLAY") {
+        //     self.enable_replay = Some(
+        //         replay.to_lowercase() == "true" || replay == "1"
+        //     );
+        // }
+        //
+        // // Override message queue URL if env var is set
+        // if let Ok(queue_url) = std::env::var("ANTEGEN_QUEUE_URL") {
+        //     self.queue_url = Some(queue_url);
+        // }
+        //
+        // // Override replay delay if env var is set
+        // if let Ok(delay) = std::env::var("ANTEGEN_REPLAY_DELAY_MS") {
+        //     if let Ok(delay_ms) = delay.parse::<u64>() {
+        //         self.replay_delay_ms = Some(delay_ms);
+        //     }
+        // }
     }
 }

@@ -19,10 +19,11 @@ pub enum CliCommand {
         release: bool,
         verbose: bool,
     },
-    LocalnetStartCarbon {
-        release: bool,
-        verbose: bool,
-    },
+    // TODO: Add command for custom data source when implemented
+    // LocalnetStartCustom {
+    //     release: bool,
+    //     verbose: bool,
+    // },
     LocalnetStartGeyser {
         release: bool,
         verbose: bool,
@@ -141,7 +142,7 @@ pub fn app() -> Command {
                                 .value_name("TYPE")
                                 .num_args(1)
                                 .action(ArgAction::Append)
-                                .help("Add a client to run (can be specified multiple times). Options: geyser, carbon")
+                                .help("Add a client to run (can be specified multiple times). Options: geyser, rpc")
                         )
                         .arg(
                             Arg::new("release")
@@ -174,23 +175,24 @@ pub fn app() -> Command {
                                 .help("Enable verbose/debug logging for all services")
                         )
                 )
-                .subcommand(
-                    Command::new("start:carbon")
-                        .about("Start localnet with Carbon client")
-                        .arg(
-                            Arg::new("release")
-                                .long("release")
-                                .action(ArgAction::SetTrue)
-                                .help("Use release binaries from ~/.config/antegen instead of dev builds")
-                        )
-                        .arg(
-                            Arg::new("verbose")
-                                .long("verbose")
-                                .short('V')
-                                .action(ArgAction::SetTrue)
-                                .help("Enable verbose/debug logging for all services")
-                        )
-                )
+                // TODO: Add subcommand for custom data source when implemented
+                // .subcommand(
+                //     Command::new("start:custom")
+                //         .about("Start localnet with custom data source")
+                //         .arg(
+                //             Arg::new("release")
+                //                 .long("release")
+                //                 .action(ArgAction::SetTrue)
+                //                 .help("Use release binaries from ~/.config/antegen instead of dev builds")
+                //         )
+                //         .arg(
+                //             Arg::new("verbose")
+                //                 .long("verbose")
+                //                 .short('V')
+                //                 .action(ArgAction::SetTrue)
+                //                 .help("Enable verbose/debug logging for all services")
+                //         )
+                // )
                 .subcommand(
                     Command::new("start:geyser")
                         .about("Start localnet with Geyser plugin enabled")
@@ -230,7 +232,7 @@ pub fn app() -> Command {
                                         .value_name("TYPE")
                                         .num_args(1)
                                         .required(true)
-                                        .help("Client type (rpc, carbon)")
+                                        .help("Client type (rpc, geyser)")
                                 )
                                 .arg(
                                     Arg::new("name")

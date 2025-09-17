@@ -1,12 +1,10 @@
 pub mod builder;
 pub mod metrics;
-pub mod replay;
 pub mod service;
 pub mod submitter;
 
 // Re-export main public APIs
 pub use metrics::SubmitterMetrics;
-pub use replay::ReplayConsumer;
 pub use service::{SubmissionService, SubmissionConfig};
 pub use submitter::TransactionSubmitter;
 
@@ -49,29 +47,20 @@ impl Default for TpuConfig {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ReplayConfig {
-    pub enable_replay: bool,
-    pub nats_url: Option<String>,
-    pub stream_name: String,
-    pub consumer_name: String,
-    pub batch_size: usize,
-    pub replay_delay_ms: u64,
-    pub replay_max_age_ms: u64,
-    pub replay_max_attempts: u32,
-}
-
-impl Default for ReplayConfig {
-    fn default() -> Self {
-        Self {
-            enable_replay: false,
-            nats_url: None,
-            stream_name: "antegen-replay".to_string(),
-            consumer_name: "replay-consumer".to_string(),
-            batch_size: 10,
-            replay_delay_ms: 30_000,
-            replay_max_age_ms: 3600_000,
-            replay_max_attempts: 3,
-        }
-    }
-}
+// TODO: Implement replay service for durable transaction replay
+//
+// The replay service should:
+// - Queue failed transactions for retry
+// - Support configurable retry delays
+// - Handle nonce account refresh for durable transactions
+// - Integrate with external message queue (e.g., NATS, Kafka, Redis)
+//
+// Example configuration:
+// ```
+// pub struct ReplayConfig {
+//     pub enable_replay: bool,
+//     pub queue_url: Option<String>,
+//     pub retry_delay_ms: u64,
+//     pub max_attempts: u32,
+// }
+// ```

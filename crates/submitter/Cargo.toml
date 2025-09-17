@@ -39,8 +39,8 @@ futures = { workspace = true }
 
 # Removed unused moka caching
 
-# NATS for replay functionality
-async-nats = { workspace = true }
+# TODO: Add message queue client for replay functionality
+# Options: NATS, Kafka, Redis, etc.
 
 # Metrics
 opentelemetry = { workspace = true }

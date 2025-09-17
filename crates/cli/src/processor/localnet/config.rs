@@ -52,13 +52,13 @@ impl ConfigBuilder {
         self
     }
     
-    /// Add a carbon client
-    pub fn add_carbon_client(&mut self, name: &str, rpc_url: Option<&str>) -> &mut Self {
-        let url = rpc_url.unwrap_or("http://localhost:8899");
-        let config = templates::carbon_service(name, url, &self.runtime_dir, self.is_dev, self.verbose);
-        self.apps.push(config);
-        self
-    }
+    // TODO: Add custom data source client when implemented
+    // pub fn add_custom_client(&mut self, name: &str, rpc_url: Option<&str>) -> &mut Self {
+    //     let url = rpc_url.unwrap_or("http://localhost:8899");
+    //     let config = templates::custom_service(name, url, &self.runtime_dir, self.is_dev, self.verbose);
+    //     self.apps.push(config);
+    //     self
+    // }
     
     /// Add a generic client based on type
     pub fn add_client(&mut self, client_type: String, name: Option<String>) -> &mut Self {
@@ -67,10 +67,11 @@ impl ConfigBuilder {
                 let client_name = name.unwrap_or_else(|| format!("rpc-{}", chrono::Utc::now().timestamp()));
                 self.add_rpc_client(&client_name, None)
             }
-            "carbon" => {
-                let client_name = name.unwrap_or_else(|| format!("carbon-{}", chrono::Utc::now().timestamp()));
-                self.add_carbon_client(&client_name, None)
-            }
+            // TODO: Add custom data source when implemented
+            // "custom" => {
+            //     let client_name = name.unwrap_or_else(|| format!("custom-{}", chrono::Utc::now().timestamp()));
+            //     self.add_custom_client(&client_name, None)
+            // }
             _ => {
                 // For unknown types, skip silently for now
                 self

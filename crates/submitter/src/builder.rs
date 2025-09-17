@@ -2,9 +2,7 @@ use anyhow::Result;
 use crossbeam::channel::Receiver;
 use std::sync::Arc;
 
-use crate::{
-    ReplayConfig, SubmissionConfig, SubmissionMode, SubmissionService, SubmitterMetrics, TpuConfig,
-};
+use crate::{SubmissionConfig, SubmissionMode, SubmissionService, SubmitterMetrics, TpuConfig};
 use antegen_sdk::ProcessorMessage;
 
 /// Builder for SubmissionService
@@ -12,7 +10,8 @@ pub struct SubmitterBuilder {
     rpc_url: String,
     submission_mode: SubmissionMode,
     tpu_config: Option<TpuConfig>,
-    replay_config: ReplayConfig,
+    // TODO: Add replay configuration when message queue integration is implemented
+    // replay_config: ReplayConfig,
     metrics: Option<Arc<SubmitterMetrics>>,
     transaction_receiver: Option<Receiver<ProcessorMessage>>,
     executor_keypair: Option<Arc<solana_sdk::signature::Keypair>>,
@@ -24,7 +23,7 @@ impl Default for SubmitterBuilder {
             rpc_url: "http://localhost:8899".to_string(),
             submission_mode: SubmissionMode::default(),
             tpu_config: Some(TpuConfig::default()),
-            replay_config: ReplayConfig::default(),
+            // replay_config: ReplayConfig::default(),
             metrics: None,
             transaction_receiver: None,
             executor_keypair: None,
@@ -38,16 +37,12 @@ impl SubmitterBuilder {
         Self::default()
     }
 
-    /// Create a replay-only submitter
-    pub fn replay_only(nats_url: impl Into<String>) -> Self {
-        let mut replay_config = ReplayConfig::default();
-        replay_config.enable_replay = true;
-        replay_config.nats_url = Some(nats_url.into());
-
-        Self::default()
-            .submission_mode(SubmissionMode::Rpc)
-            .replay_config(replay_config)
-    }
+    // TODO: Implement replay-only submitter when message queue is added
+    // /// Create a replay-only submitter
+    // pub fn replay_only(queue_url: impl Into<String>) -> Self {
+    //     Self::default()
+    //         .submission_mode(SubmissionMode::Rpc)
+    // }
 
     /// Set RPC URL
     pub fn rpc_url(mut self, url: impl Into<String>) -> Self {
@@ -81,26 +76,27 @@ impl SubmitterBuilder {
         self
     }
 
-    /// Set replay configuration
-    pub fn replay(mut self, config: ReplayConfig) -> Self {
-        self.replay_config = config;
-        self
-    }
+    // TODO: Add replay configuration methods when message queue is implemented
+    // /// Set replay configuration
+    // pub fn replay(mut self, config: ReplayConfig) -> Self {
+    //     self.replay_config = config;
+    //     self
+    // }
+    //
+    // /// Enable replay with optional queue URL
+    // pub fn replay_if(mut self, enable: bool, queue_url: Option<String>) -> Self {
+    //     if enable {
+    //         self.replay_config.enable_replay = true;
+    //         self.replay_config.queue_url = queue_url;
+    //     }
+    //     self
+    // }
 
-    /// Enable replay with optional NATS URL
-    pub fn replay_if(mut self, enable: bool, nats_url: Option<String>) -> Self {
-        if enable {
-            self.replay_config.enable_replay = true;
-            self.replay_config.nats_url = nats_url;
-        }
-        self
-    }
-
-    /// Set replay configuration from existing config
-    pub fn replay_config(mut self, config: ReplayConfig) -> Self {
-        self.replay_config = config;
-        self
-    }
+    // TODO: Add replay configuration from existing config when implemented
+    // pub fn replay_config(mut self, config: ReplayConfig) -> Self {
+    //     self.replay_config = config;
+    //     self
+    // }
 
     /// Set metrics
     pub fn metrics(mut self, meter: opentelemetry::metrics::Meter) -> Self {
@@ -125,7 +121,7 @@ impl SubmitterBuilder {
             rpc_url: "http://localhost:8899".to_string(), // Will be overridden
             submission_mode: SubmissionMode::default(),
             tpu_config: config.tpu_config,
-            replay_config: config.replay_config,
+            // replay_config: config.replay_config,
             metrics: None,
             transaction_receiver: None,
             executor_keypair: None,
@@ -137,7 +133,8 @@ impl SubmitterBuilder {
         // Create submission configuration
         let config = SubmissionConfig {
             tpu_config: self.tpu_config,
-            replay_config: self.replay_config,
+            // TODO: Add replay config when implemented
+            // replay_config: self.replay_config,
         };
 
         // Store metrics before moving to service

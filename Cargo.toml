@@ -53,7 +53,6 @@ actix-cors = { version = "=0.6.4" }
 actix-web = { version = "=4.3.1" }
 agave-geyser-plugin-interface = { version = "=2.2.20" }
 anyhow = { version = "=1.0.99" }
-async-nats = { version = "=0.40.0" }
 async_once = { version = "=0.2.6" }
 async-trait = { version = "=0.1.89" }
 base64 = { version = "=0.22.1" }

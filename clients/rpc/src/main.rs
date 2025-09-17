@@ -119,7 +119,8 @@ async fn run_rpc_client(config: Config) -> Result<()> {
             SubmitterBuilder::new()
                 .rpc_url(config.rpc_url.clone())
                 .executor_keypair(keypair.clone())
-                .replay_config(build_replay_config(&config))
+                // TODO: Add replay config when implemented
+                // .replay_config(build_replay_config(&config))
                 .tpu_enabled(),
         )
         .build()
@@ -137,13 +138,14 @@ async fn run_rpc_client(config: Config) -> Result<()> {
     Ok(())
 }
 
-fn build_replay_config(config: &Config) -> antegen_submitter::ReplayConfig {
-    let mut replay_config = antegen_submitter::ReplayConfig::default();
-
-    if config.replay.enabled {
-        replay_config.enable_replay = true;
-        replay_config.nats_url = Some(config.replay.nats_url.clone());
-    }
-
-    replay_config
-}
+// TODO: Implement replay configuration when message queue is added
+// fn build_replay_config(config: &Config) -> ReplayConfig {
+//     let mut replay_config = ReplayConfig::default();
+//
+//     if config.replay.enabled {
+//         replay_config.enable_replay = true;
+//         replay_config.queue_url = Some(config.replay.queue_url.clone());
+//     }
+//
+//     replay_config
+// }

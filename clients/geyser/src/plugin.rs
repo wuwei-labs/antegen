@@ -6,9 +6,9 @@ use {
     },
     antegen_client::{AntegenClientBuilder, GeyserDatasource},
     antegen_processor::{builder::ProcessorBuilder, types::AccountUpdate},
-    antegen_submitter::builder::SubmitterBuilder,
+    // antegen_submitter::builder::SubmitterBuilder, // TODO: Add when replay service is implemented
     log::{debug, error, info},
-    solana_sdk::signature::read_keypair_file,
+    // solana_sdk::signature::read_keypair_file, // TODO: Add when submitter with replay is implemented
     std::{fmt::Debug, sync::Arc},
     tokio::{
         runtime::{Builder, Runtime},
@@ -138,10 +138,10 @@ impl GeyserPlugin for AntegenPlugin {
             format!("{}/.config/solana/id.json", std::env::var("HOME").unwrap())
         });
         let forgo_executor_commission = config.forgo_executor_commission.unwrap_or(false);
-        let enable_replay = config.enable_replay.unwrap_or(false);
-        let nats_url = config.nats_url.clone();
+        // TODO: Add replay service configuration when implemented
+        // let replay_config = config.replay_config.clone();
 
-        info!("Configuration: RPC={}, keypair={}, replay={}", rpc_url, keypair_path, enable_replay);
+        info!("Configuration: RPC={}, keypair={}", rpc_url, keypair_path);
 
         // Create Geyser datasource with channel
         let mut geyser_datasource = GeyserDatasource::new();
@@ -159,23 +159,18 @@ impl GeyserPlugin for AntegenPlugin {
                     .forgo_commission(forgo_executor_commission),
             );
 
-        // Add submitter if replay is enabled
-        if enable_replay {
-            info!("Enabling replay with NATS URL: {:?}", nats_url);
-            let mut replay_config = antegen_submitter::ReplayConfig::default();
-            replay_config.enable_replay = true;
-            replay_config.nats_url = nats_url;
-
-            client_builder = client_builder.submitter(
-                SubmitterBuilder::new()
-                    .rpc_url(rpc_url)
-                    .executor_keypair(Arc::new(read_keypair_file(&keypair_path).map_err(|e| {
-                        GeyserPluginError::Custom(format!("Failed to read keypair: {}", e).into())
-                    })?))
-                    .replay_config(replay_config)
-                    .tpu_enabled(),
-            );
-        }
+        // TODO: Add submitter with replay service when implemented
+        // if let Some(replay_config) = config.replay_config {
+        //     client_builder = client_builder.submitter(
+        //         SubmitterBuilder::new()
+        //             .rpc_url(rpc_url)
+        //             .executor_keypair(Arc::new(read_keypair_file(&keypair_path).map_err(|e| {
+        //                 GeyserPluginError::Custom(format!("Failed to read keypair: {}", e).into())
+        //             })?))
+        //             .replay_service(replay_config)
+        //             .tpu_enabled(),
+        //     );
+        // }
 
         // Build the client
         let client = runtime.block_on(async {

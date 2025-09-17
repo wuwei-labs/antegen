@@ -76,68 +76,18 @@ pub fn validator_service(
     }
 }
 
-/// Create carbon client service configuration
-pub fn carbon_service(
-    name: &str,
-    rpc_url: &str,
-    runtime_dir: &PathBuf,
-    is_dev: bool,
-    verbose: bool,
-) -> AppConfig {
-    // Get or create unique keypair for this service
-    let keypair_path = match get_or_create_service_keypair(name, runtime_dir) {
-        Ok(path) => path,
-        Err(e) => {
-            eprintln!("Warning: Failed to create service keypair: {}. Using default.", e);
-            runtime_dir.join("executor-keypair.json")
-        }
-    };
-    
-    let mut args = vec![
-        "--datasource".to_string(),
-        "rpc".to_string(),
-        "--rpc-url".to_string(),
-        rpc_url.to_string(),
-        "--keypair".to_string(),
-        keypair_path.to_string_lossy().to_string(),
-        "--thread-program-id".to_string(),
-        "AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1".to_string(),
-    ];
-    
-    if verbose {
-        args.push("--verbose".to_string());
-    }
-    
-    // Get carbon binary path
-    let script = get_binary_path("antegen-carbon", runtime_dir, is_dev);
-    
-    let mut env = HashMap::new();
-    let log_level = if verbose {
-        "debug,antegen_carbon=debug,antegen_processor=debug,antegen_submitter=debug"
-    } else {
-        "info,antegen_carbon=info,antegen_processor=info,antegen_submitter=info"
-    };
-    env.insert("RUST_LOG".to_string(), log_level.to_string());
-    // Pass the instance name as an environment variable so carbon can use it for logging
-    env.insert(
-        "ANTEGEN_INSTANCE_NAME".to_string(),
-        name.to_string()
-    );
-    
-    AppConfig {
-        name: name.to_string(),
-        script: script.to_string_lossy().to_string(),
-        args: Some(args),
-        cwd: Some(runtime_dir.to_string_lossy().to_string()),
-        env: Some(env),
-        auto_restart: Some(true),
-        max_restarts: Some(5),
-        restart_delay: Some(3000),
-        depends_on: Some(vec!["antegen-validator".to_string()]),
-        log_file: None,
-        error_file: None,
-    }
-}
+// TODO: Add custom data source service configuration when implemented
+// pub fn custom_service(
+//     name: &str,
+//     rpc_url: &str,
+//     runtime_dir: &PathBuf,
+//     is_dev: bool,
+//     verbose: bool,
+// ) -> AppConfig {
+//     // Implementation for custom data source client would go here
+//     // This would create configuration for a custom datasource like Carbon, Yellowstone, etc.
+//     todo!("Custom data source service not yet implemented")
+// }
 
 /// Create RPC client service configuration
 pub fn rpc_service(
@@ -316,10 +266,11 @@ pub fn get_client_template(
             let url = rpc_url.unwrap_or_else(|| "http://localhost:8899".to_string());
             Ok(rpc_service(name, &url, &runtime_dir, is_dev, verbose))
         }
-        "carbon" => {
-            let url = rpc_url.unwrap_or_else(|| "http://localhost:8899".to_string());
-            Ok(carbon_service(name, &url, &runtime_dir, is_dev, verbose))
-        }
+        // TODO: Add custom data source when implemented
+        // "custom" => {
+        //     let url = rpc_url.unwrap_or_else(|| "http://localhost:8899".to_string());
+        //     Ok(custom_service(name, &url, &runtime_dir, is_dev, verbose))
+        // }
         "geyser" => {
             // Geyser requires special handling as it needs to be loaded as a validator plugin
             // To use Geyser:

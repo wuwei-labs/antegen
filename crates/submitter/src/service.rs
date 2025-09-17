@@ -1,12 +1,13 @@
 use anyhow::{anyhow, Context, Result};
 use log::{debug, info, warn};
+use solana_account_decoder::UiAccountEncoding;
 use solana_client::{
-    nonblocking::rpc_client::RpcClient, nonblocking::tpu_client::TpuClient,
-    tpu_client::TpuClientConfig,
+    nonblocking::rpc_client::RpcClient,
+    nonblocking::tpu_client::TpuClient,
     rpc_config::{RpcSimulateTransactionAccountsConfig, RpcSimulateTransactionConfig},
+    tpu_client::TpuClientConfig,
 };
 use solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool};
-use solana_account_decoder::UiAccountEncoding;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     compute_budget::ComputeBudgetInstruction,
@@ -14,18 +15,20 @@ use solana_sdk::{
     instruction::Instruction,
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
-    signature::Signature,
     signature::Keypair,
+    signature::Signature,
     signer::Signer,
     transaction::{Transaction, VersionedTransaction},
 };
-use std::{cmp, sync::Arc, time::{Duration, Instant}};
-use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
-
-use crate::{
-    ReplayConfig, ReplayConsumer, SubmissionMode, SubmitterMetrics, TpuConfig,
+use std::{
+    cmp,
+    sync::Arc,
+    time::{Duration, Instant},
 };
+use tokio::sync::RwLock;
+// use tokio::task::JoinHandle; // TODO: Add when replay service is implemented
+
+use crate::{SubmissionMode, SubmitterMetrics, TpuConfig};
 use antegen_sdk::{DurableTransactionMessage, ProcessorMessage};
 use solana_sdk::clock::Clock;
 
@@ -34,15 +37,15 @@ use solana_sdk::clock::Clock;
 pub struct SubmissionConfig {
     /// TPU configuration (optional)
     pub tpu_config: Option<TpuConfig>,
-    /// Replay configuration
-    pub replay_config: ReplayConfig,
+    // TODO: Add replay configuration when message queue is implemented
+    // pub replay_config: ReplayConfig,
 }
 
 impl Default for SubmissionConfig {
     fn default() -> Self {
         Self {
             tpu_config: Some(TpuConfig::default()),
-            replay_config: ReplayConfig::default(),
+            // replay_config: ReplayConfig::default(),
         }
     }
 }
@@ -55,10 +58,11 @@ pub struct SubmissionService {
     tpu_client: RwLock<Option<Arc<TpuClient<QuicPool, QuicConnectionManager, QuicConfig>>>>,
     /// Current submission mode
     submission_mode: RwLock<SubmissionMode>,
-    /// NATS client for durable transactions
-    nats_client: Option<async_nats::Client>,
-    /// Replay consumer handle
-    replay_handle: RwLock<Option<JoinHandle<Result<()>>>>,
+    // TODO: Add message queue client when implemented
+    // /// Message queue client for durable transactions
+    // queue_client: Option<MessageQueueClient>,
+    // /// Replay consumer handle
+    // replay_handle: RwLock<Option<JoinHandle<Result<()>>>>,
     /// Metrics collector
     metrics: Arc<SubmitterMetrics>,
     /// Configuration
@@ -81,24 +85,24 @@ impl SubmissionService {
         // Initialize submission mode (will be updated after connection)
         let submission_mode = RwLock::new(SubmissionMode::Rpc);
 
-        // Initialize NATS client if configured
-        let nats_client = if config.replay_config.enable_replay {
-            if let Some(ref nats_url) = config.replay_config.nats_url {
-                // Connect to NATS
-                match async_nats::connect(nats_url).await {
-                    Ok(client) => Some(client),
-                    Err(e) => {
-                        warn!("Failed to connect to NATS: {}, replay disabled", e);
-                        None
-                    }
-                }
-            } else {
-                warn!("Replay enabled but no NATS URL configured");
-                None
-            }
-        } else {
-            None
-        };
+        // TODO: Initialize message queue client when implemented
+        // let queue_client = if config.replay_config.enable_replay {
+        //     if let Some(ref queue_url) = config.replay_config.queue_url {
+        //         // Connect to message queue
+        //         match connect_to_queue(queue_url).await {
+        //             Ok(client) => Some(client),
+        //             Err(e) => {
+        //                 warn!("Failed to connect to message queue: {}, replay disabled", e);
+        //                 None
+        //             }
+        //         }
+        //     } else {
+        //         warn!("Replay enabled but no queue URL configured");
+        //         None
+        //     }
+        // } else {
+        //     None
+        // };
 
         // Create broadcast channel for clock updates
         let (clock_broadcaster, _) = tokio::sync::broadcast::channel(100);
@@ -107,8 +111,8 @@ impl SubmissionService {
             rpc_client,
             tpu_client: RwLock::new(None),
             submission_mode,
-            nats_client,
-            replay_handle: RwLock::new(None),
+            // queue_client,
+            // replay_handle: RwLock::new(None),
             metrics,
             config,
             clock_broadcaster,
@@ -119,7 +123,7 @@ impl SubmissionService {
     pub fn broadcast_clock(&self, clock: Clock) {
         let _ = self.clock_broadcaster.send(clock);
     }
-    
+
     /// Initialize the service (wait for RPC and create TPU client)
     pub async fn initialize(&self) -> Result<()> {
         // Wait for RPC to be available
@@ -152,9 +156,9 @@ impl SubmissionService {
         }
 
         // Start replay consumer if configured
-        if let Some(ref nats_client) = self.nats_client {
-            self.start_replay_consumer(nats_client.clone()).await?;
-        }
+        // if let Some(ref nats_client) = self.nats_client {
+        //     self.start_replay_consumer(nats_client.clone()).await?;
+        // }
 
         Ok(())
     }
@@ -166,7 +170,7 @@ impl SubmissionService {
 
     /// Submit a transaction using configured mode with automatic simulation
     pub async fn submit_with_options(
-        &self, 
+        &self,
         instructions: Vec<Instruction>,
         payer: &Pubkey,
         signers: &[&Keypair],
@@ -176,9 +180,10 @@ impl SubmissionService {
         // Get blockhash
         let blockhash = if let Some(nonce_ix) = instructions.first() {
             // Check if this is a durable transaction with nonce
-            if nonce_ix.program_id == solana_sdk::system_program::ID 
-                && !nonce_ix.data.is_empty() 
-                && nonce_ix.data[0] == 4 {
+            if nonce_ix.program_id == solana_sdk::system_program::ID
+                && !nonce_ix.data.is_empty()
+                && nonce_ix.data[0] == 4
+            {
                 // Extract nonce account from first instruction
                 if let Some(nonce_pubkey) = nonce_ix.accounts.first() {
                     self.get_nonce_blockhash(&nonce_pubkey.pubkey).await?
@@ -204,21 +209,23 @@ impl SubmissionService {
                 )?),
                 signers,
             )?;
-            
-            let (optimized_cu, _logs) = self.simulate_and_optimize_transaction(
-                &initial_tx,
-                thread_pubkey.unwrap(),
-                1.2,  // Default multiplier
-                1_400_000,  // Default max CU
-                None,  // No min context slot
-            ).await?;
-            
+
+            let (optimized_cu, _logs) = self
+                .simulate_and_optimize_transaction(
+                    &initial_tx,
+                    thread_pubkey.unwrap(),
+                    1.2,       // Default multiplier
+                    1_400_000, // Default max CU
+                    None,      // No min context slot
+                )
+                .await?;
+
             // Rebuild with optimized CU
-            let mut final_instructions = vec![
-                ComputeBudgetInstruction::set_compute_unit_limit(optimized_cu),
-            ];
+            let mut final_instructions = vec![ComputeBudgetInstruction::set_compute_unit_limit(
+                optimized_cu,
+            )];
             final_instructions.extend(instructions);
-            
+
             VersionedTransaction::try_new(
                 VersionedMessage::V0(v0::Message::try_compile(
                     payer,
@@ -240,15 +247,15 @@ impl SubmissionService {
                 signers,
             )?
         };
-        
+
         self.submit_transaction(&tx).await
     }
-    
+
     /// Submit a pre-built transaction
     pub async fn submit(&self, tx: &VersionedTransaction) -> Result<Signature> {
         self.submit_transaction(tx).await
     }
-    
+
     /// Internal submit method
     async fn submit_transaction(&self, tx: &VersionedTransaction) -> Result<Signature> {
         let mode = *self.submission_mode.read().await;
@@ -269,7 +276,7 @@ impl SubmissionService {
                 // Try both TPU and RPC in parallel
                 let tpu_future = self.submit_via_tpu(tx);
                 let rpc_future = self.submit_via_rpc(tx);
-                
+
                 // Return whichever succeeds first
                 tokio::select! {
                     tpu_result = tpu_future => tpu_result,
@@ -280,7 +287,10 @@ impl SubmissionService {
     }
 
     /// Submit multiple transactions in batch
-    pub async fn submit_batch(&self, txs: &[VersionedTransaction]) -> Result<Vec<Result<Signature>>> {
+    pub async fn submit_batch(
+        &self,
+        txs: &[VersionedTransaction],
+    ) -> Result<Vec<Result<Signature>>> {
         if txs.is_empty() {
             return Ok(Vec::new());
         }
@@ -305,7 +315,7 @@ impl SubmissionService {
                 // Try both in parallel and return the first to succeed
                 let tpu_future = self.submit_batch_via_tpu(txs);
                 let rpc_future = self.submit_batch_via_rpc(txs);
-                
+
                 tokio::select! {
                     tpu_result = tpu_future => tpu_result,
                     rpc_result = rpc_future => rpc_result,
@@ -314,37 +324,26 @@ impl SubmissionService {
         }
     }
 
-    /// Publish a durable transaction to NATS for replay
-    pub async fn publish_durable_transaction(&self, msg: DurableTransactionMessage) -> Result<()> {
-        if let Some(ref nats_client) = self.nats_client {
-            let payload = serde_json::to_vec(&msg)?;
-            nats_client
-                .publish("antegen.durable_txs", payload.into())
-                .await?;
-            debug!(
-                "Published durable transaction for thread {}",
-                msg.thread_pubkey
-            );
-
-            if let Some(ref metrics) = Some(&self.metrics) {
-                metrics.durable_tx_published();
-            }
-        }
+    // TODO: Implement durable transaction publishing when message queue is added
+    /// Publish a durable transaction for replay
+    pub async fn publish_durable_transaction(&self, _msg: DurableTransactionMessage) -> Result<()> {
+        // Will be implemented when message queue integration is added
+        // This will publish to a durable queue for retry/replay
         Ok(())
     }
 
     /// Get blockhash from nonce account
     pub async fn get_nonce_blockhash(&self, nonce_pubkey: &Pubkey) -> Result<Hash> {
         // Fetch nonce account blockhash
-        
+
         // Always bypass cache for nonce accounts since they can be advanced
         let account = self.rpc_client.get_account(nonce_pubkey).await?;
         debug!("Nonce account data length: {}", account.data.len());
-        
+
         // Use proper nonce utilities to extract data
         let nonce_data = solana_rpc_client_nonce_utils::data_from_account(&account)
             .map_err(|e| anyhow!("Failed to extract nonce data: {}", e))?;
-        
+
         let blockhash = nonce_data.blockhash();
         // Got nonce blockhash
         Ok(blockhash)
@@ -361,52 +360,62 @@ impl SubmissionService {
     ) -> Result<(u32, Vec<String>)> {
         // Start timing simulation
         let sim_start = Instant::now();
-        
+
         self.metrics.rpc_request("_simulate_transaction");
-        let sim_result = match self.rpc_client.simulate_transaction_with_config(
-            tx,
-            RpcSimulateTransactionConfig {
-                sig_verify: false,
-                replace_recent_blockhash: true,
-                commitment: Some(CommitmentConfig::processed()),
-                accounts: Some(RpcSimulateTransactionAccountsConfig {
-                    encoding: Some(UiAccountEncoding::Base64Zstd),
-                    addresses: vec![thread_pubkey.to_string()],
-                }),
-                min_context_slot,
-                ..Default::default()
-            },
-        ).await {
+        let sim_result = match self
+            .rpc_client
+            .simulate_transaction_with_config(
+                tx,
+                RpcSimulateTransactionConfig {
+                    sig_verify: false,
+                    replace_recent_blockhash: true,
+                    commitment: Some(CommitmentConfig::processed()),
+                    accounts: Some(RpcSimulateTransactionAccountsConfig {
+                        encoding: Some(UiAccountEncoding::Base64Zstd),
+                        addresses: vec![thread_pubkey.to_string()],
+                    }),
+                    min_context_slot,
+                    ..Default::default()
+                },
+            )
+            .await
+        {
             Ok(result) => result,
             Err(err) => {
                 // Check for min context slot error
                 let error_str = err.to_string();
-                if error_str.contains("Minimum context slot has not been reached") 
+                if error_str.contains("Minimum context slot has not been reached")
                     || error_str.contains("MinContextSlotNotReached")
-                    || error_str.contains("-32016") {
-                    debug!("RPC not caught up to slot {:?}, will retry", min_context_slot);
+                    || error_str.contains("-32016")
+                {
+                    debug!(
+                        "RPC not caught up to slot {:?}, will retry",
+                        min_context_slot
+                    );
                     return Err(anyhow!("RPC not caught up to slot {:?}", min_context_slot));
                 }
                 return Err(anyhow!("Simulation failed: {}", err));
             }
         };
-        
+
         // Record simulation duration
         let duration = sim_start.elapsed();
-        self.metrics.submission_latency.record(duration.as_millis() as f64, &[]);
-        
+        self.metrics
+            .submission_latency
+            .record(duration.as_millis() as f64, &[]);
+
         // Check for simulation errors
         if let Some(err) = sim_result.value.err {
             let logs = sim_result.value.logs.clone().unwrap_or_default();
             warn!("Simulation failed for thread {}: {:?}", thread_pubkey, err);
-            
+
             // Try to extract more details from the error
             let error_str = format!("{:?}", err);
             if error_str.contains("AccountNotFound") {
                 warn!("AccountNotFound error detected. Transaction may be referencing a non-existent account.");
                 warn!("Check the debug logs above to identify which account is missing.");
             }
-            
+
             // Log the simulation logs for more context
             if !logs.is_empty() {
                 warn!("Simulation logs:");
@@ -414,15 +423,17 @@ impl SubmissionService {
                     warn!("  {}", log);
                 }
             }
-            
+
             return Err(anyhow!("Simulation failed: {:?}, logs: {:?}", err, logs));
         }
-        
+
         // Verify thread account was returned
-        let _thread_account = sim_result.value.accounts
+        let _thread_account = sim_result
+            .value
+            .accounts
             .and_then(|accounts| accounts.get(0).cloned().flatten())
             .ok_or_else(|| anyhow!("No thread account in simulation response"))?;
-        
+
         // Calculate optimized compute units with multiplier
         let optimized_cu = if let Some(units_consumed) = sim_result.value.units_consumed {
             let with_multiplier = (units_consumed as f64 * cu_multiplier) as u32;
@@ -433,10 +444,13 @@ impl SubmissionService {
             );
             final_cu
         } else {
-            warn!("No compute units consumed in simulation, using max: {}", max_compute_units);
+            warn!(
+                "No compute units consumed in simulation, using max: {}",
+                max_compute_units
+            );
             max_compute_units
         };
-        
+
         let logs = sim_result.value.logs.unwrap_or_default();
         Ok((optimized_cu, logs))
     }
@@ -450,21 +464,16 @@ impl SubmissionService {
         compute_units: Option<u32>,
     ) -> Transaction {
         let mut final_instructions = vec![];
-        
+
         // Add compute budget instruction if specified
         if let Some(cu) = compute_units {
-            final_instructions.push(
-                ComputeBudgetInstruction::set_compute_unit_limit(cu)
-            );
+            final_instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(cu));
         }
-        
+
         // Add the actual instructions
         final_instructions.extend(instructions);
-        
-        Transaction::new_with_payer(
-            &final_instructions,
-            Some(payer),
-        )
+
+        Transaction::new_with_payer(&final_instructions, Some(payer))
     }
 
     /// Check if transaction uses durable nonce
@@ -485,7 +494,10 @@ impl SubmissionService {
 
     /// Update submission mode
     pub async fn set_mode(&self, mode: SubmissionMode) -> Result<()> {
-        if matches!(mode, SubmissionMode::Tpu | SubmissionMode::TpuWithFallback | SubmissionMode::Both) {
+        if matches!(
+            mode,
+            SubmissionMode::Tpu | SubmissionMode::TpuWithFallback | SubmissionMode::Both
+        ) {
             let tpu_client_guard = self.tpu_client.read().await;
             if tpu_client_guard.is_none() {
                 return Err(anyhow!("Cannot set TPU mode: TPU client not available"));
@@ -611,13 +623,14 @@ impl SubmissionService {
         }
 
         // Sent to TPU, now confirm it
-        debug!("Transaction sent to TPU, waiting for confirmation: {}", signature);
-        
+        debug!(
+            "Transaction sent to TPU, waiting for confirmation: {}",
+            signature
+        );
+
         // Wait for confirmation using RPC
-        let confirmation = self.rpc_client
-            .confirm_transaction(&signature)
-            .await;
-        
+        let confirmation = self.rpc_client.confirm_transaction(&signature).await;
+
         match confirmation {
             Ok(_) => {
                 info!("Transaction confirmed via TPU: {}", signature);
@@ -627,7 +640,10 @@ impl SubmissionService {
                 Ok(signature)
             }
             Err(e) => {
-                warn!("Transaction sent to TPU but not confirmed: {}: {}", signature, e);
+                warn!(
+                    "Transaction sent to TPU but not confirmed: {}: {}",
+                    signature, e
+                );
                 Err(anyhow!("Transaction not confirmed: {}", e))
             }
         }
@@ -656,7 +672,10 @@ impl SubmissionService {
         }
     }
 
-    async fn submit_batch_via_tpu(&self, txs: &[VersionedTransaction]) -> Result<Vec<Result<Signature>>> {
+    async fn submit_batch_via_tpu(
+        &self,
+        txs: &[VersionedTransaction],
+    ) -> Result<Vec<Result<Signature>>> {
         let tpu_client_guard = self.tpu_client.read().await;
         let tpu_client = tpu_client_guard
             .as_ref()
@@ -697,8 +716,11 @@ impl SubmissionService {
                 }
             } else {
                 // Batch sent to TPU, now confirm them
-                debug!("Batch sent {} transactions to TPU, confirming...", txs.len());
-                
+                debug!(
+                    "Batch sent {} transactions to TPU, confirming...",
+                    txs.len()
+                );
+
                 // Confirm each transaction
                 for (_i, result) in results.iter_mut().enumerate() {
                     if let Ok(sig) = result {
@@ -723,7 +745,10 @@ impl SubmissionService {
         Ok(results)
     }
 
-    async fn submit_batch_via_rpc(&self, txs: &[VersionedTransaction]) -> Result<Vec<Result<Signature>>> {
+    async fn submit_batch_via_rpc(
+        &self,
+        txs: &[VersionedTransaction],
+    ) -> Result<Vec<Result<Signature>>> {
         // Batch submit via RPC
 
         use futures::future::join_all;
@@ -742,23 +767,13 @@ impl SubmissionService {
         Ok(results)
     }
 
-    async fn start_replay_consumer(&self, nats_client: async_nats::Client) -> Result<()> {
-        // Start replay consumer
+    // TODO: Implement replay consumer when message queue is added
+    // async fn start_replay_consumer(&self, queue_client: MessageQueueClient) -> Result<()> {
+    //     // Start replay consumer for durable transaction replay
+    //     // This will consume from the message queue and retry failed transactions
+    //     Ok(())
+    // }
 
-        let mut consumer = ReplayConsumer::new(
-            nats_client,
-            Arc::new(self.clone()), // We'll need to implement Clone
-            self.rpc_client.clone(),
-            self.config.replay_config.clone(),
-        )
-        .await?;
-
-        let handle = tokio::spawn(async move { consumer.run().await });
-
-        *self.replay_handle.write().await = Some(handle);
-        Ok(())
-    }
-    
     /// Process incoming transaction messages from processor
     /// Handle a single transaction with honeybadger retry logic
     async fn handle_transaction_task(
@@ -767,7 +782,7 @@ impl SubmissionService {
         executor_keypair: Arc<solana_sdk::signature::Keypair>,
     ) {
         info!("Starting task for thread {}", msg.thread_pubkey);
-        
+
         // Create a TransactionSubmitter for this task
         let submitter = crate::submitter::TransactionSubmitter::from_client(
             self.rpc_client.clone(),
@@ -775,23 +790,36 @@ impl SubmissionService {
             self.metrics.clone(),
             self.clock_broadcaster.subscribe(),
         );
-        
+
         // Initialize TPU if configured
         if let Err(e) = submitter.initialize_tpu().await {
-            warn!("Failed to initialize TPU for thread {}: {}", msg.thread_pubkey, e);
+            warn!(
+                "Failed to initialize TPU for thread {}: {}",
+                msg.thread_pubkey, e
+            );
             // Continue anyway - will fall back to RPC
         }
-        
+
         // Submit using the honeybadger approach
         // This will run until timeout - success is determined by thread updates
-        match submitter.submit(msg.instructions, executor_keypair, None).await {
+        match submitter
+            .submit(msg.instructions, executor_keypair, None)
+            .await
+        {
             Ok(()) => {
                 // Should never happen - submit only returns on timeout (error)
-                warn!("Unexpected return from honeybadger submit for thread {}", msg.thread_pubkey);
+                warn!(
+                    "Unexpected return from honeybadger submit for thread {}",
+                    msg.thread_pubkey
+                );
             }
             Err(e) => {
                 // Timeout reached without thread update
-                log::warn!("Honeybadger timeout for thread {}: {}", msg.thread_pubkey, e);
+                log::warn!(
+                    "Honeybadger timeout for thread {}: {}",
+                    msg.thread_pubkey,
+                    e
+                );
                 // Metrics already tracked in submitter
             }
         }
@@ -803,14 +831,14 @@ impl SubmissionService {
         executor_keypair: Arc<solana_sdk::signature::Keypair>,
     ) -> Result<()> {
         info!("Starting transaction message processor");
-        
+
         // Initialize service (wait for RPC) before processing
         self.initialize().await?;
-        
+
         // Check executor keypair balance to ensure account exists
         let executor_pubkey = executor_keypair.pubkey();
         info!("Checking executor account balance: {}", executor_pubkey);
-        
+
         match self.rpc_client.get_balance(&executor_pubkey).await {
             Ok(balance) => {
                 if balance == 0 {
@@ -820,8 +848,9 @@ impl SubmissionService {
                         executor_pubkey, executor_pubkey
                     ));
                 }
-                info!("Executor account balance: {} lamports ({:.6} SOL)", 
-                    balance, 
+                info!(
+                    "Executor account balance: {} lamports ({:.6} SOL)",
+                    balance,
                     balance as f64 / 1_000_000_000.0
                 );
             }
@@ -831,34 +860,47 @@ impl SubmissionService {
                     "Failed to check executor account balance for {}: {}\n\
                     The account may not exist. Please fund the account with SOL before starting.\n\
                     You can airdrop SOL on localnet with: solana airdrop 10 {}",
-                    executor_pubkey, e, executor_pubkey
+                    executor_pubkey,
+                    e,
+                    executor_pubkey
                 ));
             }
         }
-        
+
         // Simple message routing loop - wrap blocking recv in spawn_blocking
         loop {
             let receiver_clone = receiver.clone();
             let recv_result = tokio::task::spawn_blocking(move || receiver_clone.recv())
                 .await
                 .map_err(|e| anyhow!("Spawn blocking task failed: {}", e))?;
-            
+
             match recv_result {
                 Ok(ProcessorMessage::Clock(clock)) => {
                     // Broadcast clock update immediately to all retry tasks
-                    debug!("Broadcasted clock update: slot {}, timestamp {}", clock.slot, clock.unix_timestamp);
+                    debug!(
+                        "Broadcasted clock update: slot {}, timestamp {}",
+                        clock.slot, clock.unix_timestamp
+                    );
                     let _ = self.clock_broadcaster.send(clock);
                 }
                 Ok(ProcessorMessage::Transaction(msg)) => {
-                    info!("Received transaction message for thread {}", msg.thread_pubkey);
+                    info!(
+                        "Received transaction message for thread {}",
+                        msg.thread_pubkey
+                    );
                     // Spawn independent task for this transaction
                     let service_clone = self.clone();
                     let executor_keypair_clone = executor_keypair.clone();
-                    
+
                     let thread_pubkey = msg.thread_pubkey;
                     let handle = tokio::spawn(async move {
-                        log::debug!("Task spawned, calling handle_transaction_task for thread {}", thread_pubkey);
-                        service_clone.handle_transaction_task(msg, executor_keypair_clone).await;
+                        log::debug!(
+                            "Task spawned, calling handle_transaction_task for thread {}",
+                            thread_pubkey
+                        );
+                        service_clone
+                            .handle_transaction_task(msg, executor_keypair_clone)
+                            .await;
                         log::debug!("Task completed for thread {}", thread_pubkey);
                     });
                     debug!("Spawned task for transaction submission: {:?}", handle);
@@ -869,7 +911,7 @@ impl SubmissionService {
                 }
             }
         }
-        
+
         Ok(())
     }
 }
@@ -881,8 +923,8 @@ impl Clone for SubmissionService {
             rpc_client: self.rpc_client.clone(),
             tpu_client: RwLock::new(None), // Don't clone TPU client
             submission_mode: RwLock::new(SubmissionMode::Rpc), // Reset to RPC
-            nats_client: self.nats_client.clone(),
-            replay_handle: RwLock::new(None), // Don't clone handle
+            // queue_client: None, // TODO: Add when message queue is implemented
+            // replay_handle: RwLock::new(None), // TODO: Add when replay is implemented
             metrics: self.metrics.clone(),
             config: self.config.clone(),
             clock_broadcaster: self.clock_broadcaster.clone(),
