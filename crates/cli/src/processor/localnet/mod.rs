@@ -45,7 +45,10 @@ async fn wait_for_validator(max_attempts: u32) -> Result<(), CliError> {
 
         match response {
             Ok(resp) if resp.status().is_success() => {
-                println!("  ✓ Validator is ready (attempt {}/{})", attempt, max_attempts);
+                println!(
+                    "  ✓ Validator is ready (attempt {}/{})",
+                    attempt, max_attempts
+                );
                 return Ok(());
             }
             _ => {
@@ -58,9 +61,10 @@ async fn wait_for_validator(max_attempts: u32) -> Result<(), CliError> {
         }
     }
 
-    Err(CliError::FailedLocalnet(
-        format!("Validator failed to start after {} attempts", max_attempts)
-    ))
+    Err(CliError::FailedLocalnet(format!(
+        "Validator failed to start after {} attempts",
+        max_attempts
+    )))
 }
 
 /// Get or create the admin keypair
@@ -81,8 +85,9 @@ fn get_or_create_admin_keypair() -> Result<solana_sdk::signature::Keypair, CliEr
     // Create keypair if it doesn't exist
     if !keypair_path.exists() {
         let keypair = Keypair::new();
-        write_keypair_file(&keypair, &keypair_path)
-            .map_err(|e| CliError::FailedLocalnet(format!("Failed to write admin keypair: {}", e)))?;
+        write_keypair_file(&keypair, &keypair_path).map_err(|e| {
+            CliError::FailedLocalnet(format!("Failed to write admin keypair: {}", e))
+        })?;
         println!("  Generated new admin keypair: {}", keypair.pubkey());
         Ok(keypair)
     } else {
@@ -107,41 +112,48 @@ fn initialize_thread_config() -> Result<(), CliError> {
             "airdrop",
             "10",
             &client.payer_pubkey().to_string(),
-            "--url", "http://localhost:8899"
+            "--url",
+            "http://localhost:8899",
         ])
         .output();
-    
+
     if let Err(e) = airdrop_result {
         eprintln!("  Warning: Failed to airdrop SOL: {}", e);
     }
-    
+
     // Wait a moment for airdrop to be confirmed
     std::thread::sleep(std::time::Duration::from_secs(1));
-    
+
     // Try to initialize the config with retries (program may not be fully deployed yet)
     let mut attempts = 0;
     let max_attempts = 3;
-    
+
     while attempts < max_attempts {
         attempts += 1;
-        
+
         match crate::processor::config::init(&client, None) {
             Ok(_) => return Ok(()),
             Err(e) => {
                 if attempts == max_attempts {
                     // On final attempt, log the error but don't fail
-                    eprintln!("  Warning: Could not initialize thread config after {} attempts: {}", max_attempts, e);
+                    eprintln!(
+                        "  Warning: Could not initialize thread config after {} attempts: {}",
+                        max_attempts, e
+                    );
                     eprintln!("  You can manually initialize it later with: antegen config init");
                     return Ok(()); // Return success anyway - config can be initialized later
                 } else {
                     // Wait before retry
-                    println!("  Config initialization attempt {} failed, retrying...", attempts);
+                    println!(
+                        "  Config initialization attempt {} failed, retrying...",
+                        attempts
+                    );
                     std::thread::sleep(std::time::Duration::from_secs(2));
                 }
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -155,12 +167,12 @@ fn check_solana_version() -> Result<(), CliError> {
 
     if !output.status.success() {
         return Err(CliError::FailedLocalnet(
-            "Failed to get Solana version. Is Solana CLI installed?".to_string()
+            "Failed to get Solana version. Is Solana CLI installed?".to_string(),
         ));
     }
 
     let version_str = String::from_utf8_lossy(&output.stdout);
-    
+
     // Parse version (format: "solana-cli 2.2.1 (src:xxx; feat:xxx, client:Agave)")
     if let Some(version_part) = version_str.split_whitespace().nth(1) {
         // Check if it starts with 2.2
@@ -172,19 +184,23 @@ fn check_solana_version() -> Result<(), CliError> {
             eprintln!("   Current version: {}", version_part);
             eprintln!("   Required version: {}.*", REQUIRED_SOLANA_VERSION);
             eprintln!("");
-            eprintln!("   The Geyser plugin requires Solana {} for ABI compatibility.", REQUIRED_SOLANA_VERSION);
+            eprintln!(
+                "   The Geyser plugin requires Solana {} for ABI compatibility.",
+                REQUIRED_SOLANA_VERSION
+            );
             eprintln!("   Please install the correct version:");
             eprintln!("");
             eprintln!("   sh -c \"$(curl -sSfL https://release.anza.xyz/v2.2.1/install)\"");
             eprintln!("");
-            return Err(CliError::FailedLocalnet(
-                format!("Solana version {} required, found {}", REQUIRED_SOLANA_VERSION, version_part)
-            ));
+            return Err(CliError::FailedLocalnet(format!(
+                "Solana version {} required, found {}",
+                REQUIRED_SOLANA_VERSION, version_part
+            )));
         }
     }
 
     Err(CliError::FailedLocalnet(
-        "Could not parse Solana version".to_string()
+        "Could not parse Solana version".to_string(),
     ))
 }
 
@@ -226,7 +242,8 @@ pub fn start(
         for client_type in clients {
             let client_name = format!("{}-{}", client_type, chrono::Utc::now().timestamp());
             client_names.push(client_name.clone());
-            config_builder.add_client(client_type, Some(client_name))
+            config_builder
+                .add_client(client_type, Some(client_name))
                 .map_err(|e| CliError::FailedLocalnet(e.to_string()))?;
         }
 
@@ -429,8 +446,9 @@ pub fn clean_localnet_artifacts() -> Result<(), CliError> {
     // Clean test-ledger
     let ledger_dir = runtime_dir.join("test-ledger");
     if ledger_dir.exists() {
-        std::fs::remove_dir_all(&ledger_dir)
-            .map_err(|e| CliError::FailedLocalnet(format!("Failed to remove test-ledger: {}", e)))?;
+        std::fs::remove_dir_all(&ledger_dir).map_err(|e| {
+            CliError::FailedLocalnet(format!("Failed to remove test-ledger: {}", e))
+        })?;
         println!("  ✓ Removed test-ledger");
     }
 
@@ -441,9 +459,15 @@ pub fn clean_localnet_artifacts() -> Result<(), CliError> {
         if let Ok(entries) = std::fs::read_dir(&keypairs_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_file() &&
-                   path.extension().and_then(|s| s.to_str()) == Some("json") &&
-                   !path.file_name().unwrap().to_str().unwrap().contains("admin") {
+                if path.is_file()
+                    && path.extension().and_then(|s| s.to_str()) == Some("json")
+                    && !path
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .contains("admin")
+                {
                     std::fs::remove_file(&path).ok();
                 }
             }
