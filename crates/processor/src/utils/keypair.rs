@@ -37,6 +37,18 @@ impl KeypairManager {
         Ok(keypair)
     }
 
+    /// Initialize without waiting for validator (for Geyser plugin context)
+    /// This is used when running inside the validator to avoid deadlock
+    pub async fn initialize_without_wait(&self) -> Result<Keypair> {
+        info!("Initializing keypair without validator wait (Geyser context)");
+
+        // Just load or create keypair, skip validator wait and funding check
+        let keypair = self.get_or_create_keypair().await?;
+
+        info!("Keypair initialized: {}", keypair.pubkey());
+        Ok(keypair)
+    }
+
     async fn wait_for_validator(&self) -> Result<()> {
         let client = RpcClient::new(&self.rpc_url);
         let mut attempts = 0;

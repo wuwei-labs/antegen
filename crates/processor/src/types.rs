@@ -7,22 +7,24 @@ use crate::load_balancer::LoadBalancerConfig;
 pub struct ProcessorConfig {
     /// RPC URL for blockchain interaction
     pub rpc_url: String,
-    
+
     /// Path to executor keypair file
     pub executor_keypair_path: String,
-    
+
     /// Whether to forgo executor commission
     pub forgo_executor_commission: bool,
-    
-    
+
+    /// Skip waiting for validator (for Geyser plugin context)
+    pub skip_validator_wait: bool,
+
     /// Simulation configuration
     pub simulate_before_submit: bool,
     pub compute_unit_multiplier: f64,
     pub max_compute_units: u32,
-    
+
     /// Task management configuration
     pub max_concurrent_threads: usize,
-    
+
     /// Load balancer configuration
     pub load_balancer: LoadBalancerConfig,
 }
@@ -33,6 +35,7 @@ impl Default for ProcessorConfig {
             rpc_url: "http://localhost:8899".to_string(),
             executor_keypair_path: String::new(),
             forgo_executor_commission: false,
+            skip_validator_wait: false,
             simulate_before_submit: true,
             compute_unit_multiplier: 1.2,
             max_compute_units: 1_400_000,

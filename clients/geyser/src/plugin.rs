@@ -156,7 +156,8 @@ impl GeyserPlugin for AntegenPlugin {
                 ProcessorBuilder::new()
                     .keypair(keypair_path.clone())
                     .rpc_url(rpc_url.clone())
-                    .forgo_commission(forgo_executor_commission),
+                    .forgo_commission(forgo_executor_commission)
+                    .skip_validator_wait(true), // Skip wait since we're inside the validator
             );
 
         // TODO: Add submitter with replay service when implemented

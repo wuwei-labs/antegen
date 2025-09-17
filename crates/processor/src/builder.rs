@@ -14,6 +14,7 @@ pub struct ProcessorBuilder {
     keypair_path: Option<String>,
     rpc_url: String,
     forgo_commission: bool,
+    skip_validator_wait: bool,
     max_concurrent_threads: usize,
     simulate_before_submit: bool,
     compute_unit_multiplier: f64,
@@ -30,6 +31,7 @@ impl Default for ProcessorBuilder {
             keypair_path: None,
             rpc_url: config.rpc_url,
             forgo_commission: config.forgo_executor_commission,
+            skip_validator_wait: config.skip_validator_wait,
             max_concurrent_threads: config.max_concurrent_threads,
             simulate_before_submit: config.simulate_before_submit,
             compute_unit_multiplier: config.compute_unit_multiplier,
@@ -74,6 +76,12 @@ impl ProcessorBuilder {
     /// Set whether to forgo executor commission
     pub fn forgo_commission(mut self, forgo: bool) -> Self {
         self.forgo_commission = forgo;
+        self
+    }
+
+    /// Set whether to skip validator wait (for Geyser plugin context)
+    pub fn skip_validator_wait(mut self, skip: bool) -> Self {
+        self.skip_validator_wait = skip;
         self
     }
 
@@ -131,6 +139,7 @@ impl ProcessorBuilder {
             keypair_path: Some(config.executor_keypair_path.clone()),
             rpc_url: config.rpc_url,
             forgo_commission: config.forgo_executor_commission,
+            skip_validator_wait: config.skip_validator_wait,
             max_concurrent_threads: config.max_concurrent_threads,
             simulate_before_submit: config.simulate_before_submit,
             compute_unit_multiplier: config.compute_unit_multiplier,
@@ -161,6 +170,7 @@ impl ProcessorBuilder {
             executor_keypair_path: keypair_path,
             rpc_url: self.rpc_url,
             forgo_executor_commission: self.forgo_commission,
+            skip_validator_wait: self.skip_validator_wait,
             max_concurrent_threads: self.max_concurrent_threads,
             simulate_before_submit: self.simulate_before_submit,
             compute_unit_multiplier: self.compute_unit_multiplier,

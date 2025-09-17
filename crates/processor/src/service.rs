@@ -60,8 +60,14 @@ impl ProcessorService {
             ws_url,
         );
 
-        // This handles everything: wait for RPC, load/create keypair, ensure funded
-        let executor_keypair = Arc::new(keypair_manager.initialize(100_000_000).await?);
+        // Initialize keypair based on context (skip wait for Geyser plugin)
+        let executor_keypair = Arc::new(if config.skip_validator_wait {
+            // For Geyser plugin context: don't wait for validator
+            keypair_manager.initialize_without_wait().await?
+        } else {
+            // Normal context: wait for RPC, load/create keypair, ensure funded
+            keypair_manager.initialize(100_000_000).await?
+        });
 
         // Create metrics
         let processor_metrics = Arc::new(ProcessorMetrics::default());
