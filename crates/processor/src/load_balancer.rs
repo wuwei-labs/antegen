@@ -1,4 +1,5 @@
 use anyhow::Result;
+use log::{debug, info};
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -92,6 +93,9 @@ impl LoadBalancer {
         // Update ownership based on last executor
         if we_executed_last {
             // We successfully executed - we own this thread
+            if !thread_track.owned {
+                info!("Thread {} - confirmed ownership (we executed last)", thread_pubkey);
+            }
             thread_track.owned = true;
             thread_track.consecutive_losses = 0;
         } else if last_executor.ne(&Pubkey::default()) {
@@ -99,9 +103,13 @@ impl LoadBalancer {
             if thread_track.owned {
                 // We thought we owned it but someone else executed
                 thread_track.consecutive_losses += 1;
-                
+                debug!("Thread {} - lost to {} (consecutive losses: {}/{})",
+                       thread_pubkey, last_executor, thread_track.consecutive_losses, self.config.capacity_threshold);
+
                 // Check if we should release ownership
                 if thread_track.consecutive_losses >= self.config.capacity_threshold {
+                    info!("Thread {} - releasing ownership after {} consecutive losses to {}",
+                          thread_pubkey, thread_track.consecutive_losses, last_executor);
                     thread_track.owned = false;
                     thread_track.consecutive_losses = 0;
                 }
@@ -126,22 +134,31 @@ impl LoadBalancer {
         
         if thread_track.map_or(false, |t| t.owned) {
             // We own this thread - always try to process
+            info!("Thread {} - we own it, will process", thread_pubkey);
             Ok(ProcessDecision::Process)
         } else if is_overdue && overdue_seconds > self.config.takeover_delay_seconds {
             // Thread is overdue beyond takeover delay - attempt takeover
+            info!("Thread {} - attempting TAKEOVER (overdue by {}s, threshold {}s, last_executor: {})",
+                  thread_pubkey, overdue_seconds, self.config.takeover_delay_seconds, last_executor);
             Ok(ProcessDecision::Process)
         } else if at_capacity {
             // We're at capacity - only process critically overdue threads (1.5x takeover delay)
             if is_overdue && overdue_seconds > (self.config.takeover_delay_seconds * 3) / 2 {
+                info!("Thread {} - at capacity but attempting CRITICAL TAKEOVER (overdue by {}s)",
+                      thread_pubkey, overdue_seconds);
                 Ok(ProcessDecision::Process)
             } else {
+                debug!("Thread {} - at capacity, skipping", thread_pubkey);
                 Ok(ProcessDecision::AtCapacity)
             }
         } else if last_executor.eq(&Pubkey::default()) {
             // No one has executed this thread yet - try to claim it
+            info!("Thread {} - no previous executor, claiming", thread_pubkey);
             Ok(ProcessDecision::Process)
         } else {
             // Someone else owns this thread and it's current
+            debug!("Thread {} - owned by {}, skipping (overdue: {}, overdue_seconds: {})",
+                   thread_pubkey, last_executor, is_overdue, overdue_seconds);
             Ok(ProcessDecision::Skip)
         }
     }

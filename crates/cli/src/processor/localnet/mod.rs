@@ -204,6 +204,72 @@ fn check_solana_version() -> Result<(), CliError> {
     ))
 }
 
+/// Ensure the thread program is built
+async fn ensure_program_built() -> Result<(), CliError> {
+    let program_path = std::env::current_dir()
+        .unwrap_or_default()
+        .join("target/deploy/antegen_thread_program.so");
+
+    if !program_path.exists() {
+        println!("📦 Thread program not found, building...");
+
+        // Try anchor build first
+        let output = Command::new("anchor")
+            .arg("build")
+            .output()
+            .or_else(|_| {
+                // Fall back to cargo build-sbf
+                Command::new("cargo")
+                    .args(&["build-sbf", "-p", "antegen-thread-program"])
+                    .output()
+            })
+            .map_err(|e| CliError::FailedLocalnet(format!("Failed to run build command: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(CliError::FailedLocalnet(
+                format!("Failed to build program: {}", stderr)
+            ));
+        }
+
+        // Check if the program was actually built
+        if !program_path.exists() {
+            return Err(CliError::FailedLocalnet(
+                "Program build succeeded but .so file not found".to_string()
+            ));
+        }
+
+        println!("✓ Program built successfully");
+    }
+    Ok(())
+}
+
+/// Fund client keypairs after they've been created
+async fn fund_client_keypairs(client_names: Vec<String>) -> Result<(), CliError> {
+    if client_names.is_empty() {
+        return Ok(());
+    }
+
+    println!("✓ Waiting for clients to initialize...");
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+    println!("✓ Checking executor accounts...");
+    let runtime_dir = dirs_next::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".antegen")
+        .join("localnet");
+
+    for client_name in &client_names {
+        let keypair_path = runtime_dir
+            .join("keypairs")
+            .join(format!("{}-keypair.json", client_name));
+
+        println!("  Checking keypair for {}: {:?}", client_name, keypair_path);
+        templates::check_and_fund_executor(&keypair_path, "http://localhost:8899").ok();
+    }
+    Ok(())
+}
+
 /// Start the localnet with specified configuration
 pub fn start(
     _config_path: Option<String>,
@@ -221,6 +287,9 @@ pub fn start(
     RUNTIME.block_on(async {
         println!("🚀 Starting Antegen localnet with PMDaemon...");
 
+        // Ensure the program is built before starting
+        ensure_program_built().await?;
+
         // Create daemon
         let mut daemon = LocalnetDaemon::new(is_dev)
             .await
@@ -231,19 +300,76 @@ pub fn start(
         // Build configuration
         let mut config_builder = ConfigBuilder::new(is_dev, verbose);
 
-        // Add validator
+        // Check if Geyser is requested
+        let has_geyser = clients.iter().any(|c| c == "geyser");
+
+        // Handle Geyser plugin configuration if requested
+        let geyser_config_path = if has_geyser {
+            // Create Geyser plugin configuration
+            let runtime_dir = dirs_next::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".antegen")
+                .join("localnet");
+
+            // Ensure runtime directory exists
+            std::fs::create_dir_all(&runtime_dir).map_err(|e| {
+                CliError::FailedLocalnet(format!("Failed to create runtime dir: {}", e))
+            })?;
+
+            // Create Geyser plugin config file
+            let geyser_config_path = runtime_dir.join("geyser-plugin-config.json");
+            let lib_extension = if cfg!(target_os = "macos") { "dylib" } else { "so" };
+            let geyser_config = serde_json::json!({
+                "libpath": if is_dev {
+                    std::env::current_dir()
+                        .unwrap()
+                        .join(format!("target/debug/libantegen_client_geyser.{}", lib_extension))
+                        .to_string_lossy()
+                        .to_string()
+                } else {
+                    runtime_dir.join(format!("libantegen_client_geyser.{}", lib_extension)).to_string_lossy().to_string()
+                },
+                "name": "antegen",
+                "rpc_url": "http://localhost:8899",
+                "ws_url": "ws://localhost:8900",
+                "keypath": runtime_dir.join("keypairs").join("geyser-executor-keypair.json").to_string_lossy(),
+                "thread_count": 10,
+                "transaction_timeout_threshold": 150
+            });
+
+            std::fs::write(
+                &geyser_config_path,
+                serde_json::to_string_pretty(&geyser_config).unwrap(),
+            )
+            .map_err(|e| CliError::FailedLocalnet(format!("Failed to write Geyser config: {}", e)))?;
+
+            Some(geyser_config_path)
+        } else {
+            None
+        };
+
+        // Add validator with or without Geyser plugin
         let validator_type = validator.unwrap_or_else(|| "solana".to_string());
-        config_builder.add_validator(validator_type);
+        if let Some(geyser_path) = geyser_config_path {
+            config_builder.add_validator_with_geyser(Some(geyser_path));
+        } else {
+            config_builder.add_validator(validator_type);
+        }
 
         // Track client names for later funding check
         let mut client_names = Vec::new();
 
-        // Add clients
-        for client_type in clients {
+        // Add Geyser client name if present
+        if has_geyser {
+            client_names.push("geyser-executor".to_string());
+        }
+
+        // Add non-Geyser clients
+        for client_type in clients.iter().filter(|c| *c != "geyser") {
             let client_name = format!("{}-{}", client_type, chrono::Utc::now().timestamp());
             client_names.push(client_name.clone());
             config_builder
-                .add_client(client_type, Some(client_name))
+                .add_client(client_type.clone(), Some(client_name))
                 .map_err(|e| CliError::FailedLocalnet(e.to_string()))?;
         }
 
@@ -265,26 +391,8 @@ pub fn start(
         // Wait for validator to be ready with health check
         wait_for_validator(20).await?; // 20 attempts with exponential backoff
 
-        // Give clients more time to create their keypairs
-        if !client_names.is_empty() {
-            println!("✓ Waiting for clients to initialize...");
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-
-            println!("✓ Checking executor accounts...");
-            let runtime_dir = dirs_next::home_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join(".antegen")
-                .join("localnet");
-
-            for client_name in &client_names {
-                let keypair_path = runtime_dir
-                    .join("keypairs")
-                    .join(format!("{}-keypair.json", client_name));
-
-                println!("  Checking keypair for {}: {:?}", client_name, keypair_path);
-                templates::check_and_fund_executor(&keypair_path, "http://localhost:8899").ok();
-            }
-        }
+        // Fund client keypairs using shared helper
+        fund_client_keypairs(client_names).await?;
 
         // Initialize thread config
         println!("✓ Initializing thread program config...");
@@ -300,6 +408,9 @@ pub fn start_with_geyser(release: bool, verbose: bool) -> Result<(), CliError> {
 
     RUNTIME.block_on(async {
         println!("🚀 Starting Antegen localnet with Geyser plugin...");
+
+        // Ensure the program is built before starting
+        ensure_program_built().await?;
 
         // Create daemon
         let mut daemon = LocalnetDaemon::new(is_dev)
@@ -574,7 +685,10 @@ pub fn add_client(
             .await
             .map_err(|e| CliError::FailedLocalnet(format!("Failed to add client: {}", e)))?;
 
-        println!("✅ Client '{}' added successfully", client_name);
+        // Fund the new client's keypair
+        fund_client_keypairs(vec![client_name.clone()]).await?;
+
+        println!("✅ Client '{}' added and funded successfully", client_name);
         Ok(())
     })
 }
