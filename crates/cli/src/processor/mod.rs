@@ -55,7 +55,8 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
             // Start with Geyser plugin enabled
             localnet::start_with_geyser(release, verbose)
         }
-        CliCommand::LocalnetStop => localnet::stop(),
+        CliCommand::LocalnetStop { clean } => localnet::stop_with_cleanup(clean),
+        CliCommand::LocalnetClean => localnet::clean_localnet_artifacts(),
         CliCommand::LocalnetStatus => localnet::status(),
         CliCommand::LocalnetClientAdd {
             client_type,

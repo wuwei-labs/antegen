@@ -4,7 +4,7 @@ use log::{debug, error, info, warn};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
-    signature::{read_keypair_file, Keypair},
+    signature::Keypair,
     signer::Signer,
 };
 use std::sync::Arc;
@@ -17,6 +17,7 @@ use crate::metrics::ProcessorMetrics;
 use crate::parser::{classify_account, AccountType};
 use crate::queue::ThreadQueue;
 use crate::types::{AccountUpdate, ExecutableThread, ProcessorConfig};
+use crate::utils::KeypairManager;
 
 /// Main processor service that handles thread processing
 pub struct ProcessorService {
@@ -46,11 +47,21 @@ impl ProcessorService {
         config: ProcessorConfig,
         account_receiver: mpsc::Receiver<AccountUpdate>,
     ) -> Result<Self> {
-        // Load executor keypair
-        let executor_keypair = Arc::new(
-            read_keypair_file(&config.executor_keypair_path)
-                .map_err(|e| anyhow!("Failed to read executor keypair: {}", e))?,
+        // Build WebSocket URL from RPC URL
+        let ws_url = config.rpc_url
+            .replace("http://", "ws://")
+            .replace("https://", "wss://")
+            .replace(":8899", ":8900"); // Solana default ports
+
+        // Use keypair manager for complete initialization
+        let keypair_manager = KeypairManager::new(
+            &config.executor_keypair_path,
+            config.rpc_url.clone(),
+            ws_url,
         );
+
+        // This handles everything: wait for RPC, load/create keypair, ensure funded
+        let executor_keypair = Arc::new(keypair_manager.initialize(100_000_000).await?);
 
         // Create metrics
         let processor_metrics = Arc::new(ProcessorMetrics::default());

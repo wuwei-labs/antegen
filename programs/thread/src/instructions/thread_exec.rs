@@ -1,7 +1,13 @@
-use crate::{errors::*, *};
+use crate::{errors::*, state::ThreadResponse, *};
 use anchor_lang::{
     prelude::*,
-    solana_program::{program::invoke_signed, system_program, sysvar::recent_blockhashes},
+    solana_program::{
+        instruction::Instruction,
+        program::{get_return_data, invoke_signed},
+        system_program,
+        sysvar::recent_blockhashes,
+    },
+    InstructionData, ToAccountMetas,
 };
 
 /// Accounts required by the `thread_exec` instruction.
@@ -98,6 +104,8 @@ pub fn thread_exec(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<(
     // Process trigger and get elapsed time
     let time_since_ready = thread.validate_and_update_context(&clock, ctx.remaining_accounts)?;
     let instruction = fiber.get_instruction(&executor.key())?;
+
+    // Invoke the instruction
     thread.sign(|seeds| invoke_signed(&instruction, ctx.remaining_accounts, &[seeds]))?;
 
     // Verify the inner instruction did not write data to the executor account
@@ -106,6 +114,7 @@ pub fn thread_exec(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<(
         AntegenThreadError::UnauthorizedWrite
     );
 
+    // Calculate and distribute payments BEFORE any potential deletion
     let balance_change = executor.lamports() as i64 - executor_lamports_start as i64;
     let payments = config.calculate_payments(time_since_ready, balance_change, forgo_commission);
 
@@ -115,7 +124,8 @@ pub fn thread_exec(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<(
         let forgone = config.calculate_executor_fee(effective_commission);
         msg!(
             "Executed {}s after trigger, forgoing {} commission",
-            time_since_ready, forgone
+            time_since_ready,
+            forgone
         );
     } else {
         msg!("Executed {}s after trigger", time_since_ready);
@@ -129,14 +139,97 @@ pub fn thread_exec(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<(
         &payments,
     )?;
 
+    // Parse the thread response from return data
+    let thread_response: Option<ThreadResponse> = match get_return_data() {
+        None => None,
+        Some((program_id, return_data)) => {
+            // Only process if return data is from the invoked program
+            if program_id.eq(&instruction.program_id) {
+                ThreadResponse::try_from_slice(return_data.as_slice()).ok()
+            } else {
+                None
+            }
+        }
+    };
+
+    // Process ThreadResponse if present
+    let mut should_advance_fiber = true; // Track if we should auto-advance
+    if let Some(response) = thread_response {
+        // Handle append_instruction OR auto-generate delete instruction
+        if let Some(close_to_pubkey) = response.close_to {
+            // close_to ALWAYS overrides append_instruction
+            if response.append_instruction.is_some() {
+                msg!("Warning: append_instruction ignored due to close_to being set");
+            }
+
+            // Create delete instruction using Anchor's CPI builder
+            let delete_accounts = crate::accounts::ThreadDelete {
+                authority: thread.key(),   // Thread can delete itself
+                close_to: close_to_pubkey, // Recipient of remaining funds
+                thread: thread.key(),      // Thread to delete
+            };
+
+            let delete_ix = Instruction {
+                program_id: crate::ID,
+                accounts: delete_accounts.to_account_metas(Some(true)),
+                data: crate::instruction::DeleteThread {}.data(),
+            };
+
+            // Execute delete instruction IMMEDIATELY
+            msg!("Executing thread deletion to {}", close_to_pubkey);
+            thread.sign(|seeds| invoke_signed(&delete_ix, ctx.remaining_accounts, &[seeds]))?;
+
+            // Thread is now deleted, return early
+            return Ok(());
+        } else if let Some(append_ix) = response.append_instruction {
+            // Execute appended instruction IMMEDIATELY
+            msg!("Executing appended instruction");
+            let ix: Instruction = append_ix.into();
+            thread.sign(|seeds| invoke_signed(&ix, ctx.remaining_accounts, &[seeds]))?;
+
+            // Check if the appended instruction was a delete
+            if ix.program_id.eq(&crate::ID)
+                && ix.data.len().ge(&8)
+                && ix.data[..8].eq(crate::instruction::DeleteThread::DISCRIMINATOR)
+            {
+                return Ok(()); // Thread was deleted by appended instruction
+            }
+        }
+
+        // Handle next_fiber - jump to specific fiber
+        if let Some(next_fiber_index) = response.next_fiber {
+            // Validate fiber index exists
+            if thread.fibers.contains(&next_fiber_index) {
+                thread.exec_index = next_fiber_index;
+                msg!("Jumping to fiber {}", next_fiber_index);
+                should_advance_fiber = false; // We already set the index
+            } else {
+                return Err(AntegenThreadError::InvalidFiberIndex.into());
+            }
+        }
+
+        // Handle trigger update
+        if let Some(new_trigger) = response.trigger {
+            thread.trigger = new_trigger.clone();
+            msg!("Thread trigger updated");
+
+            // Reset trigger context for Account triggers
+            if matches!(new_trigger, Trigger::Account { .. }) {
+                thread.trigger_context = TriggerContext::Account { hash: 0 };
+            }
+        }
+    }
+
     // Update fiber tracking
     fiber.last_executed = clock.unix_timestamp;
-    fiber.execution_count += 1;
+    fiber.exec_count += 1;
     thread.exec_count += 1; // Increment thread-level execution counter
-    
-    // Advance to next fiber in the sequence
-    thread.advance_to_next_fiber();
-    
+
+    // Only advance to next fiber if ThreadResponse didn't specify otherwise
+    if should_advance_fiber {
+        thread.advance_to_next_fiber();
+    }
+
     // Update last executor for load balancing
     thread.last_executor = executor.key();
 

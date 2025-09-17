@@ -1,4 +1,4 @@
-use crate::{state::compile_instruction, *};
+use crate::{errors::*, state::compile_instruction, *};
 use anchor_lang::{
     prelude::*,
     solana_program::{instruction::Instruction, system_program},
@@ -55,6 +55,14 @@ pub fn fiber_create(
     signer_seeds: Vec<Vec<Vec<u8>>>,
     priority_fee: u64,
 ) -> Result<()> {
+    // Prevent thread_delete instructions in fibers
+    if instruction.program_id.eq(&crate::ID)
+        && instruction.data.len().ge(&8)
+        && instruction.data[..8].eq(crate::instruction::DeleteThread::DISCRIMINATOR)
+    {
+        return Err(AntegenThreadError::InvalidInstruction.into());
+    }
+
     let thread = &mut ctx.accounts.thread;
     let fiber = &mut ctx.accounts.fiber;
 

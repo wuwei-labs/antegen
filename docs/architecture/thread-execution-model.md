@@ -549,16 +549,16 @@ Threads can modify themselves during execution:
 
 ```rust
 pub struct ThreadResponse {
-    pub close_to: Option<Pubkey>,      // Close thread
-    pub next_instruction: Option<u8>,  // Jump to fiber
-    pub trigger: Option<Trigger>,      // Update trigger
+    pub close_to: Option<Pubkey>,       // Close thread
+    pub next_fiber: Option<u8>,         // Jump to fiber
+    pub trigger: Option<Trigger>,       // Update trigger
 }
 
 // Target program returns response
 fn process_with_response() -> ThreadResponse {
     ThreadResponse {
         close_to: None,
-        next_instruction: Some(2),  // Skip to fiber 2
+        next_fiber: Some(2),  // Skip to fiber 2
         trigger: Some(Trigger::Interval {
             seconds: 7200,  // Change to 2 hours
             skippable: true

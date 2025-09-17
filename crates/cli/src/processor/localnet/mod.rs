@@ -7,7 +7,7 @@ pub mod templates;
 use crate::{client::Client, errors::CliError};
 use once_cell::sync::Lazy;
 use serde_json;
-use solana_sdk::signature::read_keypair_file;
+use solana_sdk::signature::{read_keypair_file, Signer};
 use std::process::Command;
 use tokio::runtime::Runtime;
 
@@ -21,25 +21,87 @@ static RUNTIME: Lazy<Runtime> =
 // Required Solana version for compatibility with Geyser plugin
 const REQUIRED_SOLANA_VERSION: &str = "2.2";
 
-/// Initialize the thread program config
-fn initialize_thread_config() -> Result<(), CliError> {
-    // Get the executor keypair path
+/// Wait for validator to be ready by polling the RPC endpoint
+async fn wait_for_validator(max_attempts: u32) -> Result<(), CliError> {
+    use reqwest::Client;
+    use serde_json::json;
+
+    let client = Client::new();
+    let url = "http://localhost:8899";
+
+    println!("  Waiting for validator to be ready...");
+
+    for attempt in 1..=max_attempts {
+        // Try to get the version (simplest RPC call)
+        let response = client
+            .post(url)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getVersion"
+            }))
+            .send()
+            .await;
+
+        match response {
+            Ok(resp) if resp.status().is_success() => {
+                println!("  ✓ Validator is ready (attempt {}/{})", attempt, max_attempts);
+                return Ok(());
+            }
+            _ => {
+                if attempt < max_attempts {
+                    // Wait before retry (exponential backoff with cap)
+                    let delay = std::cmp::min(500 * attempt, 2000);
+                    tokio::time::sleep(tokio::time::Duration::from_millis(delay.into())).await;
+                }
+            }
+        }
+    }
+
+    Err(CliError::FailedLocalnet(
+        format!("Validator failed to start after {} attempts", max_attempts)
+    ))
+}
+
+/// Get or create the admin keypair
+fn get_or_create_admin_keypair() -> Result<solana_sdk::signature::Keypair, CliError> {
+    use solana_sdk::signature::{write_keypair_file, Keypair};
+
     let runtime_dir = dirs_next::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join(".antegen")
         .join("localnet");
-    
-    let keypair_path = runtime_dir.join("executor-keypair.json");
-    
-    // Load the executor keypair
-    let payer = read_keypair_file(&keypair_path)
-        .map_err(|e| CliError::FailedLocalnet(format!("Failed to read executor keypair: {}", e)))?;
-    
+
+    // Ensure runtime directory exists
+    std::fs::create_dir_all(&runtime_dir)
+        .map_err(|e| CliError::FailedLocalnet(format!("Failed to create runtime dir: {}", e)))?;
+
+    let keypair_path = runtime_dir.join("admin-keypair.json");
+
+    // Create keypair if it doesn't exist
+    if !keypair_path.exists() {
+        let keypair = Keypair::new();
+        write_keypair_file(&keypair, &keypair_path)
+            .map_err(|e| CliError::FailedLocalnet(format!("Failed to write admin keypair: {}", e)))?;
+        println!("  Generated new admin keypair: {}", keypair.pubkey());
+        Ok(keypair)
+    } else {
+        // Load existing keypair
+        read_keypair_file(&keypair_path)
+            .map_err(|e| CliError::FailedLocalnet(format!("Failed to read admin keypair: {}", e)))
+    }
+}
+
+/// Initialize the thread program config
+fn initialize_thread_config() -> Result<(), CliError> {
+    // Get or create the admin keypair (only needed here for config initialization)
+    let payer = get_or_create_admin_keypair()?;
+
     // Create a client with localnet RPC
     let client = Client::new(payer, "http://localhost:8899".to_string());
-    
-    // Airdrop SOL to the executor account
-    println!("  Airdropping SOL to executor account...");
+
+    // Airdrop SOL to the admin account
+    println!("  Airdropping SOL to admin account...");
     let airdrop_result = Command::new("solana")
         .args(&[
             "airdrop",
@@ -157,9 +219,15 @@ pub fn start(
         let validator_type = validator.unwrap_or_else(|| "solana".to_string());
         config_builder.add_validator(validator_type);
 
+        // Track client names for later funding check
+        let mut client_names = Vec::new();
+
         // Add clients
         for client_type in clients {
-            config_builder.add_client(client_type, None);
+            let client_name = format!("{}-{}", client_type, chrono::Utc::now().timestamp());
+            client_names.push(client_name.clone());
+            config_builder.add_client(client_type, Some(client_name))
+                .map_err(|e| CliError::FailedLocalnet(e.to_string()))?;
         }
 
         // Write configuration
@@ -177,9 +245,30 @@ pub fn start(
             .map_err(|e| CliError::FailedLocalnet(e.to_string()))?;
         println!("✓ All services started");
 
-        // Wait a moment for validator to be ready
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        
+        // Wait for validator to be ready with health check
+        wait_for_validator(20).await?; // 20 attempts with exponential backoff
+
+        // Give clients more time to create their keypairs
+        if !client_names.is_empty() {
+            println!("✓ Waiting for clients to initialize...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+            println!("✓ Checking executor accounts...");
+            let runtime_dir = dirs_next::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".antegen")
+                .join("localnet");
+
+            for client_name in &client_names {
+                let keypair_path = runtime_dir
+                    .join("keypairs")
+                    .join(format!("{}-keypair.json", client_name));
+
+                println!("  Checking keypair for {}: {:?}", client_name, keypair_path);
+                templates::check_and_fund_executor(&keypair_path, "http://localhost:8899").ok();
+            }
+        }
+
         // Initialize thread config
         println!("✓ Initializing thread program config...");
         initialize_thread_config().ok(); // Best effort - warning already printed if fails
@@ -230,7 +319,7 @@ pub fn start_with_geyser(release: bool, verbose: bool) -> Result<(), CliError> {
             "name": "antegen",
             "rpc_url": "http://localhost:8899",
             "ws_url": "ws://localhost:8900",
-            "keypath": runtime_dir.join("executor-keypair.json").to_string_lossy(),
+            "keypath": runtime_dir.join("keypairs").join("geyser-executor-keypair.json").to_string_lossy(),
             "thread_count": 10,
             "transaction_timeout_threshold": 150
         });
@@ -263,13 +352,24 @@ pub fn start_with_geyser(release: bool, verbose: bool) -> Result<(), CliError> {
             .await
             .map_err(|e| CliError::FailedLocalnet(e.to_string()))?;
 
-        // Wait a moment for validator to be ready
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        
+        // Wait for validator to be ready with health check
+        wait_for_validator(20).await?; // 20 attempts with exponential backoff
+
+        // Check and fund Geyser executor keypair
+        println!("✓ Checking Geyser executor account...");
+        let runtime_dir = dirs_next::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(".antegen")
+            .join("localnet");
+        let geyser_keypair_path = runtime_dir
+            .join("keypairs")
+            .join("geyser-executor-keypair.json");
+        templates::check_and_fund_executor(&geyser_keypair_path, "http://localhost:8899").ok();
+
         // Initialize thread config
         println!("✓ Initializing thread program config...");
         initialize_thread_config().ok(); // Best effort - warning already printed if fails
-        
+
         println!("\n✨ Localnet with Geyser plugin is running!");
         println!("\n📝 Available endpoints:");
         println!("  • RPC:     http://localhost:8899");
@@ -284,8 +384,13 @@ pub fn start_with_geyser(release: bool, verbose: bool) -> Result<(), CliError> {
     })
 }
 
-/// Stop the running localnet
+/// Stop the running localnet with optional cleanup
 pub fn stop() -> Result<(), CliError> {
+    stop_with_cleanup(false)
+}
+
+/// Stop the running localnet and optionally clean up all artifacts
+pub fn stop_with_cleanup(clean: bool) -> Result<(), CliError> {
     RUNTIME.block_on(async {
         // Always create a new daemon instance to connect to existing processes
         let mut daemon = LocalnetDaemon::new(std::path::Path::new("target").exists())
@@ -298,8 +403,69 @@ pub fn stop() -> Result<(), CliError> {
             .map_err(|e| CliError::FailedLocalnet(e.to_string()))?;
 
         println!("✓ Localnet stopped");
+
+        if clean {
+            clean_localnet_artifacts()?;
+        }
+
         Ok(())
     })
+}
+
+/// Clean up all localnet artifacts (ledger, keypairs, configs)
+pub fn clean_localnet_artifacts() -> Result<(), CliError> {
+    let runtime_dir = dirs_next::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".antegen")
+        .join("localnet");
+
+    if !runtime_dir.exists() {
+        println!("No localnet artifacts to clean");
+        return Ok(());
+    }
+
+    println!("Cleaning localnet artifacts...");
+
+    // Clean test-ledger
+    let ledger_dir = runtime_dir.join("test-ledger");
+    if ledger_dir.exists() {
+        std::fs::remove_dir_all(&ledger_dir)
+            .map_err(|e| CliError::FailedLocalnet(format!("Failed to remove test-ledger: {}", e)))?;
+        println!("  ✓ Removed test-ledger");
+    }
+
+    // Clean keypairs directory (but preserve admin keypair)
+    let keypairs_dir = runtime_dir.join("keypairs");
+    if keypairs_dir.exists() {
+        // Remove only executor keypairs, not admin
+        if let Ok(entries) = std::fs::read_dir(&keypairs_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() &&
+                   path.extension().and_then(|s| s.to_str()) == Some("json") &&
+                   !path.file_name().unwrap().to_str().unwrap().contains("admin") {
+                    std::fs::remove_file(&path).ok();
+                }
+            }
+        }
+        println!("  ✓ Cleaned executor keypairs");
+    }
+
+    // Clean config files
+    let config_file = runtime_dir.join("config.json");
+    if config_file.exists() {
+        std::fs::remove_file(&config_file).ok();
+        println!("  ✓ Removed config.json");
+    }
+
+    let geyser_config = runtime_dir.join("geyser-plugin-config.json");
+    if geyser_config.exists() {
+        std::fs::remove_file(&geyser_config).ok();
+        println!("  ✓ Removed geyser-plugin-config.json");
+    }
+
+    println!("✓ Cleanup complete");
+    Ok(())
 }
 
 /// Get status of the running localnet

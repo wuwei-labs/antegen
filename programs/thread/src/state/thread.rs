@@ -127,16 +127,18 @@ pub enum TriggerContext {
 #[derive(AnchorDeserialize, AnchorSerialize, Clone, Debug)]
 pub struct ThreadResponse {
     pub close_to: Option<Pubkey>,
-    pub next_instruction: Option<u8>,
+    pub next_fiber: Option<u8>,
     pub trigger: Option<Trigger>,
+    pub append_instruction: Option<SerializableInstruction>,
 }
 
 impl Default for ThreadResponse {
     fn default() -> Self {
         Self {
             close_to: None,
-            next_instruction: None,
+            next_fiber: None,
             trigger: None,
+            append_instruction: None,
         }
     }
 }

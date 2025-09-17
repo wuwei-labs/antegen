@@ -23,7 +23,7 @@ pub struct FiberState {
     /// When this fiber was last executed
     pub last_executed: i64,
     /// Total number of executions
-    pub execution_count: u64,
+    pub exec_count: u64,
     /// Priority fee in microlamports for compute unit price (0 = no priority fee)
     pub priority_fee: u64,
 }
@@ -41,14 +41,14 @@ impl FiberInstructionProcessor for FiberState {
         let compiled = CompiledInstructionV0::try_from_slice(&self.compiled_instruction)?;
         // Decompile the instruction
         let mut instruction = decompile_instruction(&compiled)?;
-        
+
         // Replace PAYER_PUBKEY with the actual executor
         for acc in instruction.accounts.iter_mut() {
             if acc.pubkey.eq(&PAYER_PUBKEY) {
                 acc.pubkey = *executor;
             }
         }
-        
+
         Ok(instruction)
     }
 }

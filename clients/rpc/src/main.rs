@@ -3,7 +3,8 @@ use clap::Parser;
 use log::info;
 use std::path::PathBuf;
 use std::sync::Arc;
-use solana_sdk::signature::{read_keypair_file, Signer};
+use solana_sdk::signature::Signer;
+use antegen_processor::utils::KeypairManager;
 
 use antegen_client::{AntegenClient, RpcDatasource, RpcConfig};
 use antegen_processor::builder::ProcessorBuilder;
@@ -93,13 +94,28 @@ fn init_logging(debug: bool) {
 async fn run_rpc_client(config: Config) -> Result<()> {
     info!("Initializing RPC client with pre-built datasource");
 
-    // Validate keypair
-    let keypair = Arc::new(
-        read_keypair_file(&config.keypair_path)
-            .map_err(|e| anyhow::anyhow!("Failed to read keypair: {}", e))?,
+    // Build WebSocket URL from RPC URL if not provided
+    let ws_url = config.ws_url.clone().unwrap_or_else(|| {
+        config.rpc_url
+            .replace("http://", "ws://")
+            .replace("https://", "wss://")
+            .replace(":8899", ":8900") // Solana default ports
+    });
+
+    // Initialize keypair manager and do all setup
+    let keypair_manager = KeypairManager::new(
+        &config.keypair_path,
+        config.rpc_url.clone(),
+        ws_url.clone(),
     );
+
+    // This will:
+    // 1. Wait for validator to be ready
+    // 2. Load/create keypair
+    // 3. Ensure funded
+    let keypair = Arc::new(keypair_manager.initialize(100_000_000).await?); // 0.1 SOL minimum
     let executor_pubkey = keypair.pubkey();
-    info!("Executor pubkey: {}", executor_pubkey);
+    info!("Executor ready: {}", executor_pubkey);
 
     // Create RPC datasource configuration
     let rpc_config = RpcConfig::new(config.rpc_url.clone(), config.thread_program_id)

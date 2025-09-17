@@ -60,7 +60,11 @@ fn parse_bpf_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
             let verbose = matches.get_flag("verbose");
             Ok(CliCommand::LocalnetStartGeyser { release, verbose })
         }
-        Some(("stop", _)) => Ok(CliCommand::LocalnetStop),
+        Some(("stop", matches)) => {
+            let clean = matches.get_flag("clean");
+            Ok(CliCommand::LocalnetStop { clean })
+        }
+        Some(("clean", _)) => Ok(CliCommand::LocalnetClean),
         Some(("status", _)) => Ok(CliCommand::LocalnetStatus),
         Some(("client", matches)) => parse_localnet_client_command(matches),
         _ => Err(CliError::CommandNotRecognized(

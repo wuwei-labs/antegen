@@ -45,11 +45,11 @@ impl ConfigBuilder {
     
     
     /// Add an RPC client
-    pub fn add_rpc_client(&mut self, name: &str, rpc_url: Option<&str>) -> &mut Self {
+    pub fn add_rpc_client(&mut self, name: &str, rpc_url: Option<&str>) -> Result<&mut Self> {
         let url = rpc_url.unwrap_or("http://localhost:8899");
-        let config = templates::rpc_service(name, url, &self.runtime_dir, self.is_dev, self.verbose);
+        let config = templates::rpc_service(name, url, &self.runtime_dir, self.is_dev, self.verbose)?;
         self.apps.push(config);
-        self
+        Ok(self)
     }
     
     // TODO: Add custom data source client when implemented
@@ -61,7 +61,7 @@ impl ConfigBuilder {
     // }
     
     /// Add a generic client based on type
-    pub fn add_client(&mut self, client_type: String, name: Option<String>) -> &mut Self {
+    pub fn add_client(&mut self, client_type: String, name: Option<String>) -> Result<&mut Self> {
         match client_type.as_str() {
             "rpc" => {
                 let client_name = name.unwrap_or_else(|| format!("rpc-{}", chrono::Utc::now().timestamp()));
@@ -74,7 +74,7 @@ impl ConfigBuilder {
             // }
             _ => {
                 // For unknown types, skip silently for now
-                self
+                Ok(self)
             }
         }
     }

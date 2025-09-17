@@ -7,6 +7,7 @@ pub mod parser;
 pub mod queue;
 pub mod service;
 pub mod types;
+pub mod utils;
 
 // Re-export main public APIs
 pub use metrics::ProcessorMetrics;

@@ -28,7 +28,10 @@ pub enum CliCommand {
         release: bool,
         verbose: bool,
     },
-    LocalnetStop,
+    LocalnetStop {
+        clean: bool,
+    },
+    LocalnetClean,
     LocalnetStatus,
     LocalnetClientAdd {
         client_type: String,
@@ -213,6 +216,17 @@ pub fn app() -> Command {
                 .subcommand(
                     Command::new("stop")
                         .about("Stop the running localnet")
+                        .arg(
+                            Arg::new("clean")
+                                .short('c')
+                                .long("clean")
+                                .action(ArgAction::SetTrue)
+                                .help("Clean up all localnet artifacts after stopping")
+                        )
+                )
+                .subcommand(
+                    Command::new("clean")
+                        .about("Clean up all localnet artifacts (ledger, keypairs, configs)")
                 )
                 .subcommand(
                     Command::new("status")

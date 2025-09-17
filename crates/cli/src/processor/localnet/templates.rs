@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use super::daemon::AppConfig;
-use solana_sdk::signature::{write_keypair_file, read_keypair_file, Keypair, Signer};
+use antegen_sdk::ID as THREAD_PROGRAM_ID;
+use solana_sdk::signature::{read_keypair_file, Signer};
 
 /// Create validator service configuration
-/// 
+///
 /// To enable Geyser plugin integration:
 /// 1. Pass a geyser_config pointing to the Antegen Geyser plugin configuration
 /// 2. The plugin will automatically start processing events through the Geyser interface
@@ -24,7 +25,7 @@ pub fn validator_service(
         "9900".to_string(),
         "--log".to_string(),
     ];
-    
+
     // Add thread program if available
     let program_path = if is_dev {
         // Get absolute path for dev mode
@@ -34,22 +35,22 @@ pub fn validator_service(
     } else {
         runtime_dir.join("antegen_thread_program.so")
     };
-    
+
     if program_path.exists() {
         args.push("--bpf-program".to_string());
-        args.push("AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1".to_string());
+        args.push(THREAD_PROGRAM_ID.to_string());
         args.push(program_path.to_string_lossy().to_string());
     }
-    
+
     // Add Geyser plugin if configured
     if let Some(config) = geyser_config {
         args.push("--geyser-plugin-config".to_string());
         args.push(config.to_string_lossy().to_string());
     }
-    
+
     // Get validator binary path
     let script = get_binary_path("solana-test-validator", runtime_dir, is_dev);
-    
+
     let mut env = HashMap::new();
     env.insert(
         "RUST_LOG".to_string(),
@@ -60,7 +61,7 @@ pub fn validator_service(
          antegen_processor=info,\
          antegen_submitter=info".to_string()
     );
-    
+
     AppConfig {
         name: "antegen-validator".to_string(),
         script: script.to_string_lossy().to_string(),
@@ -96,33 +97,30 @@ pub fn rpc_service(
     runtime_dir: &PathBuf,
     is_dev: bool,
     verbose: bool,
-) -> AppConfig {
-    // Get or create unique keypair for this service
-    let keypair_path = match get_or_create_service_keypair(name, runtime_dir) {
-        Ok(path) => path,
-        Err(e) => {
-            eprintln!("Warning: Failed to create service keypair: {}. Using default.", e);
-            runtime_dir.join("executor-keypair.json")
-        }
-    };
-    
+) -> Result<AppConfig, anyhow::Error> {
+    // Just construct the path where keypair should be stored
+    // The client will handle creation/funding
+    let keypair_path = runtime_dir
+        .join("keypairs")
+        .join(format!("{}-keypair.json", name));
+
     let mut args = vec![
         "--rpc-url".to_string(),
         rpc_url.to_string(),
         "--keypair".to_string(),
         keypair_path.to_string_lossy().to_string(),
         "--thread-program-id".to_string(),
-        "AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1".to_string(),
+        THREAD_PROGRAM_ID.to_string(),
         "--forgo-commission".to_string(),
     ];
-    
+
     if verbose {
         args.push("--verbose".to_string());
     }
-    
+
     // Get RPC binary path
     let script = get_binary_path("antegen-rpc", runtime_dir, is_dev);
-    
+
     let mut env = HashMap::new();
     let log_level = if verbose {
         "debug,antegen_client=debug,antegen_processor=debug,antegen_submitter=debug"
@@ -134,8 +132,8 @@ pub fn rpc_service(
         "ANTEGEN_INSTANCE_NAME".to_string(),
         name.to_string()
     );
-    
-    AppConfig {
+
+    Ok(AppConfig {
         name: name.to_string(),
         script: script.to_string_lossy().to_string(),
         args: Some(args),
@@ -147,95 +145,105 @@ pub fn rpc_service(
         depends_on: Some(vec!["antegen-validator".to_string()]),
         log_file: None,
         error_file: None,
-    }
+    })
 }
 
-/// Get or create a keypair for a service
-fn get_or_create_service_keypair(service_name: &str, runtime_dir: &PathBuf) -> anyhow::Result<PathBuf> {
-    // Create keypairs directory if it doesn't exist
-    let keypairs_dir = runtime_dir.join("keypairs");
-    std::fs::create_dir_all(&keypairs_dir)?;
-    
-    // Generate keypair path based on service name
-    let keypair_path = keypairs_dir.join(format!("{}-keypair.json", service_name));
-    
-    // Generate keypair if it doesn't exist
-    if !keypair_path.exists() {
-        let keypair = Keypair::new();
-        write_keypair_file(&keypair, &keypair_path)
-            .map_err(|e| anyhow::anyhow!("Failed to write keypair: {}", e))?;
-        println!("  Generated new keypair for service '{}': {}", service_name, keypair.pubkey());
-        
-        // Airdrop SOL to the new keypair (wait for completion)
-        airdrop_to_keypair(&keypair.pubkey())
-            .map_err(|e| anyhow::anyhow!("Failed to airdrop to new keypair: {}", e))?;
-    } else {
-        // Read existing keypair to show pubkey
-        if let Ok(keypair) = read_keypair_file(&keypair_path) {
-            println!("  Using existing keypair for service '{}': {}", service_name, keypair.pubkey());
-            
-            // Ensure the keypair has SOL (in case it's an existing keypair with no balance)
-            // Log warning if airdrop fails but don't fail the entire operation
-            if let Err(e) = airdrop_to_keypair(&keypair.pubkey()) {
-                eprintln!("  Warning: Failed to airdrop to existing keypair: {}", e);
-                eprintln!("  The service may fail if the keypair has insufficient balance");
-            }
-        }
-    }
-    
-    Ok(keypair_path)
-}
-
-/// Airdrop SOL to a keypair (synchronous, blocking)
-fn airdrop_to_keypair(pubkey: &solana_sdk::pubkey::Pubkey) -> anyhow::Result<()> {
-    // Wait a moment for validator to be ready if just started
-    std::thread::sleep(std::time::Duration::from_secs(2));
-    
-    let pubkey_str = pubkey.to_string();
-    println!("  Airdropping 10 SOL to {}...", pubkey_str);
-    
-    let output = std::process::Command::new("solana")
-        .args(&[
-            "airdrop",
-            "10",
-            &pubkey_str,
-            "--url", "http://localhost:8899"
-        ])
-        .output()
-        .map_err(|e| anyhow::anyhow!("Failed to execute airdrop command: {}", e))?;
-    
-    if output.status.success() {
-        println!("  ✓ Successfully airdropped 10 SOL to {}", pubkey_str);
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow::anyhow!("Airdrop failed: {}", stderr))
-    }
-}
 
 /// Get the path to a binary based on dev/release mode
 fn get_binary_path(binary_name: &str, runtime_dir: &PathBuf, is_dev: bool) -> PathBuf {
     if is_dev {
         // Get absolute path to current directory
         let current_dir = std::env::current_dir().unwrap_or_default();
-        
+
         // Check for debug build first
         let debug_path = current_dir.join("target/debug").join(binary_name);
         if debug_path.exists() {
             return debug_path;
         }
-        
+
         // Then check release build
         let release_path = current_dir.join("target/release").join(binary_name);
         if release_path.exists() {
             return release_path;
         }
-        
+
         // Fallback to just the binary name (PATH resolution)
         PathBuf::from(binary_name)
     } else {
         // In release mode, use runtime directory
         runtime_dir.join(binary_name)
+    }
+}
+
+/// Check and fund executor keypair if needed (localnet only)
+pub fn check_and_fund_executor(keypair_path: &PathBuf, rpc_url: &str) -> anyhow::Result<()> {
+    // Only for localnet
+    if !rpc_url.contains("localhost") && !rpc_url.contains("127.0.0.1") {
+        return Ok(());
+    }
+
+    // Check if keypair exists
+    if keypair_path.exists() {
+        println!("    Found keypair at {:?}", keypair_path);
+        // Read keypair
+        match read_keypair_file(keypair_path) {
+            Ok(keypair) => {
+                let pubkey = keypair.pubkey();
+                println!("    Pubkey: {}", pubkey);
+
+                // Check balance using solana CLI
+                let output = std::process::Command::new("solana")
+                    .args(&["balance", &pubkey.to_string(), "--url", rpc_url])
+                    .output()?;
+
+                if output.status.success() {
+                    let balance_str = String::from_utf8_lossy(&output.stdout);
+                    // Parse balance (format: "0.5 SOL" or "0 SOL")
+                    if let Some(balance_part) = balance_str.split_whitespace().next() {
+                        if let Ok(balance) = balance_part.parse::<f64>() {
+                            // If balance < 0.1 SOL, airdrop
+                            if balance < 0.1 {
+                                println!("    Balance: {} SOL (insufficient), airdropping...", balance);
+                                airdrop_to_executor(&pubkey, rpc_url)?;
+                            } else {
+                                println!("    Balance: {} SOL (sufficient)", balance);
+                            }
+                        }
+                    }
+                } else {
+                    println!("    Could not check balance: {}", String::from_utf8_lossy(&output.stderr));
+                }
+            }
+            Err(e) => {
+                println!("    Warning: Could not read keypair: {}", e);
+            }
+        }
+    } else {
+        println!("    Keypair not found (client will create it)");
+    }
+
+    Ok(())
+}
+
+/// Airdrop SOL to an executor account
+fn airdrop_to_executor(pubkey: &solana_sdk::pubkey::Pubkey, rpc_url: &str) -> anyhow::Result<()> {
+    let output = std::process::Command::new("solana")
+        .args(&[
+            "airdrop",
+            "1", // 1 SOL
+            &pubkey.to_string(),
+            "--url", rpc_url
+        ])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to execute airdrop command: {}", e))?;
+
+    if output.status.success() {
+        println!("  ✓ Successfully airdropped 1 SOL to {}", pubkey);
+        Ok(())
+    } else {
+        // Don't fail if airdrop fails, client will wait for funding
+        println!("  Warning: Airdrop failed, client will wait for manual funding");
+        Ok(())
     }
 }
 
@@ -251,20 +259,20 @@ pub fn get_client_template(
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".antegen")
         .join("localnet");
-    
+
     let is_dev = std::path::Path::new("target").exists();
-    
+
     // Handle custom keypair if provided
     if let Some(_custom_keypair) = keypair {
         // TODO: Copy custom keypair to service-specific location
         // For now, we'll just use the service-specific generation
         eprintln!("Note: Custom keypair support coming soon. Using auto-generated keypair.");
     }
-    
+
     match client_type {
         "rpc" => {
             let url = rpc_url.unwrap_or_else(|| "http://localhost:8899".to_string());
-            Ok(rpc_service(name, &url, &runtime_dir, is_dev, verbose))
+            rpc_service(name, &url, &runtime_dir, is_dev, verbose)
         }
         // TODO: Add custom data source when implemented
         // "custom" => {

@@ -23,6 +23,8 @@ impl Default for ReplayConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub rpc_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ws_url: Option<String>,
     pub keypair_path: PathBuf,
     pub thread_program_id: Pubkey,
     pub debug: bool,
@@ -68,6 +70,7 @@ impl Config {
             rpc_url: args
                 .rpc_url
                 .ok_or_else(|| anyhow!("RPC URL is required"))?,
+            ws_url: None, // Will be derived from rpc_url if needed
             keypair_path: args
                 .keypair
                 .ok_or_else(|| anyhow!("Keypair path is required"))?,

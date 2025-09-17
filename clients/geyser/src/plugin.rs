@@ -149,7 +149,7 @@ impl GeyserPlugin for AntegenPlugin {
         info!("Created Geyser datasource with channel");
 
         // Build the client using AntegenClientBuilder
-        let mut client_builder = AntegenClientBuilder::default()
+        let client_builder = AntegenClientBuilder::default()
             .rpc_url(rpc_url.clone())
             .datasource(Box::new(geyser_datasource))
             .processor(

@@ -41,6 +41,7 @@ once_cell = { workspace = true }
 rand = { workspace = true }
 pmdaemon = "=0.1.4"
 tokio = { workspace = true, features = ["full"] }
+reqwest = { workspace = true }
 
 [[bin]]
 name = "antegen"

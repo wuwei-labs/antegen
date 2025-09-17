@@ -116,6 +116,9 @@ pub enum AntegenThreadError {
     
     #[msg("Initial instruction provided but fiber account is missing")]
     MissingFiberAccount,
+
+    #[msg("Invalid fiber index specified in ThreadResponse")]
+    InvalidFiberIndex,
 }
 
 /// Alias for AntegenThreadError
