@@ -1,5 +1,5 @@
 use antegen_sdk::rpc::{CacheConfig, CachedRpcClient};
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use log::{debug, error, info, warn};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{
@@ -47,17 +47,10 @@ impl ProcessorService {
         config: ProcessorConfig,
         account_receiver: mpsc::Receiver<AccountUpdate>,
     ) -> Result<Self> {
-        // Build WebSocket URL from RPC URL
-        let ws_url = config.rpc_url
-            .replace("http://", "ws://")
-            .replace("https://", "wss://")
-            .replace(":8899", ":8900"); // Solana default ports
-
         // Use keypair manager for complete initialization
         let keypair_manager = KeypairManager::new(
             &config.executor_keypair_path,
             config.rpc_url.clone(),
-            ws_url,
         );
 
         // Initialize keypair based on context (skip wait for Geyser plugin)

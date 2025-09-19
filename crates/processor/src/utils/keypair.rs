@@ -10,15 +10,13 @@ use std::path::{Path, PathBuf};
 pub struct KeypairManager {
     keypair_path: PathBuf,
     rpc_url: String,
-    ws_url: String,
 }
 
 impl KeypairManager {
-    pub fn new(keypair_path: impl AsRef<Path>, rpc_url: String, ws_url: String) -> Self {
+    pub fn new(keypair_path: impl AsRef<Path>, rpc_url: String) -> Self {
         Self {
             keypair_path: keypair_path.as_ref().to_path_buf(),
             rpc_url,
-            ws_url,
         }
     }
 

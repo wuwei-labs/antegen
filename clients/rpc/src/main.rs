@@ -94,19 +94,10 @@ fn init_logging(debug: bool) {
 async fn run_rpc_client(config: Config) -> Result<()> {
     info!("Initializing RPC client with pre-built datasource");
 
-    // Build WebSocket URL from RPC URL if not provided
-    let ws_url = config.ws_url.clone().unwrap_or_else(|| {
-        config.rpc_url
-            .replace("http://", "ws://")
-            .replace("https://", "wss://")
-            .replace(":8899", ":8900") // Solana default ports
-    });
-
     // Initialize keypair manager and do all setup
     let keypair_manager = KeypairManager::new(
         &config.keypair_path,
         config.rpc_url.clone(),
-        ws_url.clone(),
     );
 
     // This will:

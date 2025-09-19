@@ -1,11 +1,12 @@
 use crate::{
-    state::{Trigger, TriggerContext},
+    state::{compile_instruction, FiberState, SerializableInstruction, Trigger, TriggerContext},
     utils::next_timestamp,
     *,
 };
 use anchor_lang::{
     prelude::*,
     solana_program::{
+        instruction::Instruction,
         nonce::state::State,
         system_program,
         sysvar::{recent_blockhashes, rent},
@@ -15,7 +16,7 @@ use anchor_lang::{
 
 /// Accounts required by the `thread_create` instruction.
 #[derive(Accounts)]
-#[instruction(amount: u64, id: ThreadId, trigger: Trigger)]
+#[instruction(amount: u64, id: ThreadId, trigger: Trigger, initial_instruction: Option<SerializableInstruction>, priority_fee: Option<u64>)]
 pub struct ThreadCreate<'info> {
     /// CHECK: the authority (owner) of the thread. Allows for program
     /// ownership
@@ -40,6 +41,20 @@ pub struct ThreadCreate<'info> {
     )]
     pub thread: Account<'info, Thread>,
 
+    /// The initial fiber account (created if initial_instruction is Some)
+    #[account(
+        init_if_needed,
+        seeds = [
+            SEED_THREAD_FIBER,
+            thread.key().as_ref(),
+            &[0], // Always use index 0 for initial fiber
+        ],
+        bump,
+        payer = payer,
+        space = 8 + FiberState::INIT_SPACE
+    )]
+    pub fiber: Option<Account<'info, FiberState>>,
+
     /// CHECK: Nonce account that must be passed in as a signer
     #[account(mut)]
     pub nonce_account: Option<Signer<'info>>,
@@ -61,6 +76,8 @@ pub fn thread_create(
     amount: u64,
     id: ThreadId,
     trigger: Trigger,
+    initial_instruction: Option<SerializableInstruction>,
+    priority_fee: Option<u64>,
 ) -> Result<()> {
     let authority: &Signer = &ctx.accounts.authority;
     let payer: &Signer = &ctx.accounts.payer;
@@ -98,8 +115,7 @@ pub fn thread_create(
 
         thread.nonce_account = nonce_account.key();
     } else {
-        // No nonce account, use system_program::ID as sentinel value
-        thread.nonce_account = system_program::ID;
+        thread.nonce_account = crate::ID;
     }
 
     // Initialize the thread
@@ -149,7 +165,36 @@ pub fn thread_create(
     };
 
     // Handle optional initial instruction
-    thread.fibers = Vec::new(); // No fibers initially, use fiber_create to add them
+    if let Some(instruction) = initial_instruction {
+        // Create initial fiber (index 0)
+        if let Some(fiber_account) = &mut ctx.accounts.fiber {
+            // Convert to regular Instruction
+            let instruction: Instruction = instruction.into();
+
+            // Use thread's PDA seeds for signer seeds
+            let signer_seeds = vec![vec![
+                SEED_THREAD.to_vec(),
+                thread.authority.to_bytes().to_vec(),
+                thread.id.clone(),
+            ]];
+
+            // Compile the instruction
+            let compiled = compile_instruction(instruction, signer_seeds)?;
+            let compiled_bytes = compiled.try_to_vec()?;
+
+            // Initialize the fiber
+            fiber_account.thread = thread.key();
+            fiber_account.index = 0;
+            fiber_account.compiled_instruction = compiled_bytes;
+            fiber_account.priority_fee = priority_fee.unwrap_or(0);
+
+            // Add fiber to thread's fiber mapping
+            thread.fibers = vec![0];
+        }
+    } else {
+        // No initial instruction, create empty thread
+        thread.fibers = Vec::new();
+    }
 
     thread.exec_index = 0;
     thread.exec_count = 0; // Initialize execution counter

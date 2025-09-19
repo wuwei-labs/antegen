@@ -86,8 +86,32 @@ pub mod cpi {
         amount: u64,
         id: ThreadId,
         trigger: Trigger,
+        initial_instruction: Option<SerializableInstruction>,
+        priority_fee: Option<u64>,
     ) -> Result<()> {
-        antegen_thread_program::cpi::create_thread(ctx, amount, id, trigger)
+        antegen_thread_program::cpi::create_thread(ctx, amount, id, trigger, initial_instruction, priority_fee)
+    }
+
+    /// Convenience wrapper to create a thread with an initial instruction
+    pub fn thread_create_with_instruction<'info>(
+        ctx: CpiContext<'_, '_, '_, 'info, ThreadCreate<'info>>,
+        amount: u64,
+        id: ThreadId,
+        trigger: Trigger,
+        instruction: SerializableInstruction,
+        priority_fee: u64,
+    ) -> Result<()> {
+        antegen_thread_program::cpi::create_thread(ctx, amount, id, trigger, Some(instruction), Some(priority_fee))
+    }
+
+    /// Convenience wrapper to create an empty thread (no fibers)
+    pub fn thread_create_empty<'info>(
+        ctx: CpiContext<'_, '_, '_, 'info, ThreadCreate<'info>>,
+        amount: u64,
+        id: ThreadId,
+        trigger: Trigger,
+    ) -> Result<()> {
+        antegen_thread_program::cpi::create_thread(ctx, amount, id, trigger, None, None)
     }
 
     pub fn thread_delete<'info>(

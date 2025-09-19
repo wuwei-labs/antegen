@@ -512,11 +512,6 @@ pub fn start_with_geyser(release: bool, verbose: bool) -> Result<(), CliError> {
     })
 }
 
-/// Stop the running localnet with optional cleanup
-pub fn stop() -> Result<(), CliError> {
-    stop_with_cleanup(false)
-}
-
 /// Stop the running localnet and optionally clean up all artifacts
 pub fn stop_with_cleanup(clean: bool) -> Result<(), CliError> {
     RUNTIME.block_on(async {

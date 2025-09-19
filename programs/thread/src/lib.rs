@@ -105,13 +105,27 @@ pub mod thread_program {
     }
 
     /// Creates a new transaction thread.
+    /// Optionally creates an initial fiber if instruction is provided.
     pub fn create_thread(
         ctx: Context<ThreadCreate>,
         amount: u64,
         id: ThreadId,
         trigger: Trigger,
+        initial_instruction: Option<SerializableInstruction>,
+        priority_fee: Option<u64>,
     ) -> Result<()> {
-        thread_create(ctx, amount, id, trigger)
+        thread_create(ctx, amount, id, trigger, initial_instruction, priority_fee)
+    }
+
+    /// Creates a new transaction thread.
+    /// Optionally creates an initial fiber if instruction is provided.
+    pub fn create_empty_thread(
+        ctx: Context<ThreadCreate>,
+        amount: u64,
+        id: ThreadId,
+        trigger: Trigger,
+    ) -> Result<()> {
+        thread_create(ctx, amount, id, trigger, None, None)
     }
 
     /// Closes an existing thread account and returns the lamports to the owner.
