@@ -1,0 +1,52 @@
+[package]
+name = "antegen-client-geyser"
+description = "Antegen geyser plugin for Solana validators"
+build = "build.rs"
+publish = false
+
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+documentation = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+readme = { workspace = true }
+keywords = { workspace = true }
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "antegen_client_geyser"
+
+[dependencies]
+antegen-client = { workspace = true }
+antegen-processor = { workspace = true }
+antegen-submitter = { workspace = true }
+
+agave-geyser-plugin-interface = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+solana-logger = { workspace = true }
+solana-program = { workspace = true }
+solana-sdk = { workspace = true }
+tokio = { workspace = true }
+
+# Metrics dependencies (for exposing, not collecting)
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-prometheus = { workspace = true }
+prometheus = { workspace = true }
+hyper = { workspace = true }
+
+[build-dependencies]
+cargo_metadata = { workspace = true }
+rustc_version = { workspace = true }
+cargo_toml = { workspace = true }
+
+[features]
+default = []
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

@@ -151,10 +151,10 @@ jobs:
           cargo build --workspace --release --target ${{ matrix.target }} --features mainnet
 
           if [[ "${{ matrix.target }}" == *"darwin"* ]]; then
-            install -m 644 target/${{ matrix.target }}/release/libantegen_plugin.dylib staging/lib/libantegen_plugin.so
+            install -m 644 target/${{ matrix.target }}/release/libantegen_client_geyser.dylib staging/lib/libantegen_client_geyser.so
             install -m 755 target/${{ matrix.target }}/release/antegen staging/bin/
           else
-            install -m 644 target/${{ matrix.target }}/release/libantegen_plugin.so staging/lib/
+            install -m 644 target/${{ matrix.target }}/release/libantegen_client_geyser.so staging/lib/
             install -m 755 target/${{ matrix.target }}/release/antegen staging/bin/
           fi
 

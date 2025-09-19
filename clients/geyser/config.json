@@ -1,0 +1,6 @@
+{
+  "libpath": "../target/debug/libantegen_client_geyser.dylib",
+  "keypath": "~/.config/solana/id.json",
+  "slot_timeout_threshold": 150,
+  "worker_threads": 10
+}

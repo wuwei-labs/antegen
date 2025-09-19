@@ -1,0 +1,10 @@
+{
+  "name": "antegen",
+  "libpath": "../target/debug/libantegen_client_geyser.dylib",
+  "keypath": "~/.config/solana/id.json",
+  "thread_count": 10,
+  "transaction_timeout_threshold": 150,
+  "builder_id": 1,
+  "rpc_url": "http://localhost:8899",
+  "ws_url": "ws://localhost:8900"
+}

@@ -1,0 +1,34 @@
+[package]
+name = "antegen-sdk"
+description = "An SDK for building automated programs on Solana"
+
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+documentation = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+readme = { workspace = true }
+keywords = { workspace = true }
+
+[lib]
+name = "antegen_sdk"
+
+[dependencies]
+antegen-thread-program = { workspace = true, features = ["cpi"] }
+
+anchor-lang = { workspace = true }
+solana-sdk = { workspace = true }
+solana-client = { workspace = true }
+
+anyhow = { workspace = true }
+log = { workspace = true }
+moka = { workspace = true }
+opentelemetry = { workspace = true, optional = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+default = []
+metrics = ["opentelemetry"]

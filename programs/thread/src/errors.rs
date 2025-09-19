@@ -13,15 +13,19 @@ pub enum AntegenThreadError {
     #[msg("The thread is in an invalid state")]
     InvalidThreadState,
 
-    /// TThe provided trigger variant is invalid.
+    /// The provided trigger variant is invalid.
     #[msg("The trigger variant cannot be changed")]
     InvalidTriggerVariant,
+
+    /// The provided nonce account is invalid.
+    #[msg("The provided nonce account is invalid")]
+    InvalidNonceAccount,
 
     /// Thrown if a exec instruction is invalid because the thread's trigger condition has not been met.
     #[msg("The trigger condition has not been activated")]
     TriggerConditionFailed,
 
-    #[msg("This operation cannot be processes because the thread is currently busy")]
+    #[msg("This operation cannot be processed because the thread is currently busy")]
     ThreadBusy,
 
     /// Thrown if a request is invalid because the thread is currently paused.
@@ -53,4 +57,69 @@ pub enum AntegenThreadError {
     #[msg("MathOverflow")]
     MathOverflow,
 
+    #[msg("Thread does not have a nonce account")]
+    ThreadHasNoNonceAccount,
+
+    #[msg("Thread is currently being observed by observers")]
+    ThreadBeingObserved,
+
+    #[msg("Observer has not claimed this thread")]
+    ObserverNotClaimed,
+
+    #[msg("Invalid thread authority")]
+    InvalidThreadAuthority,
+
+    #[msg("Invalid observer authority")]
+    InvalidObserverAuthority,
+
+    #[msg("Invalid registry admin")]
+    InvalidRegistryAdmin,
+
+    #[msg("Invalid instruction provided to thread_submit")]
+    InvalidInstruction,
+
+    #[msg("Invalid signatory for observer")]
+    InvalidSignatory,
+
+    #[msg("This instruction must be called via CPI")]
+    MustBeCalledViaCPI,
+    
+    #[msg("Fiber already claimed by another observer")]
+    AlreadyClaimed,
+    
+    #[msg("Wrong fiber index for current execution")]
+    WrongFiberIndex,
+    
+    #[msg("Observer priority window is still active")]
+    ObserverPriorityActive,
+    
+    #[msg("Trigger is not ready yet")]
+    TriggerNotReady,
+    
+    #[msg("Nonce account is required for all threads")]
+    NonceRequired,
+    
+    #[msg("Invalid observer account provided")]
+    InvalidObserverAccount,
+    
+    #[msg("Invalid config admin")]
+    InvalidConfigAdmin,
+    
+    #[msg("Global pause is active")]
+    GlobalPauseActive,
+    
+    #[msg("Invalid authority for this operation")]
+    InvalidAuthority,
+    
+    #[msg("Invalid fee percentage (must be 0-10000)")]
+    InvalidFeePercentage,
+    
+    #[msg("Initial instruction provided but fiber account is missing")]
+    MissingFiberAccount,
+
+    #[msg("Invalid fiber index specified in ThreadResponse")]
+    InvalidFiberIndex,
 }
+
+/// Alias for AntegenThreadError
+pub use AntegenThreadError as ThreadError;

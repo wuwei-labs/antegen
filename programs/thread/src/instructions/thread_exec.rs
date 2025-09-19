@@ -1,65 +1,23 @@
+use crate::{errors::*, state::ThreadResponse, *};
 use anchor_lang::{
     prelude::*,
     solana_program::{
         instruction::Instruction,
-        program::{get_return_data, invoke_signed}
+        program::{get_return_data, invoke_signed},
+        system_program,
+        sysvar::recent_blockhashes,
     },
-    AnchorDeserialize, InstructionData,
+    InstructionData, ToAccountMetas,
 };
-use antegen_network_program::state::{Pool, Worker, WorkerAccount, WorkerCommission, SEED_WORKER_COMMISSION};
-use antegen_utils::thread::{SerializableInstruction, ThreadResponse, PAYER_PUBKEY};
-use crate::{errors::*, state::*, TRANSACTION_BASE_FEE_REIMBURSEMENT};
-
-/// The ID of the pool workers must be a member of to collect fees.
-const POOL_ID: u64 = 0;
-
-#[derive(Debug, Clone, Copy)]
-struct BalanceSnapshot {
-    signatory: u64,
-    commission: u64,
-}
-
-/// Represents changes in lamport balances between two snapshots
-#[derive(Debug)]
-struct BalanceChanges {
-    signatory: i64,
-    commission: i64,
-}
-
-impl BalanceSnapshot {
-    fn difference(&self, other: &Self) -> BalanceChanges {
-        BalanceChanges {
-            signatory: self.signatory as i64 - other.signatory as i64,
-            commission: self.commission as i64 - other.commission as i64,
-        }
-    }
-}
 
 /// Accounts required by the `thread_exec` instruction.
 #[derive(Accounts)]
 pub struct ThreadExec<'info> {
-    /// The worker's fee account.
-    #[account(
-        mut,
-        seeds = [
-            SEED_WORKER_COMMISSION,
-            worker.key().as_ref(),
-        ],
-        bump,
-        seeds::program = antegen_network_program::ID,
-        has_one = worker,
-    )]
-    pub commission: Account<'info, WorkerCommission>,
-
-    /// The active worker pool.
-    #[account(address = Pool::pubkey(POOL_ID))]
-    pub pool: Box<Account<'info, Pool>>,
-
-    /// The signatory.
+    /// The executor sending and paying for the transaction
     #[account(mut)]
-    pub signatory: Signer<'info>,
+    pub executor: Signer<'info>,
 
-    /// The thread to execute.
+    /// The thread being executed
     #[account(
         mut,
         seeds = [
@@ -69,207 +27,211 @@ pub struct ThreadExec<'info> {
         ],
         bump = thread.bump,
         constraint = !thread.paused @ AntegenThreadError::ThreadPaused,
-        constraint = thread.next_instruction.is_some(),
-        constraint = thread.exec_context.is_some()
+        constraint = !thread.fibers.is_empty() @ AntegenThreadError::InvalidThreadState,
     )]
     pub thread: Box<Account<'info, Thread>>,
 
-    /// The worker.
-    #[account(address = worker.pubkey())]
-    pub worker: Account<'info, Worker>,
+    /// The fiber to execute
+    #[account(
+        mut,
+        seeds = [
+            SEED_THREAD_FIBER,
+            thread.key().as_ref(),
+            &[thread.exec_index],
+        ],
+        bump,
+    )]
+    pub fiber: Box<Account<'info, FiberState>>,
+
+    /// The config for fee distribution
+    #[account(
+        seeds = [SEED_CONFIG],
+        bump = config.bump,
+    )]
+    pub config: Account<'info, ThreadConfig>,
+
+    // The config admin (for core team fee distribution)
+    /// CHECK: This is validated by the config account
+    #[account(
+        mut,
+        constraint = admin.key().eq(&config.admin) @ AntegenThreadError::InvalidConfigAdmin,
+    )]
+    pub admin: UncheckedAccount<'info>,
+
+    /// The authority of the thread (for fee distribution)
+    /// CHECK: This is validated by the thread account
+    #[account(
+        mut,
+        constraint = thread_authority.key() == thread.authority @ AntegenThreadError::InvalidThreadAuthority,
+    )]
+    pub thread_authority: UncheckedAccount<'info>,
+
+    /// Optional nonce account for durable nonces
+    /// CHECK: For new nonce authority (optional - only required if thread has nonce account)
+    #[account(mut)]
+    pub nonce_account: Option<UncheckedAccount<'info>>,
+
+    /// CHECK: Recent blockhashes sysvar (optional - only required if thread has nonce account)
+    #[account(address = recent_blockhashes::ID)]
+    pub recent_blockhashes: Option<UncheckedAccount<'info>>,
+
+    #[account(address = system_program::ID)]
+    pub system_program: Program<'info, System>,
 }
 
-fn transfer_lamports<'info>(
-    from: &AccountInfo<'info>,
-    to: &AccountInfo<'info>,
-    amount: u64,
-) -> Result<()> {
-    **from.try_borrow_mut_lamports()? = from
-        .lamports()
-        .checked_sub(amount)
-        .unwrap();
-    **to.try_borrow_mut_lamports()? = to
-        .to_account_info()
-        .lamports()
-        .checked_add(amount)
-        .unwrap();
-    Ok(())
-}
+pub fn thread_exec(ctx: Context<ThreadExec>, forgo_commission: bool) -> Result<()> {
+    let clock: Clock = Clock::get()?;
+    let thread: &mut Box<Account<Thread>> = &mut ctx.accounts.thread;
+    let fiber: &mut Box<Account<FiberState>> = &mut ctx.accounts.fiber;
+    let config: &Account<ThreadConfig> = &ctx.accounts.config;
 
-pub fn handler(ctx: Context<ThreadExec>) -> Result<()> {
-    // Get accounts
-    let clock = Clock::get().unwrap();
-    let commission = &mut ctx.accounts.commission;
-    let pool = &ctx.accounts.pool;
-    let signatory = &mut ctx.accounts.signatory;
-    let thread = &mut ctx.accounts.thread;
-    let worker = &ctx.accounts.worker;
+    let executor: &mut Signer = &mut ctx.accounts.executor;
+    let executor_lamports_start: u64 = executor.lamports();
 
-    // If the rate limit has been met, exit early.
-    if thread.exec_context.unwrap().last_exec_at == clock.slot
-        && thread.exec_context.unwrap().execs_since_slot >= thread.rate_limit
-    {
-        return Err(AntegenThreadError::RateLimitExeceeded.into());
-    }
+    // Check global pause
+    require!(
+        !ctx.accounts.config.paused,
+        AntegenThreadError::GlobalPauseActive
+    );
 
-    let initial_balances = BalanceSnapshot {
-        signatory: signatory.lamports(),
-        commission: commission.to_account_info().lamports(),
-    };
-
-    // Get the instruction to execute.
-    // We have already verified that it is not null during account validation.
-    let instruction: &mut SerializableInstruction = &mut thread.next_instruction.clone().unwrap();
-    for acc in instruction.accounts.iter_mut() {
-        if acc.pubkey.eq(&PAYER_PUBKEY) {
-            acc.pubkey = signatory.key();
-        }
-    }
-
-    let is_delete = instruction.data[..8] == *crate::instruction::ThreadDelete::DISCRIMINATOR;
-    // Invoke the provided instruction.
-    invoke_signed(
-        &Instruction::from(&*instruction),
-        ctx.remaining_accounts,
-        &[&[
-            SEED_THREAD,
-            thread.authority.as_ref(),
-            thread.id.as_slice(),
-            &[thread.bump],
-        ]],
+    // Handle nonce using trait method
+    thread.advance_nonce_if_required(
+        &thread.to_account_info(),
+        &ctx.accounts.nonce_account,
+        &ctx.accounts.recent_blockhashes,
     )?;
 
-    if is_delete {
-        thread.next_instruction = None;
-        return Ok(());
+    // Process trigger and get elapsed time
+    let time_since_ready = thread.validate_and_update_context(&clock, ctx.remaining_accounts)?;
+    let instruction = fiber.get_instruction(&executor.key())?;
+
+    // Invoke the instruction
+    thread.sign(|seeds| invoke_signed(&instruction, ctx.remaining_accounts, &[seeds]))?;
+
+    // Verify the inner instruction did not write data to the executor account
+    require!(
+        executor.data_is_empty(),
+        AntegenThreadError::UnauthorizedWrite
+    );
+
+    // Calculate and distribute payments BEFORE any potential deletion
+    let balance_change = executor.lamports() as i64 - executor_lamports_start as i64;
+    let payments = config.calculate_payments(time_since_ready, balance_change, forgo_commission);
+
+    // Log execution timing and commission details
+    if forgo_commission && payments.executor_commission.eq(&0) {
+        let effective_commission = config.calculate_effective_commission(time_since_ready);
+        let forgone = config.calculate_executor_fee(effective_commission);
+        msg!(
+            "Executed {}s after trigger, forgoing {} commission",
+            time_since_ready,
+            forgone
+        );
+    } else {
+        msg!("Executed {}s after trigger", time_since_ready);
     }
 
-    // Verify the inner instruction did not write data to the signatory address.
-    require!(signatory.data_is_empty(), AntegenThreadError::UnauthorizedWrite);
+    // Distribute payments using thread trait
+    thread.distribute_payments(
+        &thread.to_account_info(),
+        &executor.to_account_info(),
+        &ctx.accounts.admin.to_account_info(),
+        &payments,
+    )?;
 
-    // Parse the thread response
+    // Parse the thread response from return data
     let thread_response: Option<ThreadResponse> = match get_return_data() {
         None => None,
         Some((program_id, return_data)) => {
-            require!(
-                program_id.eq(&instruction.program_id),
-                AntegenThreadError::InvalidThreadResponse
-            );
-            ThreadResponse::try_from_slice(return_data.as_slice()).ok()
+            // Only process if return data is from the invoked program
+            if program_id.eq(&instruction.program_id) {
+                ThreadResponse::try_from_slice(return_data.as_slice()).ok()
+            } else {
+                None
+            }
         }
     };
 
-    // Grab the next instruction from the thread response.
-    let mut close_to = None;
-    let mut next_instruction = None;
-    if let Some(thread_response) = thread_response {
-        close_to = thread_response.close_to;
-        next_instruction = thread_response.dynamic_instruction;
+    // Process ThreadResponse if present
+    let mut should_advance_fiber = true; // Track if we should auto-advance
+    if let Some(response) = thread_response {
+        // Handle append_instruction OR auto-generate delete instruction
+        if let Some(close_to_pubkey) = response.close_to {
+            // close_to ALWAYS overrides append_instruction
+            if response.append_instruction.is_some() {
+                msg!("Warning: append_instruction ignored due to close_to being set");
+            }
 
-        // Update the trigger.
-        if let Some(trigger) = thread_response.trigger {
-            thread.trigger = trigger.clone();
+            // Create delete instruction using Anchor's CPI builder
+            let delete_accounts = crate::accounts::ThreadDelete {
+                authority: thread.key(),   // Thread can delete itself
+                close_to: close_to_pubkey, // Recipient of remaining funds
+                thread: thread.key(),      // Thread to delete
+            };
 
-            // If the user updates an account trigger, the trigger context is no longer valid.
-            // Here we reset the trigger context to zero to re-prime the trigger.
-            thread.exec_context = Some(ExecContext {
-                trigger_context: match trigger {
-                    Trigger::Account {
-                        address: _,
-                        offset: _,
-                        size: _,
-                    } => TriggerContext::Account { data_hash: 0 },
-                    _ => thread.exec_context.unwrap().trigger_context,
-                },
-                ..thread.exec_context.unwrap()
-            })
-        }
-    }
-
-    // If there is no dynamic next instruction, get the next instruction from the instruction set.
-    let mut exec_index = thread.exec_context.unwrap().exec_index;
-    if next_instruction.is_none() {
-        if let Some(ix) = thread.instructions.get((exec_index + 1) as usize) {
-            next_instruction = Some(ix.clone());
-            exec_index = exec_index + 1;
-        }
-    }
-
-    // Update the next instruction.
-    if let Some(close_to) = close_to {
-        thread.next_instruction = Some(
-            Instruction {
+            let delete_ix = Instruction {
                 program_id: crate::ID,
-                accounts: crate::accounts::ThreadDelete {
-                    authority: thread.key(),
-                    close_to,
-                    thread: thread.key(),
-                }
-                .to_account_metas(Some(true)),
-                data: crate::instruction::ThreadDelete {}.data(),
-            }.into(),
-        );
-    } else {
-        thread.next_instruction = next_instruction;
+                accounts: delete_accounts.to_account_metas(Some(true)),
+                data: crate::instruction::DeleteThread {}.data(),
+            };
+
+            // Execute delete instruction IMMEDIATELY
+            msg!("Executing thread deletion to {}", close_to_pubkey);
+            thread.sign(|seeds| invoke_signed(&delete_ix, ctx.remaining_accounts, &[seeds]))?;
+
+            // Thread is now deleted, return early
+            return Ok(());
+        } else if let Some(append_ix) = response.append_instruction {
+            // Execute appended instruction IMMEDIATELY
+            msg!("Executing appended instruction");
+            let ix: Instruction = append_ix.into();
+            thread.sign(|seeds| invoke_signed(&ix, ctx.remaining_accounts, &[seeds]))?;
+
+            // Check if the appended instruction was a delete
+            if ix.program_id.eq(&crate::ID)
+                && ix.data.len().ge(&8)
+                && ix.data[..8].eq(crate::instruction::DeleteThread::DISCRIMINATOR)
+            {
+                return Ok(()); // Thread was deleted by appended instruction
+            }
+        }
+
+        // Handle next_fiber - jump to specific fiber
+        if let Some(next_fiber_index) = response.next_fiber {
+            // Validate fiber index exists
+            if thread.fibers.contains(&next_fiber_index) {
+                thread.exec_index = next_fiber_index;
+                msg!("Jumping to fiber {}", next_fiber_index);
+                should_advance_fiber = false; // We already set the index
+            } else {
+                return Err(AntegenThreadError::InvalidFiberIndex.into());
+            }
+        }
+
+        // Handle trigger update
+        if let Some(new_trigger) = response.trigger {
+            thread.trigger = new_trigger.clone();
+            msg!("Thread trigger updated");
+
+            // Reset trigger context for Account triggers
+            if matches!(new_trigger, Trigger::Account { .. }) {
+                thread.trigger_context = TriggerContext::Account { hash: 0 };
+            }
+        }
     }
 
-    // Update the exec context.
-    thread.exec_context = Some(ExecContext {
-        exec_index,
-        execs_since_slot: if clock.slot == thread.exec_context.unwrap().last_exec_at {
-            thread
-                .exec_context
-                .unwrap()
-                .execs_since_slot
-                .checked_add(1)
-                .unwrap()
-        } else {
-            1
-        },
-        last_exec_at: clock.slot,
-        ..thread.exec_context.unwrap()
-    });
+    // Update fiber tracking
+    fiber.last_executed = clock.unix_timestamp;
+    fiber.exec_count += 1;
+    thread.exec_count += 1; // Increment thread-level execution counter
 
-    // Calculate actual balance changes from inner instruction
-    let post_inner_balances = BalanceSnapshot {
-        signatory: signatory.lamports(),
-        commission: commission.to_account_info().lamports(),
-    };
-
-    let balance_changes = post_inner_balances.difference(&initial_balances);
-    // Calculate reimbursement needs
-    let should_reimburse_transaction = clock.slot > thread.exec_context.unwrap().last_exec_at;
-    let mut required_reimbursement = if balance_changes.signatory.lt(&0) {
-        balance_changes.signatory.unsigned_abs()
-    } else {
-        0
-    };
-
-    if should_reimburse_transaction {
-        required_reimbursement = required_reimbursement
-            .checked_add(TRANSACTION_BASE_FEE_REIMBURSEMENT)
-            .unwrap();
+    // Only advance to next fiber if ThreadResponse didn't specify otherwise
+    if should_advance_fiber {
+        thread.advance_to_next_fiber();
     }
 
-    // Handle reimbursement if needed
-    if required_reimbursement.gt(&0) {
-        transfer_lamports(
-            &thread.to_account_info(),
-            &signatory.to_account_info(),
-            required_reimbursement,
-        )?;
-    }
-
-    // Only process worker fees if they haven't already been processed by inner instruction
-    if pool.clone().into_inner().workers.contains(&worker.key())
-        && balance_changes.commission.eq(&0)
-    {
-        transfer_lamports(
-            &thread.to_account_info(),
-            &commission.to_account_info(),
-            thread.fee,
-        )?;
-    }
+    // Update last executor for load balancing
+    thread.last_executor = executor.key();
 
     Ok(())
 }

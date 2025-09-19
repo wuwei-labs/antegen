@@ -1,4 +1,4 @@
-use {crate::state::*, anchor_lang::prelude::*};
+use {crate::*, anchor_lang::prelude::*};
 
 /// Accounts required by the `thread_delete` instruction.
 #[derive(Accounts)]
@@ -27,8 +27,6 @@ pub struct ThreadDelete<'info> {
     pub thread: Account<'info, Thread>,
 }
 
-pub fn handler(
-    _ctx: Context<ThreadDelete>
-) -> Result<()> {
+pub fn thread_delete(_ctx: Context<ThreadDelete>) -> Result<()> {
     Ok(())
 }

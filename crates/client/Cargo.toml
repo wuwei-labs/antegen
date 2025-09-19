@@ -1,0 +1,28 @@
+[package]
+name = "antegen-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+log = { workspace = true }
+opentelemetry = { workspace = true }
+solana-account-decoder = { workspace = true }
+solana-client = { workspace = true }
+solana-program = { workspace = true }
+solana-sdk = { workspace = true }
+tokio = { workspace = true }
+url = { workspace = true }
+
+# Internal dependencies
+antegen-processor = { path = "../processor" }
+antegen-submitter = { path = "../submitter" }
+
+# TODO: Add optional custom datasource dependencies when implemented
+# This could include specialized datasources like Carbon, Yellowstone, etc.
+
+[features]
+default = []
+# TODO: Add feature flags for optional datasources

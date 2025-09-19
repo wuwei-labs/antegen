@@ -1,5 +1,5 @@
 use {
-    crate::{errors::*, state::*},
+    crate::{errors::*, *},
     anchor_lang::prelude::*,
 };
 
@@ -11,25 +11,25 @@ pub struct ThreadWithdraw<'info> {
     #[account()]
     pub authority: Signer<'info>,
 
-    /// The account to withdraw lamports to.
+    /// CHECK: The account to withdraw lamports to.
     #[account(mut)]
-    pub pay_to: SystemAccount<'info>,
+    pub pay_to: AccountInfo<'info>,
 
     /// The thread to be.
     #[account(
         mut,
+        has_one = authority,
         seeds = [
             SEED_THREAD,
             thread.authority.as_ref(),
             thread.id.as_slice(),
         ],
         bump = thread.bump,
-        has_one = authority,
     )]
     pub thread: Account<'info, Thread>,
 }
 
-pub fn handler(ctx: Context<ThreadWithdraw>, amount: u64) -> Result<()> {
+pub fn thread_withdraw(ctx: Context<ThreadWithdraw>, amount: u64) -> Result<()> {
     // Get accounts
     let pay_to = &mut ctx.accounts.pay_to;
     let thread = &mut ctx.accounts.thread;
@@ -48,16 +48,7 @@ pub fn handler(ctx: Context<ThreadWithdraw>, amount: u64) -> Result<()> {
     );
 
     // Withdraw balance from thread to the pay_to account
-    **thread.to_account_info().try_borrow_mut_lamports()? = thread
-        .to_account_info()
-        .lamports()
-        .checked_sub(amount)
-        .unwrap();
-    **pay_to.to_account_info().try_borrow_mut_lamports()? = pay_to
-        .to_account_info()
-        .lamports()
-        .checked_add(amount)
-        .unwrap();
-
+    **thread.to_account_info().try_borrow_mut_lamports()? -= amount;
+    **pay_to.try_borrow_mut_lamports()? += amount;
     Ok(())
 }

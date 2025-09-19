@@ -24,3 +24,6 @@ docker-target
 **/keypair.json
 **/*.log
 **/.coderrect
+
+# NATS
+*.creds
