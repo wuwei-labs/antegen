@@ -8,6 +8,7 @@ target
 bin/
 lib/
 .env
+antegen.toml
 
 # Docker
 docker-target
@@ -24,3 +25,6 @@ docker-target
 **/keypair.json
 **/*.log
 **/.coderrect
+
+# Local cargo config (machine-specific patches)
+.cargo/config.toml

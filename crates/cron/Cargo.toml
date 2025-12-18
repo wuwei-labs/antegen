@@ -1,0 +1,19 @@
+[package]
+name = "antegen-cron"
+description = "A cron expression parser that's safe to use in the Solana runtime"
+version = "4.0.0"
+authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
+repository = "https://github.com/wuwei-labs/antegen"
+homepage = "https://antegen.xyz/"
+documentation = "https://docs.antegen.xyz/"
+license = "MIT"
+edition = "2021"
+readme = "../../README.md"
+keywords = ["solana", "cron", "scheduler"]
+
+[lib]
+name = "antegen_cron"
+
+[dependencies]
+chrono = { workspace = true }
+nom = { workspace = true }

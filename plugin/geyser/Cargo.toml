@@ -1,0 +1,22 @@
+[package]
+name = "antegen-geyser-plugin"
+version = "4.0.0"
+authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
+edition = "2021"
+license = "MIT"
+description = "Geyser plugin for Antegen - Solana automation executor"
+repository = "https://github.com/wuwei-labs/antegen"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+antegen-client = { version = "4.0.0", path = "../../crates/client" }
+agave-geyser-plugin-interface = { workspace = true }
+solana-logger = { workspace = true }
+solana-program = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+log = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
