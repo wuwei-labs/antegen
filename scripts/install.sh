@@ -153,8 +153,9 @@ setup_systemd() {
     if [ ! -f /etc/antegen/antegen.toml ]; then
         info "Generating default config via CLI..."
         sudo $INSTALL_DIR/$BINARY config init -o /etc/antegen/antegen.toml
-        # Update keypair path to use /var/lib/antegen
+        # Update paths to use /var/lib/antegen (system user has no home dir)
         sudo sed -i 's|keypair_path = .*|keypair_path = "/var/lib/antegen/executor.json"|' /etc/antegen/antegen.toml
+        sudo sed -i 's|storage_path = .*|storage_path = "/var/lib/antegen/observability"|' /etc/antegen/antegen.toml
         sudo chown root:antegen /etc/antegen/antegen.toml
         sudo chmod 640 /etc/antegen/antegen.toml
     else
