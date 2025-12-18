@@ -356,12 +356,27 @@ impl ProcessorFactory {
         if result.success {
             log::debug!("Thread {} execution succeeded", result.thread_pubkey);
         } else {
-            log::warn!(
-                "Thread {} execution failed after {} attempts: {:?}",
-                result.thread_pubkey,
-                result.attempt_count,
-                result.error
-            );
+            // Load balancer skips are expected behavior, not failures
+            let is_lb_skip = result
+                .error
+                .as_ref()
+                .map(|e| e.contains("load balancer") || e.contains("At capacity"))
+                .unwrap_or(false);
+
+            if is_lb_skip {
+                log::debug!(
+                    "Thread {} skipped: {:?}",
+                    result.thread_pubkey,
+                    result.error
+                );
+            } else {
+                log::warn!(
+                    "Thread {} execution failed after {} attempts: {:?}",
+                    result.thread_pubkey,
+                    result.attempt_count,
+                    result.error
+                );
+            }
         }
 
         // Notify StagingActor that thread completed
