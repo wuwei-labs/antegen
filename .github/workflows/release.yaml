@@ -44,7 +44,7 @@ jobs:
           path: artifacts/*
           retention-days: 1
 
-  build-linux:
+  build-linux-cli:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: true
@@ -63,14 +63,13 @@ jobs:
       - name: Install cross
         uses: taiki-e/install-action@cross
 
-      - name: Build with cross
-        run: cross build --workspace --release --target ${{ matrix.target }}
+      - name: Build CLI with cross (static)
+        run: cross build -p antegen-cli --release --target ${{ matrix.target }}
 
       - name: Package artifacts
         run: |
           mkdir -p artifacts
           cp target/${{ matrix.target }}/release/antegen artifacts/antegen-${{ steps.version.outputs.version }}-${{ matrix.target }}
-          cp target/${{ matrix.target }}/release/libantegen_geyser_plugin.so artifacts/antegen-geyser-${{ steps.version.outputs.version }}-${{ matrix.target }}.so
           chmod +x artifacts/*
 
       - name: Upload artifacts
@@ -80,8 +79,43 @@ jobs:
           path: artifacts/*
           retention-days: 1
 
+  build-linux-geyser:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: true
+      matrix:
+        target: [x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install cross
+        uses: taiki-e/install-action@cross
+
+      - name: Build geyser plugin with cross
+        run: cross build -p antegen-geyser-plugin --release --target ${{ matrix.target }}
+
+      - name: Package artifacts
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/libantegen_geyser_plugin.so artifacts/antegen-geyser-${{ steps.version.outputs.version }}-${{ matrix.target }}.so
+          chmod +x artifacts/*
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: geyser-${{ matrix.target }}
+          path: artifacts/*
+          retention-days: 1
+
   release:
-    needs: [build-macos, build-linux]
+    needs: [build-macos, build-linux-cli, build-linux-geyser]
     runs-on: ubuntu-latest
     permissions:
       contents: write
