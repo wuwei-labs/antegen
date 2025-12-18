@@ -9,76 +9,114 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    permissions:
-      contents: write
-    runs-on: ${{ matrix.os }}
+  build-macos:
+    runs-on: macos-14
     strategy:
       fail-fast: true
       matrix:
-        include:
-          - os: macos-14
-            target: x86_64-apple-darwin
-          - os: macos-14
-            target: aarch64-apple-darwin
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-          - os: ubuntu-24.04
-            target: aarch64-unknown-linux-gnu
+        target: [x86_64-apple-darwin, aarch64-apple-darwin]
     steps:
       - uses: actions/checkout@v4
 
-      - uses: awalsh128/cache-apt-pkgs-action@v1.4.3
-        if: contains(runner.os, 'linux')
-        with:
-          packages: jq pkg-config build-essential libudev-dev libssl-dev gcc-aarch64-linux-gnu
-          version: 1.0
+      - name: Get version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
-      - name: Install yq on Linux
-        if: contains(runner.os, 'linux')
-        run: sudo snap install yq
-
-      - name: Get version information
-        id: versions
-        run: |
-          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          echo "solana_version=$(yq -oy '.workspace.dependencies."solana-sdk".version' Cargo.toml)" >> $GITHUB_OUTPUT
-          echo "anchor_rev=$(yq -oy '.workspace.dependencies."anchor-lang".version' Cargo.toml)" >> $GITHUB_OUTPUT
-          echo "rust_version=$(yq -oy '.toolchain.channel' rust-toolchain.toml)" >> $GITHUB_OUTPUT
-
-      - name: Install Rust Stable
+      - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           target: ${{ matrix.target }}
 
-      - name: Configure cross-compilation for ARM Linux
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          echo "[target.aarch64-unknown-linux-gnu]" >> ~/.cargo/config.toml
-          echo "linker = \"aarch64-linux-gnu-gcc\"" >> ~/.cargo/config.toml
+      - name: Build
+        run: cargo build --workspace --release --target ${{ matrix.target }}
 
-      - name: Build workspace
+      - name: Package artifacts
         run: |
-          cargo build --workspace --release --target ${{ matrix.target }}
           mkdir -p artifacts
-
-          # Package binaries with version and target
-          if [[ "${{ matrix.target }}" == *"darwin"* ]]; then
-            cp target/${{ matrix.target }}/release/antegen artifacts/antegen-${{ steps.versions.outputs.version }}-${{ matrix.target }}
-            cp target/${{ matrix.target }}/release/libantegen_geyser_plugin.dylib artifacts/antegen-geyser-${{ steps.versions.outputs.version }}-${{ matrix.target }}.so
-          else
-            cp target/${{ matrix.target }}/release/antegen artifacts/antegen-${{ steps.versions.outputs.version }}-${{ matrix.target }}
-            cp target/${{ matrix.target }}/release/libantegen_geyser_plugin.so artifacts/antegen-geyser-${{ steps.versions.outputs.version }}-${{ matrix.target }}.so
-          fi
-
+          cp target/${{ matrix.target }}/release/antegen artifacts/antegen-${{ steps.version.outputs.version }}-${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/libantegen_geyser_plugin.dylib artifacts/antegen-geyser-${{ steps.version.outputs.version }}-${{ matrix.target }}.dylib
           chmod +x artifacts/*
 
-      - name: Upload build artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.target }}
           path: artifacts/*
           retention-days: 1
+
+  build-linux:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: true
+      matrix:
+        target: [x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install cross
+        uses: taiki-e/install-action@cross
+
+      - name: Build with cross
+        run: cross build --workspace --release --target ${{ matrix.target }}
+
+      - name: Package artifacts
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/antegen artifacts/antegen-${{ steps.version.outputs.version }}-${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/libantegen_geyser_plugin.so artifacts/antegen-geyser-${{ steps.version.outputs.version }}-${{ matrix.target }}.so
+          chmod +x artifacts/*
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.target }}
+          path: artifacts/*
+          retention-days: 1
+
+  publish-crates:
+    needs: [build-macos, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: sudo snap install yq
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          LOCAL_VERSION=$(yq -oy '.workspace.package.version' Cargo.toml)
+          echo "Workspace version: $LOCAL_VERSION"
+
+          for crate in antegen-cron antegen-thread-program antegen-client antegen-cli; do
+            echo ""
+            echo "Checking $crate..."
+            PUBLISHED=$(curl -s "https://crates.io/api/v1/crates/$crate" | jq -r '.crate.max_version // "0.0.0"')
+
+            if [ "$LOCAL_VERSION" = "$PUBLISHED" ]; then
+              echo "✓ $crate v$LOCAL_VERSION already published, skipping"
+            else
+              echo "Publishing $crate v$LOCAL_VERSION (crates.io has v$PUBLISHED)..."
+              if cargo publish -p $crate --token $CARGO_REGISTRY_TOKEN; then
+                echo "✓ Published $crate v$LOCAL_VERSION"
+                sleep 30
+              else
+                echo "✗ Failed to publish $crate"
+                exit 1
+              fi
+            fi
+          done
 
   release:
     needs: publish-crates
@@ -122,7 +160,7 @@ jobs:
 
             ### Binaries
             - `antegen` - CLI tool
-            - `antegen-geyser.so` - Geyser plugin
+            - `antegen-geyser` - Geyser plugin
 
             ### Runtime Versions
             - Solana `${{ steps.versions.outputs.solana_version }}`
@@ -145,45 +183,3 @@ jobs:
             [Documentation](https://docs.antegen.xyz) | [GitHub](https://github.com/wuwei-labs/antegen)
           files: |
             artifacts/*
-
-  publish-crates:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install yq
-        run: sudo snap install yq
-
-      - name: Install Rust Stable
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Publish to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          # Get workspace version
-          LOCAL_VERSION=$(yq -oy '.workspace.package.version' Cargo.toml)
-          echo "Workspace version: $LOCAL_VERSION"
-
-          # Publish in dependency order, skip if version already exists
-          for crate in antegen-cron antegen-thread-program antegen-client antegen-cli; do
-            echo ""
-            echo "Checking $crate..."
-
-            # Check if version exists on crates.io
-            PUBLISHED=$(curl -s "https://crates.io/api/v1/crates/$crate" | jq -r '.crate.max_version // "0.0.0"')
-
-            if [ "$LOCAL_VERSION" = "$PUBLISHED" ]; then
-              echo "✓ $crate v$LOCAL_VERSION already published, skipping"
-            else
-              echo "Publishing $crate v$LOCAL_VERSION (crates.io has v$PUBLISHED)..."
-              if cargo publish -p $crate --token $CARGO_REGISTRY_TOKEN; then
-                echo "✓ Published $crate v$LOCAL_VERSION"
-                sleep 30  # Wait for crates.io to index
-              else
-                echo "✗ Failed to publish $crate"
-                exit 1
-              fi
-            fi
-          done
