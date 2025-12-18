@@ -1,7 +1,7 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Antegen CLI installer
-# Usage: curl -sSfL https://raw.githubusercontent.com/wuwei-labs/antegen/main/scripts/install.sh | sh
-# With systemd: curl -sSfL .../install.sh | sh -s -- --systemd
+# Usage: curl -sSfL https://raw.githubusercontent.com/wuwei-labs/antegen/main/scripts/install.sh | bash
+# With systemd: curl -sSfL .../install.sh | bash -s -- --systemd
 
 set -e
 
@@ -31,7 +31,7 @@ error() {
 
 # Parse arguments
 parse_args() {
-    while [[ $# -gt 0 ]]; do
+    while [ $# -gt 0 ]; do
         case $1 in
             --systemd)
                 SETUP_SYSTEMD=true
@@ -248,7 +248,7 @@ main() {
         echo "    $BINARY --help"
         echo ""
         echo "  To install as a systemd service, run:"
-        echo "    curl -sSfL https://raw.githubusercontent.com/wuwei-labs/antegen/main/scripts/install.sh | sh -s -- --systemd"
+        echo "    curl -sSfL https://raw.githubusercontent.com/wuwei-labs/antegen/main/scripts/install.sh | bash -s -- --systemd"
         echo ""
     fi
 }
