@@ -1,6 +1,6 @@
 [package]
 name = "antegen-cli"
-version = "4.0.0"
+version = "4.0.1"
 authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
 edition = "2021"
 license = "MIT"
@@ -17,7 +17,7 @@ name = "antegen"
 path = "src/main.rs"
 
 [dependencies]
-antegen-client = { version = "4.0.0", path = "../client" }
+antegen-client = { version = "4.0.1", path = "../client" }
 antegen-thread-program = { version = "4.0.0", path = "../../programs/thread", features = ["cpi"] }
 anchor-lang = { workspace = true }
 clap = { workspace = true }

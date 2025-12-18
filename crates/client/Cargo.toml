@@ -1,6 +1,6 @@
 [package]
 name = "antegen-client"
-version = "4.0.0"
+version = "4.0.1"
 authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
 edition = "2021"
 license = "MIT"
