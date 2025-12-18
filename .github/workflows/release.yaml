@@ -64,6 +64,8 @@ jobs:
         uses: taiki-e/install-action@cross
 
       - name: Build CLI with cross (static)
+        env:
+          OPENSSL_STATIC: "1"
         run: cross build -p antegen-cli --release --target ${{ matrix.target }}
 
       - name: Package artifacts
