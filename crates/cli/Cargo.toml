@@ -29,7 +29,6 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 log = { workspace = true }
 dirs = { workspace = true }
-rust-embed = { workspace = true }
 env_logger = { workspace = true }
 solana-sdk = { workspace = true }
 solana-cli-config = { workspace = true }

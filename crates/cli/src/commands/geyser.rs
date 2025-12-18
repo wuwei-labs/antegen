@@ -3,7 +3,7 @@
 use crate::download::{
     current_version, download_geyser_plugin, get_library_filename, needs_update, save_version_info,
 };
-use crate::embedded::ConfigAsset;
+use antegen_client::ClientConfig;
 use anyhow::Result;
 use std::path::PathBuf;
 
@@ -44,7 +44,7 @@ pub async fn init(output: PathBuf, config_path: PathBuf) -> Result<()> {
 
     // Generate config if it doesn't exist
     if !final_config_path.exists() {
-        ConfigAsset::extract_example_config(&final_config_path)?;
+        ClientConfig::default().save(&final_config_path)?;
         println!("  Generated config: {}", final_config_path.display());
         println!();
         println!(

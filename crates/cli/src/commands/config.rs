@@ -1,24 +1,23 @@
 //! Config file commands
 
-use crate::embedded::ConfigAsset;
 use anyhow::Result;
 use antegen_client::ClientConfig;
 use std::path::PathBuf;
 
-/// Generate a default configuration file with full documentation
+/// Generate a default configuration file
 pub fn init(output: PathBuf) -> Result<()> {
     if output.exists() {
         anyhow::bail!("Config file already exists: {}", output.display());
     }
 
-    // Extract the example config with full documentation
-    ConfigAsset::extract_example_config(&output)?;
+    // Use ClientConfig::default() as single source of truth
+    ClientConfig::default().save(&output)?;
 
     println!("✓ Generated config: {}", output.display());
     println!();
     println!("Next steps:");
-    println!("  1. Edit the config file with your RPC endpoints and keypair path");
-    println!("  2. Run: antegen run --config {}", output.display());
+    println!("  1. Edit the config file with your RPC endpoints");
+    println!("  2. Run: antegen start -c {}", output.display());
 
     Ok(())
 }

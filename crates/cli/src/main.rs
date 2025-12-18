@@ -8,7 +8,6 @@ use std::path::PathBuf;
 
 mod commands;
 mod download;
-mod embedded;
 
 #[derive(Clone, Debug, ValueEnum)]
 pub enum LogLevel {
