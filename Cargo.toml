@@ -1,24 +1,20 @@
 [package]
 name = "antegen"
-version = { workspace = true }
-authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
-edition = { workspace = true }
-readme = { workspace = true }
-keywords = { workspace = true }
+version = "4.0.0"
+authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
+repository = "https://github.com/wuwei-labs/antegen"
+homepage = "https://antegen.xyz/"
+license = "MIT"
+edition = "2021"
+readme = "./README.md"
+keywords = ["solana"]
 publish = false
-
-[lib]
-name = "antegen"
-path = "src/lib.rs"
 
 [profile.release]
 overflow-checks = true
 lto = "fat"
 codegen-units = 1
- 
+
 [profile.release.build-override]
 opt-level = 3
 incremental = false
@@ -27,86 +23,94 @@ codegen-units = 1
 [workspace]
 resolver = "2"
 members = [
-    "cli",
-    "cron",
-    "plugin",
-    "programs/network",
+    "crates/*",
+    "plugin/geyser",
     "programs/thread",
-    "sdk",
-    "utils"
 ]
-
-[workspace.package]
-version = "2.2.7"
-authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
-repository = "https://github.com/wuwei-labs/antegen"
-homepage = "https://antegen.xyz/"
-documentation = "https://docs.antegen.xyz/"
-license = "MIT"
-edition = "2021"
-readme = "./README.md"
-keywords = ["solana"]
+default-members = ["crates/cli"]
 
 [workspace.dependencies]
-solana-cron = { path = "cron" }
-antegen-utils = { path = "utils" }
-antegen-plugin-utils = { path = "plugin/utils" }
-antegen-thread-program = { path = "programs/thread", features = ["no-entrypoint"] }
-antegen-network-program = { path = "programs/network", features = ["no-entrypoint"] }
-antegen-test-program = { path = "programs/test", features = ["no-entrypoint"] }
+# Internal workspace crates (each has its own version)
+antegen-cron = { version = "4.0.0", path = "crates/cron" }
+antegen-client = { version = "4.0.0", path = "crates/client" }
+antegen-geyser-plugin = { version = "4.0.0", path = "plugin/geyser" }
+antegen-thread-program = { version = "4.0.0", path = "programs/thread", features = ["cpi"] }
 
-anchor-lang = { version = "0.31.1" }
-anchor-spl = { version = "0.31.1", features = ["mint", "token"] }
+# Anchor
+anchor-lang = "=1.0.0-rc.1"
+anchor-spl = { version = "=1.0.0-rc.1", features = ["mint", "token"] }
+borsh = "=1.6.0"
 
-actix-cors = { version = "0.6.4" }
-actix-web = { version = "4.3.1" }
-agave-geyser-plugin-interface = { version = "=2.1.11" }
-anyhow = { version = "1.0.94" }
-async_once = { version = "0.2.6" }
-async-trait = { version = "0.1.83" }
-base64 = { version = "0.22.1" }
-bincode = { version = "1.3.3" }
-bs58 = { version = "0.5.1" }
-bugsnag = { version = "0.2.1" }
-byte-unit = { version = "4.0.18" }
-bzip2 = { version = "0.5.0" }
-chrono = { version = "0.4.39", default-features = false, features = ["alloc"] }
-clap = { version = "4.5.23", features = ["derive"] }
-dirs-next = { version = "2.0.0" }
-futures = { version = "0.3.31" }
-indicatif = { version = "0.17" }
-lazy_static = { version = "1.5.0" }
-log = { version = "0.4" }
-nom = { version = "7.1.3" }
-once_cell = { version = "1.20.2" }
-prost = { version = "0.12.3" }
-pyth-sdk-solana = { version = "0.10" }
-rayon = { version = "1.7.0" }
-regex = { version = "1.7.1" }
-reqwest = { version = "0.11.20", features = ["blocking", "json"] }
-serde = { version = "1.0.216" }
-serde_json = { version = "1.0.133" }
-serde_yaml = { version = "0.9.34" }
-simple-error = { version = "0.3.1" }
-solana-account-decoder = { version = "=2.1.11" }
-solana-clap-utils = { version = "=2.1.11" }
-solana-cli-config = { version = "=2.1.11" }
-solana-client = { version = "=2.1.11" }
-solana-logger = { version = "=2.1.11" }
-solana-program = { version = "=2.1.11" }
-solana-quic-client = { version = "=2.1.11" }
-solana-sdk = { version = "=2.1.11" }
-solana-transaction-status = { version = "=2.1.11" }
-solana-zk-token-sdk = { version = "=2.1.11" }
-spl-associated-token-account = { version = "6.0.0" }
-spl-memo = { version = "6.0.0" }
-spl-token = { version = "7.0.0" }
-static-pubkey = { version = "1.0.3" }
-tar = { version = "0.4" }
-termcolor = { version = "1.4.1" }
-terminal-link = { version = "0.1.0" }
-thiserror = { version = "2.0.7" }
-toml_datetime = { version = "0.6.8" }
-tokio = { version = "1.29.1" }
-version = { version = "3.0.0" }
-winnow = { version = "0.4.1" }
+# Agave Geyser
+agave-geyser-plugin-interface = "=3.1.4"
+
+# Core dependencies
+anyhow = "=1.0.100"
+async-trait = "=0.1.89"
+base64 = "=0.22.1"
+bincode = "=1.3.3"
+bs58 = "=0.5.1"
+chrono = { version = "=0.4.42", default-features = false, features = ["alloc"] }
+clap = { version = "=4.5.53", features = ["derive", "env"] }
+dashmap = "=5.5.3"
+dirs = "=5.0.1"
+dirs-next = "=2.0.0"
+env_logger = "=0.10.2"
+flate2 = "=1.1.5"
+futures = "=0.3.31"
+getrandom = { version = "=0.2.16", features = ["custom"] }
+hex = "=0.4.3"
+hyper = { version = "=0.14.32", features = ["server", "tcp", "http1"] }
+lazy_static = "=1.5.0"
+loa-core = "=1.0.1"
+log = "=0.4.29"
+moka = { version = "=0.12.11", features = ["future"] }
+nom = "=7.1.3"
+once_cell = "=1.21.3"
+proc-macro2 = "=1.0.103"
+ractor = "=0.13.5"
+rand = "=0.8.5"
+rand_chacha = "=0.3.1"
+rand_core = "=0.6.4"
+regex = "=1.12.2"
+reqwest = { version = "=0.11.27", features = ["blocking", "json"] }
+rust-embed = { version = "=8.9.0", features = ["include-exclude", "interpolate-folder-path"] }
+rustc_version = "=0.4.1"
+seahash = "=4.1.0"
+serde = "=1.0.228"
+serde_json = "=1.0.145"
+serde_yaml = "=0.9.34"
+shellexpand = "=3.1.1"
+signal-hook = "=0.3.18"
+signal-hook-tokio = { version = "=0.3.1", features = ["futures-v0_3"] }
+tar = "=0.4.44"
+tempfile = "=3.23.0"
+termcolor = "=1.4.1"
+thiserror = "=2.0.17"
+tokio = "=1.48.0"
+tokio-test = "=0.4.4"
+toml = "=0.8.23"
+toml_datetime = "=0.6.11"
+url = "=2.5.7"
+uuid = { version = "=1.19.0", features = ["v4", "serde"] }
+
+# Solana dependencies - pinned to resolved versions
+solana-account-decoder = "=3.1.4"
+solana-account-decoder-client-types = "=3.1.4"
+solana-cli-config = "=3.1.4"
+solana-compute-budget-interface = "=3.0.0"
+solana-logger = "=3.0.0"
+solana-nonce = "=3.0.0"
+solana-program = "=3.0.0"
+solana-sdk = "=3.0.0"
+solana-system-interface = { version = "=3.0.0", features = ["bincode"] }
+solana-transaction-status = "=3.1.4"
+
+# SPL tokens - these resolve to interface crates
+spl-associated-token-account = "=6.0.0"
+spl-token = "=7.0.0"
+
+# TPU client for direct validator transaction submission
+solana-tpu-client-next = { version = "=3.1.4", features = ["agave-unstable-api"] }
+solana-rpc-client = "=3.1.4"
+tokio-util = "=0.7"

@@ -1,0 +1,241 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-programs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: sudo snap install yq
+
+      - name: Set up Docker
+        uses: docker/setup-docker-action@v4
+
+      - name: Install Rust Stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install Solana Verify
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: solana-verify
+
+      - name: Build Solana Programs
+        run: |
+          mkdir -p target/deploy
+          for program_dir in programs/*/; do
+            if [ -f "${program_dir}Cargo.toml" ]; then
+              library_name=$(yq -oy '.lib.name' "${program_dir}Cargo.toml")
+              if [[ ! $library_name =~ "test" ]]; then
+                solana-verify build --library-name ${library_name} -- --features mainnet
+              fi
+            fi
+          done
+
+      - name: Upload Program Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: solana-programs
+          path: target/deploy/*.so
+          retention-days: 1
+
+  build:
+    needs: build-programs
+    permissions:
+      contents: write
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-14
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: awalsh128/cache-apt-pkgs-action@v1.4.3
+        if: contains(runner.os, 'linux')
+        with:
+          packages: jq pkg-config build-essential libudev-dev libssl-dev gcc-aarch64-linux-gnu
+          version: 1.0
+
+      - name: Install yq on Linux
+        if: contains(runner.os, 'linux')
+        run: sudo snap install yq
+
+      - name: Get version information
+        id: versions
+        run: |
+          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          echo "solana_version=$(yq -oy '.workspace.dependencies."solana-sdk".version' Cargo.toml)" >> $GITHUB_OUTPUT
+          echo "anchor_rev=$(yq -oy '.workspace.dependencies."anchor-lang".version' Cargo.toml)" >> $GITHUB_OUTPUT
+          echo "rust_version=$(yq -oy '.toolchain.channel' rust-toolchain.toml)" >> $GITHUB_OUTPUT
+
+      - name: Install Rust Stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Download Solana Programs
+        uses: actions/download-artifact@v4
+        with:
+          name: solana-programs
+          path: staging/lib
+
+      - name: Configure cross-compilation for ARM Linux
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          echo "[target.aarch64-unknown-linux-gnu]" >> ~/.cargo/config.toml
+          echo "linker = \"aarch64-linux-gnu-gcc\"" >> ~/.cargo/config.toml
+
+      - name: Build workspace
+        run: |
+          cargo build --workspace --release --target ${{ matrix.target }} --features mainnet
+          mkdir -p artifacts
+
+          # Package binaries with version and target
+          if [[ "${{ matrix.target }}" == *"darwin"* ]]; then
+            cp target/${{ matrix.target }}/release/antegen artifacts/antegen-${{ steps.versions.outputs.version }}-${{ matrix.target }}
+            cp target/${{ matrix.target }}/release/libantegen_geyser_plugin.dylib artifacts/antegen-geyser-${{ steps.versions.outputs.version }}-${{ matrix.target }}.so
+          else
+            cp target/${{ matrix.target }}/release/antegen artifacts/antegen-${{ steps.versions.outputs.version }}-${{ matrix.target }}
+            cp target/${{ matrix.target }}/release/libantegen_geyser_plugin.so artifacts/antegen-geyser-${{ steps.versions.outputs.version }}-${{ matrix.target }}.so
+          fi
+
+          chmod +x artifacts/*
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.target }}
+          path: artifacts/*
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: sudo snap install yq
+
+      - name: Get version information
+        id: versions
+        run: |
+          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          echo "solana_version=$(yq -oy '.workspace.dependencies."solana-sdk".version' Cargo.toml)" >> $GITHUB_OUTPUT
+          echo "anchor_version=$(yq -oy '.workspace.dependencies."anchor-lang".version' Cargo.toml)" >> $GITHUB_OUTPUT
+          echo "rust_version=$(yq -oy '.toolchain.channel' rust-toolchain.toml)" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Download program artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: solana-programs
+          path: artifacts
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fail_on_unmatched_files: true
+          prerelease: false
+          body: |
+            ## Antegen ${{ steps.versions.outputs.version }}
+
+            ### Binaries
+            - `antegen` - CLI tool
+            - `antegen-geyser.so` - Geyser plugin
+            - `antegen_thread_program.so` - Thread program
+
+            ### Runtime Versions
+            - Solana `${{ steps.versions.outputs.solana_version }}`
+            - Rust `${{ steps.versions.outputs.rust_version }}`
+            - Anchor `${{ steps.versions.outputs.anchor_version }}`
+
+            ### Installation
+
+            **Via cargo:**
+            ```bash
+            cargo install antegen-cli
+            ```
+
+            **Via script:**
+            ```bash
+            curl -sSfL https://raw.githubusercontent.com/wuwei-labs/antegen/main/scripts/install.sh | sh
+            ```
+
+            ---
+            [Documentation](https://docs.antegen.xyz) | [GitHub](https://github.com/wuwei-labs/antegen)
+          files: |
+            artifacts/*
+
+  publish-crates:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: sudo snap install yq
+
+      - name: Install Rust Stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          # Get workspace version
+          LOCAL_VERSION=$(yq -oy '.workspace.package.version' Cargo.toml)
+          echo "Workspace version: $LOCAL_VERSION"
+
+          # Publish in dependency order, skip if version already exists
+          for crate in antegen-cron antegen-thread-program antegen-client antegen-cli; do
+            echo ""
+            echo "Checking $crate..."
+
+            # Check if version exists on crates.io
+            PUBLISHED=$(curl -s "https://crates.io/api/v1/crates/$crate" | jq -r '.crate.max_version // "0.0.0"')
+
+            if [ "$LOCAL_VERSION" = "$PUBLISHED" ]; then
+              echo "✓ $crate v$LOCAL_VERSION already published, skipping"
+            else
+              echo "Publishing $crate v$LOCAL_VERSION (crates.io has v$PUBLISHED)..."
+              if cargo publish -p $crate --token $CARGO_REGISTRY_TOKEN; then
+                echo "✓ Published $crate v$LOCAL_VERSION"
+                sleep 30  # Wait for crates.io to index
+              else
+                echo "✗ Failed to publish $crate"
+                exit 1
+              fi
+            fi
+          done

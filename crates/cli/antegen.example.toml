@@ -1,0 +1,99 @@
+# Antegen Client Configuration
+# This file shows all available configuration options
+
+[executor]
+# Path to the executor keypair (required)
+# Can use ~ for home directory
+# Auto-generated on first run if not present
+keypair_path = "~/.antegen/executor-keypair.json"
+
+# If true, skip taking executor commission on thread executions
+forgo_commission = false
+
+[rpc]
+# RPC endpoints configuration
+#
+# DATASOURCE BEHAVIOR (role = "datasource" or "both"):
+#   - All datasource endpoints listen concurrently via WebSocket
+#   - Deduplication ensures each unique account update is processed once
+#   - Priority is ignored for datasources (all equal)
+#
+# SUBMISSION BEHAVIOR (role = "submission" or "both"):
+#   - Priority-based sequential failover (lower number = higher priority)
+#   - Tries priority 1 first, falls back to 2 on failure, etc.
+
+# Primary RPC - used for both datasources and submission
+[[rpc.endpoints]]
+url = "https://api.mainnet-beta.solana.com"
+ws_url = "wss://api.mainnet-beta.solana.com"
+role = "both"
+priority = 1
+
+# Backup RPC (uncomment to use)
+# [[rpc.endpoints]]
+# url = "https://solana-api.projectserum.com"
+# role = "both"
+# priority = 2
+
+# Local validator for development (uncomment to use)
+# [[rpc.endpoints]]
+# url = "http://localhost:8899"
+# role = "both"
+# priority = 1
+
+[datasources]
+# NOTE: The thread program ID is set automatically from antegen_thread_program::ID
+# and is not user-configurable.
+#
+# Datasource behavior depends on how the client is launched:
+#
+# STANDALONE MODE:
+#   Uses RPC WebSocket subscriptions from endpoints configured above
+#
+# PLUGIN MODE (Geyser):
+#   Uses validator's Geyser interface as the primary source, BUT also
+#   spawns RPC datasource actors for any "datasource" or "both" endpoints
+#   configured above. These act as fallbacks/redundancy - the cache
+#   deduplicates updates so whichever source delivers first wins.
+#
+#   This allows you to configure RPC endpoints as backup data sources
+#   in case of Geyser issues or for additional redundancy.
+
+# Commitment level for account subscriptions
+# Options: "processed", "confirmed", "finalized"
+commitment = "confirmed"
+
+[processor]
+# Maximum number of threads to process concurrently
+# Higher values increase throughput but use more resources
+max_concurrent_threads = 10
+
+[cache]
+# Maximum number of accounts to cache in memory
+# The cache stores thread program accounts (Thread, Fiber, ThreadConfig)
+max_capacity = 10000
+
+[load_balancer]
+# Grace period in seconds - shared by cache eviction AND load balancer takeover
+#
+# For cache eviction:
+#   Time-triggered threads expire from cache at: trigger_time + grace_period_secs
+#   Slot/Epoch-triggered threads never expire (updated via datasource events)
+#
+# For load balancer:
+#   Used in takeover logic for overdue threads
+grace_period_secs = 10
+
+# NOTE: Other load balancer settings (capacity_threshold, takeover_delay_secs)
+# are read from the on-chain ThreadConfig account to ensure network-wide
+# coordination among all executors.
+
+[observability]
+# Enable loa-core observability agent for metrics collection and status page
+# When enabled, loa-core collects system metrics and reports to the loa backend
+# Default: true
+enabled = true
+
+# Storage path for loa-core data (metrics database, agent identity)
+# Can use ~ for home directory
+storage_path = "~/.antegen/observability"

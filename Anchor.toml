@@ -3,24 +3,24 @@ cluster = "mainnet"
 wallet = "~/.config/solana/id.json"
 
 [workspace]
-members = [
-    "programs/*"
-]
+members = ["programs/*"]
 
 [programs.localnet]
-antegen_network_program = "AgNet6qmh75bjFULcS9RQijUoWwkCtSiSwXM1K3Ujn6Z"
-antegen_thread_program = "AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1"
-antegen_test_program = "AgTstktpwF7FfmUpLQW6NLdCioiF4nmQqV9oYjZQzHjj"
+antegen_thread_program = "AgV3xRAdyTe1wW4gTW2oAnzHiAGofsxC7jBVGGkzUQbY"
+
+[programs.devnet]
+antegen_thread_program = "AgV3xRAdyTe1wW4gTW2oAnzHiAGofsxC7jBVGGkzUQbY"
 
 [programs.testnet]
-antegen_network_program = "AgNet6qmh75bjFULcS9RQijUoWwkCtSiSwXM1K3Ujn6Z"
-antegen_thread_program = "AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1"
-antegen_test_program = "AgTstktpwF7FfmUpLQW6NLdCioiF4nmQqV9oYjZQzHjj"
+antegen_thread_program = "AgV3xRAdyTe1wW4gTW2oAnzHiAGofsxC7jBVGGkzUQbY"
 
 [programs.mainnet]
-antegen_network_program = "AgNet6qmh75bjFULcS9RQijUoWwkCtSiSwXM1K3Ujn6Z"
-antegen_thread_program = "AgThdyi1P5RkVeZD2rQahTvs8HePJoGFFxKtvok5s2J1"
-antegen_test_program = "AgTstktpwF7FfmUpLQW6NLdCioiF4nmQqV9oYjZQzHjj"
+antegen_thread_program = "AgV3xRAdyTe1wW4gTW2oAnzHiAGofsxC7jBVGGkzUQbY"
 
 [registry]
 url = "https://api.apr.dev"
+
+[toolchain]
+anchor_version = "1.0.0-rc.1"
+solana_version = "3.0.0"      # Solana version to use(applies to all Solana tools)
+package_manager = "pnpm"
