@@ -59,7 +59,7 @@ jobs:
 
       - name: Build workspace
         run: |
-          cargo build --workspace --release --target ${{ matrix.target }} --features mainnet
+          cargo build --workspace --release --target ${{ matrix.target }}
           mkdir -p artifacts
 
           # Package binaries with version and target
