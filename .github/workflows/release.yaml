@@ -9,46 +9,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-programs:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install yq
-        run: sudo snap install yq
-
-      - name: Set up Docker
-        uses: docker/setup-docker-action@v4
-
-      - name: Install Rust Stable
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Install Solana Verify
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: solana-verify
-
-      - name: Build Solana Programs
-        run: |
-          mkdir -p target/deploy
-          for program_dir in programs/*/; do
-            if [ -f "${program_dir}Cargo.toml" ]; then
-              library_name=$(yq -oy '.lib.name' "${program_dir}Cargo.toml")
-              if [[ ! $library_name =~ "test" ]]; then
-                solana-verify build --library-name ${library_name} -- --features mainnet
-              fi
-            fi
-          done
-
-      - name: Upload Program Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: solana-programs
-          path: target/deploy/*.so
-          retention-days: 1
-
   build:
-    needs: build-programs
     permissions:
       contents: write
     runs-on: ${{ matrix.os }}
@@ -90,12 +51,6 @@ jobs:
         with:
           target: ${{ matrix.target }}
 
-      - name: Download Solana Programs
-        uses: actions/download-artifact@v4
-        with:
-          name: solana-programs
-          path: staging/lib
-
       - name: Configure cross-compilation for ARM Linux
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
@@ -126,7 +81,7 @@ jobs:
           retention-days: 1
 
   release:
-    needs: build
+    needs: publish-crates
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -150,12 +105,6 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Download program artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: solana-programs
-          path: artifacts
-
       - name: Generate checksums
         run: |
           cd artifacts
@@ -174,7 +123,6 @@ jobs:
             ### Binaries
             - `antegen` - CLI tool
             - `antegen-geyser.so` - Geyser plugin
-            - `antegen_thread_program.so` - Thread program
 
             ### Runtime Versions
             - Solana `${{ steps.versions.outputs.solana_version }}`
@@ -199,7 +147,7 @@ jobs:
             artifacts/*
 
   publish-crates:
-    needs: release
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
