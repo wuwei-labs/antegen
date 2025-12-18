@@ -151,30 +151,10 @@ setup_systemd() {
 
     # Generate default config if it doesn't exist
     if [ ! -f /etc/antegen/antegen.toml ]; then
-        info "Generating default config..."
-        sudo tee /etc/antegen/antegen.toml > /dev/null << 'EOF'
-# Antegen Configuration
-# Edit this file before starting the service
-
-[executor]
-# Path to executor keypair (will be auto-generated on first run)
-keypair_path = "/var/lib/antegen/executor.json"
-
-[rpc]
-# RPC endpoints (add your own endpoints here)
-[[rpc.endpoints]]
-url = "https://api.devnet.solana.com"
-weight = 1
-
-[thread_program]
-# Thread program ID (devnet default)
-program_id = "antSQGK1T2zGTn5bTWnHRxoFAw4dEZEq1YBrHGGpLfV"
-
-[load_balancer]
-enabled = true
-capacity_threshold = 5
-takeover_delay_seconds = 10
-EOF
+        info "Generating default config via CLI..."
+        sudo $INSTALL_DIR/$BINARY config init -o /etc/antegen/antegen.toml
+        # Update keypair path to use /var/lib/antegen
+        sudo sed -i 's|keypair_path = .*|keypair_path = "/var/lib/antegen/executor.json"|' /etc/antegen/antegen.toml
         sudo chown root:antegen /etc/antegen/antegen.toml
         sudo chmod 640 /etc/antegen/antegen.toml
     else
