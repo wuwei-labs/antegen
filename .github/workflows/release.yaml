@@ -80,46 +80,8 @@ jobs:
           path: artifacts/*
           retention-days: 1
 
-  publish-crates:
-    needs: [build-macos, build-linux]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install yq
-        run: sudo snap install yq
-
-      - name: Install Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Publish to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          LOCAL_VERSION=$(yq -oy '.workspace.package.version' Cargo.toml)
-          echo "Workspace version: $LOCAL_VERSION"
-
-          for crate in antegen-cron antegen-thread-program antegen-client antegen-cli; do
-            echo ""
-            echo "Checking $crate..."
-            PUBLISHED=$(curl -s "https://crates.io/api/v1/crates/$crate" | jq -r '.crate.max_version // "0.0.0"')
-
-            if [ "$LOCAL_VERSION" = "$PUBLISHED" ]; then
-              echo "✓ $crate v$LOCAL_VERSION already published, skipping"
-            else
-              echo "Publishing $crate v$LOCAL_VERSION (crates.io has v$PUBLISHED)..."
-              if cargo publish -p $crate --token $CARGO_REGISTRY_TOKEN; then
-                echo "✓ Published $crate v$LOCAL_VERSION"
-                sleep 30
-              else
-                echo "✗ Failed to publish $crate"
-                exit 1
-              fi
-            fi
-          done
-
   release:
-    needs: publish-crates
+    needs: [build-macos, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
