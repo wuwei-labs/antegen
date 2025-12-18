@@ -44,12 +44,8 @@ jobs:
           path: artifacts/*
           retention-days: 1
 
-  build-linux-cli:
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: true
-      matrix:
-        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+  build-linux:
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -57,67 +53,31 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Install cross
-        uses: taiki-e/install-action@cross
-
-      - name: Build CLI with cross (static)
-        env:
-          OPENSSL_STATIC: "1"
-        run: cross build -p antegen-cli --release --target ${{ matrix.target }}
+      - name: Build
+        run: cargo build --workspace --release
 
       - name: Package artifacts
         run: |
           mkdir -p artifacts
-          cp target/${{ matrix.target }}/release/antegen artifacts/antegen-${{ steps.version.outputs.version }}-${{ matrix.target }}
+          cp target/release/antegen artifacts/antegen-${{ steps.version.outputs.version }}-x86_64-unknown-linux-gnu
+          cp target/release/libantegen_geyser_plugin.so artifacts/antegen-geyser-${{ steps.version.outputs.version }}-x86_64-unknown-linux-gnu.so
           chmod +x artifacts/*
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-${{ matrix.target }}
-          path: artifacts/*
-          retention-days: 1
-
-  build-linux-geyser:
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: true
-      matrix:
-        target: [x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Get version
-        id: version
-        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-      - name: Install Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Install cross
-        uses: taiki-e/install-action@cross
-
-      - name: Build geyser plugin with cross
-        run: cross build -p antegen-geyser-plugin --release --target ${{ matrix.target }}
-
-      - name: Package artifacts
-        run: |
-          mkdir -p artifacts
-          cp target/${{ matrix.target }}/release/libantegen_geyser_plugin.so artifacts/antegen-geyser-${{ steps.version.outputs.version }}-${{ matrix.target }}.so
-          chmod +x artifacts/*
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: geyser-${{ matrix.target }}
+          name: binaries-x86_64-unknown-linux-gnu
           path: artifacts/*
           retention-days: 1
 
   release:
-    needs: [build-macos, build-linux-cli, build-linux-geyser]
+    needs: [build-macos, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
