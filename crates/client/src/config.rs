@@ -154,20 +154,30 @@ impl Default for CacheConfig {
 /// Load balancer configuration (file-based portion)
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LoadBalancerConfigFile {
-    /// Grace period in seconds - used by cache eviction AND load balancer takeover
-    /// Threads with time triggers expire from cache after trigger_time + grace_period_secs
+    /// Grace period in seconds - for fee decay calculations
     #[serde(default = "default_grace_period_secs")]
     pub grace_period_secs: u64,
+
+    /// Extra time in seconds to keep threads in cache after grace period
+    /// Allows takeover attempts before cache eviction
+    /// Cache TTL = trigger_time + grace_period_secs + eviction_buffer_secs
+    #[serde(default = "default_eviction_buffer_secs")]
+    pub eviction_buffer_secs: u64,
 }
 
 fn default_grace_period_secs() -> u64 {
     10
 }
 
+fn default_eviction_buffer_secs() -> u64 {
+    20
+}
+
 impl Default for LoadBalancerConfigFile {
     fn default() -> Self {
         Self {
             grace_period_secs: default_grace_period_secs(),
+            eviction_buffer_secs: default_eviction_buffer_secs(),
         }
     }
 }
@@ -178,6 +188,8 @@ impl Default for LoadBalancerConfigFile {
 pub struct LoadBalancerConfig {
     /// Grace period from config file
     pub grace_period_secs: u64,
+    /// Eviction buffer from config file
+    pub eviction_buffer_secs: u64,
     /// Capacity threshold (from on-chain ThreadConfig)
     pub capacity_threshold: u32,
     /// Takeover delay for overdue threads (from on-chain ThreadConfig)
@@ -188,6 +200,7 @@ impl Default for LoadBalancerConfig {
     fn default() -> Self {
         Self {
             grace_period_secs: default_grace_period_secs(),
+            eviction_buffer_secs: default_eviction_buffer_secs(),
             // Default values, should be overridden by on-chain ThreadConfig
             capacity_threshold: 100,
             takeover_delay_secs: 300,
@@ -199,6 +212,7 @@ impl From<&LoadBalancerConfigFile> for LoadBalancerConfig {
     fn from(file_config: &LoadBalancerConfigFile) -> Self {
         Self {
             grace_period_secs: file_config.grace_period_secs,
+            eviction_buffer_secs: file_config.eviction_buffer_secs,
             // On-chain values use defaults, will be updated at runtime
             capacity_threshold: 100,
             takeover_delay_secs: 300,

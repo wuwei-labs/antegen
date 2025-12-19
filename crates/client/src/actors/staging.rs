@@ -8,11 +8,13 @@
 //! The cache is the single source of truth for account data.
 
 use crate::actors::messages::{
-    ProcessorMessage, ReadyThread, ScheduledThread, StagingMessage, StagingStatus,
+    CompletionReason, ProcessorMessage, ReadyThread, ScheduledThread, StagingMessage,
+    StagingStatus,
 };
 use crate::config::ClientConfig;
 use crate::resources::SharedResources;
 use anyhow::Result;
+use anchor_lang::AccountDeserialize;
 use antegen_thread_program::state::{Schedule, Thread, Trigger};
 use dashmap::DashSet;
 use log::{debug, info, trace, warn};
@@ -103,10 +105,35 @@ impl Actor for StagingActor {
                 self.handle_clock_tick(state, clock).await?;
                 Ok(())
             }
-            StagingMessage::ThreadCompleted(thread_pubkey) => {
+            StagingMessage::ThreadCompleted {
+                thread_pubkey,
+                reason,
+            } => {
                 // Remove from queued_threads to allow re-execution
                 state.queued_threads.remove(&thread_pubkey);
-                debug!("Thread {} completed, removed from queued set", thread_pubkey);
+
+                match reason {
+                    CompletionReason::Skipped => {
+                        // Load balancer skipped - re-schedule for next ClockTick evaluation
+                        debug!(
+                            "Thread {} skipped by load balancer, re-scheduling",
+                            thread_pubkey
+                        );
+
+                        // Fetch from cache and re-add to priority queue
+                        if let Some(cached) = state.resources.cache.get(&thread_pubkey).await {
+                            if let Ok(thread) =
+                                Thread::try_deserialize(&mut cached.data.as_slice())
+                            {
+                                self.schedule_thread(state, thread_pubkey, &thread).await?;
+                            }
+                        }
+                    }
+                    CompletionReason::Executed => {
+                        // Normal completion - will be re-scheduled when account update arrives
+                        debug!("Thread {} executed, removed from queued set", thread_pubkey);
+                    }
+                }
                 Ok(())
             }
             StagingMessage::SetProcessorRef(processor_ref) => {

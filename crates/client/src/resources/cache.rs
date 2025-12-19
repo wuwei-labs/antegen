@@ -60,10 +60,11 @@ pub struct CachedAccount {
 }
 
 /// Per-entry expiration policy
-/// - Time triggers: expire after trigger_time + grace_period_secs
+/// - Time triggers: expire after trigger_time + grace_period_secs + eviction_buffer_secs
 /// - Other triggers: no expiration
 struct ThreadExpiry {
     grace_period_secs: u64,
+    eviction_buffer_secs: u64,
 }
 
 impl Expiry<Pubkey, CachedAccount> for ThreadExpiry {
@@ -111,8 +112,11 @@ impl ThreadExpiry {
                 }
 
                 let now = chrono::Utc::now().timestamp();
-                // Use saturating_add to prevent overflow
-                let expire_at = next_timestamp.saturating_add(self.grace_period_secs as i64);
+                // Cache TTL = trigger_time + grace_period + eviction_buffer
+                // This gives time for takeover attempts before cache eviction
+                let expire_at = next_timestamp
+                    .saturating_add(self.grace_period_secs as i64)
+                    .saturating_add(self.eviction_buffer_secs as i64);
 
                 if expire_at > now {
                     // Safe subtraction since we checked expire_at > now
@@ -143,16 +147,20 @@ pub struct AccountCache {
 impl AccountCache {
     /// Create a new account cache with default settings
     pub fn new() -> Self {
-        Self::with_config(&CacheConfig::default(), 10, None)
+        Self::with_config(&CacheConfig::default(), 10, 20, None)
     }
 
     /// Create a new account cache from config
     pub fn with_config(
         config: &CacheConfig,
         grace_period_secs: u64,
+        eviction_buffer_secs: u64,
         eviction_tx: Option<mpsc::UnboundedSender<Pubkey>>,
     ) -> Self {
-        let expiry = ThreadExpiry { grace_period_secs };
+        let expiry = ThreadExpiry {
+            grace_period_secs,
+            eviction_buffer_secs,
+        };
         let eviction_tx_clone = eviction_tx.clone();
 
         Self {

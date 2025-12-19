@@ -41,11 +41,23 @@ pub enum GeyserSourceMessage {
 // Staging Actor Messages
 // ============================================================================
 
+/// Reason for thread completion - determines if re-scheduling is needed
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletionReason {
+    /// Successfully executed (or failed execution) - will be re-scheduled when account updates
+    Executed,
+    /// Load balancer skipped - re-queue for later takeover attempt
+    Skipped,
+}
+
 #[derive(Debug)]
 pub enum StagingMessage {
     AccountUpdate(AccountUpdate),
     ClockTick(Clock),
-    ThreadCompleted(Pubkey),
+    ThreadCompleted {
+        thread_pubkey: Pubkey,
+        reason: CompletionReason,
+    },
     SetProcessorRef(ractor::ActorRef<ProcessorMessage>),
     QueryStatus(oneshot::Sender<StagingStatus>),
     Shutdown,

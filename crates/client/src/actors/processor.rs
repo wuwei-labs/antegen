@@ -9,7 +9,8 @@
 //! The cache is the single source of truth for account data.
 
 use crate::actors::messages::{
-    ExecutionResult, ProcessorMessage, ProcessorStatus, ReadyThread, StagingMessage,
+    CompletionReason, ExecutionResult, ProcessorMessage, ProcessorStatus, ReadyThread,
+    StagingMessage,
 };
 use crate::actors::WorkerActor;
 use crate::config::ClientConfig;
@@ -232,9 +233,10 @@ impl ProcessorFactory {
                             // Notify staging that this thread is done (was stale)
                             state
                                 .staging_ref
-                                .send_message(StagingMessage::ThreadCompleted(
-                                    ready_thread.thread_pubkey,
-                                ))
+                                .send_message(StagingMessage::ThreadCompleted {
+                                    thread_pubkey: ready_thread.thread_pubkey,
+                                    reason: CompletionReason::Executed,
+                                })
                                 .ok();
                             return Ok(());
                         }
@@ -248,9 +250,10 @@ impl ProcessorFactory {
                         // Notify staging that this thread is done
                         state
                             .staging_ref
-                            .send_message(StagingMessage::ThreadCompleted(
-                                ready_thread.thread_pubkey,
-                            ))
+                            .send_message(StagingMessage::ThreadCompleted {
+                                thread_pubkey: ready_thread.thread_pubkey,
+                                reason: CompletionReason::Executed,
+                            })
                             .ok();
                         return Ok(());
                     }
@@ -280,9 +283,10 @@ impl ProcessorFactory {
                             );
                             state
                                 .staging_ref
-                                .send_message(StagingMessage::ThreadCompleted(
-                                    ready_thread.thread_pubkey,
-                                ))
+                                .send_message(StagingMessage::ThreadCompleted {
+                                    thread_pubkey: ready_thread.thread_pubkey,
+                                    reason: CompletionReason::Executed,
+                                })
                                 .ok();
                             return Ok(());
                         }
@@ -296,9 +300,10 @@ impl ProcessorFactory {
                         // Notify staging that this thread is done
                         state
                             .staging_ref
-                            .send_message(StagingMessage::ThreadCompleted(
-                                ready_thread.thread_pubkey,
-                            ))
+                            .send_message(StagingMessage::ThreadCompleted {
+                                thread_pubkey: ready_thread.thread_pubkey,
+                                reason: CompletionReason::Executed,
+                            })
                             .ok();
                         return Ok(());
                     }
@@ -352,37 +357,45 @@ impl ProcessorFactory {
         state: &mut ProcessorState,
         result: ExecutionResult,
     ) -> Result<(), ActorProcessingErr> {
+        // Check if this was a load balancer skip
+        let is_lb_skip = result
+            .error
+            .as_ref()
+            .map(|e| e.contains("load balancer") || e.contains("At capacity"))
+            .unwrap_or(false);
+
         // Log the result
         if result.success {
             log::debug!("Thread {} execution succeeded", result.thread_pubkey);
+        } else if is_lb_skip {
+            log::debug!(
+                "Thread {} skipped: {:?}",
+                result.thread_pubkey,
+                result.error
+            );
         } else {
-            // Load balancer skips are expected behavior, not failures
-            let is_lb_skip = result
-                .error
-                .as_ref()
-                .map(|e| e.contains("load balancer") || e.contains("At capacity"))
-                .unwrap_or(false);
-
-            if is_lb_skip {
-                log::debug!(
-                    "Thread {} skipped: {:?}",
-                    result.thread_pubkey,
-                    result.error
-                );
-            } else {
-                log::warn!(
-                    "Thread {} execution failed after {} attempts: {:?}",
-                    result.thread_pubkey,
-                    result.attempt_count,
-                    result.error
-                );
-            }
+            log::warn!(
+                "Thread {} execution failed after {} attempts: {:?}",
+                result.thread_pubkey,
+                result.attempt_count,
+                result.error
+            );
         }
+
+        // Determine completion reason based on whether load balancer skipped
+        let reason = if is_lb_skip {
+            CompletionReason::Skipped
+        } else {
+            CompletionReason::Executed
+        };
 
         // Notify StagingActor that thread completed
         state
             .staging_ref
-            .send_message(StagingMessage::ThreadCompleted(result.thread_pubkey))
+            .send_message(StagingMessage::ThreadCompleted {
+                thread_pubkey: result.thread_pubkey,
+                reason,
+            })
             .map_err(|e| format!("Failed to notify staging of completion: {:?}", e))?;
 
         Ok(())
