@@ -141,3 +141,41 @@ jobs:
             [Documentation](https://docs.antegen.xyz) | [GitHub](https://github.com/wuwei-labs/antegen)
           files: |
             artifacts/*
+
+  publish-crates:
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      # Publish in dependency order with delays for crates.io indexing
+      - name: Publish antegen-cron
+        run: cargo publish -p antegen-cron --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true  # May already be published
+
+      - name: Wait for crates.io indexing
+        run: sleep 30
+
+      - name: Publish antegen-thread-program
+        run: cargo publish -p antegen-thread-program --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true
+
+      - name: Wait for crates.io indexing
+        run: sleep 30
+
+      - name: Publish antegen-client
+        run: cargo publish -p antegen-client --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true
+
+      - name: Wait for crates.io indexing
+        run: sleep 30
+
+      - name: Publish antegen-cli
+        run: cargo publish -p antegen-cli --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true

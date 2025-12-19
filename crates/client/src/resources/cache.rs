@@ -8,11 +8,11 @@
 use crate::config::CacheConfig;
 use crate::rpc::RpcPool;
 use anchor_lang::AccountDeserialize;
-use base64::prelude::*;
 use antegen_thread_program::state::{Schedule, Thread, Trigger};
+use base64::prelude::*;
 use moka::future::Cache;
-use moka::policy::Expiry;
 use moka::notification::RemovalCause;
+use moka::policy::Expiry;
 use solana_sdk::pubkey::Pubkey;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -35,10 +35,15 @@ impl CacheTriggerType {
     /// Extract trigger type from Thread data
     pub fn from_thread(thread: &Thread) -> Self {
         match &thread.trigger {
-            Trigger::Timestamp { .. } | Trigger::Cron { .. } | Trigger::Interval { .. } | Trigger::Immediate { .. } => {
+            Trigger::Timestamp { .. }
+            | Trigger::Cron { .. }
+            | Trigger::Interval { .. }
+            | Trigger::Immediate { .. } => {
                 // Extract next execution time from schedule
                 if let Schedule::Timed { next, .. } = &thread.schedule {
-                    CacheTriggerType::Time { next_timestamp: *next }
+                    CacheTriggerType::Time {
+                        next_timestamp: *next,
+                    }
                 } else {
                     CacheTriggerType::Unknown
                 }
@@ -425,7 +430,9 @@ mod tests {
         let cache = AccountCache::with_capacity(100);
         let pubkey = Pubkey::new_unique();
 
-        cache.put(pubkey, vec![1, 2, 3], 100, CacheTriggerType::Block).await;
+        cache
+            .put(pubkey, vec![1, 2, 3], 100, CacheTriggerType::Block)
+            .await;
         assert!(cache.get(&pubkey).await.is_some());
 
         // Wait a bit - should NOT be evicted (block triggers have no TTL)
@@ -439,12 +446,21 @@ mod tests {
     async fn test_ttl_for_time_triggers() {
         // Create cache with grace period and time trigger in the past
         let config = CacheConfig { max_capacity: 100 };
-        let cache = AccountCache::with_config(&config, 1, None); // 1 second grace period
+        let cache = AccountCache::with_config(&config, 1, 0, None); // 1 second grace period, no eviction buffer
         let pubkey = Pubkey::new_unique();
 
         // Set trigger time in the past (should expire quickly)
         let past_timestamp = chrono::Utc::now().timestamp() - 10;
-        cache.put(pubkey, vec![1, 2, 3], 100, CacheTriggerType::Time { next_timestamp: past_timestamp }).await;
+        cache
+            .put(
+                pubkey,
+                vec![1, 2, 3],
+                100,
+                CacheTriggerType::Time {
+                    next_timestamp: past_timestamp,
+                },
+            )
+            .await;
 
         assert!(cache.get(&pubkey).await.is_some());
 
@@ -504,7 +520,9 @@ mod tests {
         assert_eq!(trigger, CacheTriggerType::Unknown);
 
         // Test Time trigger type
-        let trigger = CacheTriggerType::Time { next_timestamp: 12345 };
+        let trigger = CacheTriggerType::Time {
+            next_timestamp: 12345,
+        };
         match trigger {
             CacheTriggerType::Time { next_timestamp } => assert_eq!(next_timestamp, 12345),
             _ => panic!("Expected Time trigger"),
