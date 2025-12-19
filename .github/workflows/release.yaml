@@ -91,8 +91,8 @@ jobs:
         id: versions
         run: |
           echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          echo "solana_version=$(yq -oy '.workspace.dependencies."solana-sdk".version' Cargo.toml)" >> $GITHUB_OUTPUT
-          echo "anchor_version=$(yq -oy '.workspace.dependencies."anchor-lang".version' Cargo.toml)" >> $GITHUB_OUTPUT
+          echo "solana_version=$(yq -oy '.toolchain.solana_version' Anchor.toml)" >> $GITHUB_OUTPUT
+          echo "anchor_version=$(yq -oy '.toolchain.anchor_version' Anchor.toml)" >> $GITHUB_OUTPUT
           echo "rust_version=$(yq -oy '.toolchain.channel' rust-toolchain.toml)" >> $GITHUB_OUTPUT
 
       - name: Download all artifacts
