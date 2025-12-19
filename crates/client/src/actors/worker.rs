@@ -34,6 +34,15 @@ const BASE_RETRY_DELAY_MS: u64 = 500;
 /// Interval for re-sending via TPU during confirmation polling (milliseconds)
 const TPU_RETRY_INTERVAL_MS: u64 = 2000;
 
+/// Retry deadline for trigger-not-ready errors (seconds)
+/// This bounds how long we'll retry before giving up
+const TRIGGER_RETRY_DEADLINE_SECS: u64 = 10;
+
+/// Check if an error indicates the trigger condition is not yet met (error 6004)
+fn is_trigger_not_ready_error(error: &str) -> bool {
+    error.contains("Custom(6004)") || error.contains("6004")
+}
+
 pub struct WorkerActor;
 
 pub struct WorkerArgs {
@@ -218,23 +227,57 @@ async fn execute_thread(
         }
     }
 
-    // Build transaction instructions using the new executor interface
-    let (instructions, priority_fee) = match executor
-        .build_execute_transaction(&thread_pubkey, &thread)
-        .await
-    {
-        Ok(result) => result,
-        Err(e) => {
-            log::error!(
-                "Failed to build transaction for thread {}: {:?}",
-                thread_pubkey,
-                e
-            );
+    // Build transaction instructions with retry loop for trigger-not-ready errors
+    // Error 6004 (TriggerConditionFailed) is transient - retry until trigger time is reached
+    let trigger_retry_deadline = Instant::now() + Duration::from_secs(TRIGGER_RETRY_DEADLINE_SECS);
+    let (instructions, priority_fee) = loop {
+        // Check cancellation
+        if cancelled.load(Ordering::Relaxed) {
             return ExecutionResult::failed(
                 thread_pubkey,
-                format!("Transaction build failed: {}", e),
+                "Cancelled during build".to_string(),
                 0,
             );
+        }
+
+        // Check deadline
+        if Instant::now() > trigger_retry_deadline {
+            return ExecutionResult::failed(
+                thread_pubkey,
+                "Trigger window expired while waiting for trigger time".to_string(),
+                0,
+            );
+        }
+
+        match executor
+            .build_execute_transaction(&thread_pubkey, &thread)
+            .await
+        {
+            Ok(result) => break result,
+            Err(e) => {
+                let error_str = e.to_string();
+                if is_trigger_not_ready_error(&error_str) {
+                    // 6004 = trigger not ready yet, retry after short delay
+                    log::debug!(
+                        "Thread {} trigger not ready (6004), retrying in 500ms",
+                        thread_pubkey
+                    );
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    continue;
+                } else {
+                    // Other error, fail immediately
+                    log::error!(
+                        "Failed to build transaction for thread {}: {:?}",
+                        thread_pubkey,
+                        e
+                    );
+                    return ExecutionResult::failed(
+                        thread_pubkey,
+                        format!("Transaction build failed: {}", e),
+                        0,
+                    );
+                }
+            }
         }
     };
 
@@ -339,7 +382,17 @@ async fn execute_thread(
                         break;
                     }
                     Ok(Some(Err(e))) => {
-                        // Transaction failed on-chain - don't retry, return failure
+                        let error_str = format!("{:?}", e);
+                        if is_trigger_not_ready_error(&error_str) {
+                            // 6004 on-chain - trigger wasn't ready, break to retry with new blockhash
+                            log::debug!(
+                                "{}: 6004 on-chain (trigger not ready), will retry",
+                                thread_pubkey
+                            );
+                            break; // Exit TPU loop to retry submission
+                        }
+
+                        // Other on-chain error - don't retry, return failure
                         log::warn!("{}: transaction failed on-chain: {:?}", thread_pubkey, e);
 
                         let _ = load_balancer
@@ -419,17 +472,26 @@ async fn execute_thread(
             }
             Err(e) => {
                 last_error = format!("Confirmation failed: {}", e);
-                log::warn!(
-                    "Transaction confirmation failed for thread {} (attempt {}): {:?}",
-                    thread_pubkey,
-                    attempt,
-                    e
-                );
 
-                // Record loss in load balancer
-                let _ = load_balancer
-                    .record_execution_result(&thread_pubkey, false, chrono::Utc::now().timestamp())
-                    .await;
+                // 6004 errors are transient timing issues - log as DEBUG, not WARN
+                if is_trigger_not_ready_error(&e) {
+                    log::debug!(
+                        "{}: 6004 on RPC confirmation (trigger not ready), will retry",
+                        thread_pubkey
+                    );
+                } else {
+                    log::warn!(
+                        "Transaction confirmation failed for thread {} (attempt {}): {:?}",
+                        thread_pubkey,
+                        attempt,
+                        e
+                    );
+
+                    // Only record loss for non-6004 errors
+                    let _ = load_balancer
+                        .record_execution_result(&thread_pubkey, false, chrono::Utc::now().timestamp())
+                        .await;
+                }
 
                 // Exponential backoff
                 if attempt < MAX_ATTEMPTS {
