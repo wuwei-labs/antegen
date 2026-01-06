@@ -13,7 +13,7 @@ cargo install antegen-cli
 ### From script
 
 ```bash
-curl -sSfL https://antegen.xyz/install.sh | sh
+curl -sSfL https://raw.githubusercontent.com/wuwei-labs/antegen/main/scripts/install.sh | bash
 ```
 
 ### From source

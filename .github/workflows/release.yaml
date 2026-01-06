@@ -134,7 +134,7 @@ jobs:
 
             **Via script:**
             ```bash
-            curl -sSfL https://raw.githubusercontent.com/wuwei-labs/antegen/main/scripts/install.sh | sh
+            curl -sSfL https://raw.githubusercontent.com/wuwei-labs/antegen/main/scripts/install.sh | bash
             ```
 
             ---
