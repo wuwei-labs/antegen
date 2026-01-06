@@ -4,6 +4,11 @@ use antegen_client::ClientConfig;
 use anyhow::Result;
 use std::path::PathBuf;
 
+/// Strip surrounding quotes from a string (handles user input with accidental quotes)
+fn strip_quotes(s: String) -> String {
+    s.trim_matches(|c| c == '"' || c == '\'').to_string()
+}
+
 /// Generate a default configuration file
 pub fn init(
     output: PathBuf,
@@ -21,15 +26,15 @@ pub fn init(
 
     let mut config = ClientConfig::default();
 
-    // Apply overrides if provided
+    // Apply overrides if provided (strip quotes for user-friendliness)
     if let Some(url) = rpc {
-        config.rpc.endpoints[0].url = url;
+        config.rpc.endpoints[0].url = strip_quotes(url);
     }
     if let Some(path) = keypair_path {
-        config.executor.keypair_path = path;
+        config.executor.keypair_path = strip_quotes(path);
     }
     if let Some(path) = storage_path {
-        config.observability.storage_path = path;
+        config.observability.storage_path = strip_quotes(path);
     }
 
     config.save(&output)?;
