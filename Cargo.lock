@@ -421,11 +421,11 @@ dependencies = [
 
 [[package]]
 name = "antegen"
-version = "4.0.6"
+version = "4.0.7"
 
 [[package]]
 name = "antegen-cli"
-version = "4.0.6"
+version = "4.0.7"
 dependencies = [
  "anchor-lang",
  "antegen-client",
@@ -454,7 +454,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-client"
-version = "4.0.6"
+version = "4.0.7"
 dependencies = [
  "anchor-lang",
  "antegen-thread-program",
@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-geyser-plugin"
-version = "4.0.6"
+version = "4.0.7"
 dependencies = [
  "agave-geyser-plugin-interface",
  "antegen-client",
