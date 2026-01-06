@@ -26,7 +26,7 @@ members = ["crates/*", "plugin/geyser", "programs/thread"]
 default-members = ["crates/cli"]
 
 [workspace.package]
-version = "4.0.4"
+version = "4.0.5"
 authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
 repository = "https://github.com/wuwei-labs/antegen"
 homepage = "https://antegen.xyz/"
