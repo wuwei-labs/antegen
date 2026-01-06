@@ -1,11 +1,11 @@
 [package]
 name = "antegen"
-version = "4.0.0"
-authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
-repository = "https://github.com/wuwei-labs/antegen"
-homepage = "https://antegen.xyz/"
-license = "MIT"
-edition = "2021"
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+edition.workspace = true
 readme = "./README.md"
 keywords = ["solana"]
 publish = false
@@ -24,6 +24,15 @@ codegen-units = 1
 resolver = "2"
 members = ["crates/*", "plugin/geyser", "programs/thread"]
 default-members = ["crates/cli"]
+
+[workspace.package]
+version = "4.0.2"
+authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
+repository = "https://github.com/wuwei-labs/antegen"
+homepage = "https://antegen.xyz/"
+documentation = "https://docs.antegen.xyz/"
+license = "MIT"
+edition = "2021"
 
 [workspace.dependencies]
 # Internal workspace crates (each has its own version)

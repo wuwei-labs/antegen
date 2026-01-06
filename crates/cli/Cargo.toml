@@ -1,13 +1,13 @@
 [package]
 name = "antegen-cli"
-version = "4.0.2"
-authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
-edition = "2021"
-license = "MIT"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "CLI for Antegen - Solana automation and scheduling"
-repository = "https://github.com/wuwei-labs/antegen"
-homepage = "https://antegen.xyz/"
-documentation = "https://docs.antegen.xyz/"
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 keywords = ["solana", "automation", "scheduler", "blockchain"]
 categories = ["command-line-utilities", "cryptography::cryptocurrencies"]
 readme = "README.md"

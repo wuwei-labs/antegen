@@ -1,11 +1,11 @@
 [package]
 name = "antegen-geyser-plugin"
-version = "4.0.0"
-authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
-edition = "2021"
-license = "MIT"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Geyser plugin for Antegen - Solana automation executor"
-repository = "https://github.com/wuwei-labs/antegen"
+repository.workspace = true
 publish = false
 
 [lib]

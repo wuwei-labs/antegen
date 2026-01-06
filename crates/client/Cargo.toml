@@ -1,13 +1,13 @@
 [package]
 name = "antegen-client"
-version = "4.0.2"
-authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
-edition = "2021"
-license = "MIT"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Client library for Antegen - Solana automation executor"
-repository = "https://github.com/wuwei-labs/antegen"
-homepage = "https://antegen.xyz/"
-documentation = "https://docs.antegen.xyz/"
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 keywords = ["solana", "automation", "executor"]
 readme = "../../README.md"
 
