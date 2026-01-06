@@ -22,11 +22,7 @@ codegen-units = 1
 
 [workspace]
 resolver = "2"
-members = [
-    "crates/*",
-    "plugin/geyser",
-    "programs/thread",
-]
+members = ["crates/*", "plugin/geyser", "programs/thread"]
 default-members = ["crates/cli"]
 
 [workspace.dependencies]
@@ -34,7 +30,9 @@ default-members = ["crates/cli"]
 antegen-cron = { version = "4.0.0", path = "crates/cron" }
 antegen-client = { version = "4.0.0", path = "crates/client" }
 antegen-geyser-plugin = { version = "4.0.0", path = "plugin/geyser" }
-antegen-thread-program = { version = "4.0.0", path = "programs/thread", features = ["cpi"] }
+antegen-thread-program = { version = "4.0.0", path = "programs/thread", features = [
+    "cpi",
+] }
 
 # Anchor
 anchor-lang = "=1.0.0-rc.1"
@@ -62,7 +60,7 @@ getrandom = { version = "=0.2.16", features = ["custom"] }
 hex = "=0.4.3"
 hyper = { version = "=0.14.32", features = ["server", "tcp", "http1"] }
 lazy_static = "=1.5.0"
-loa-core = "=1.0.1"
+loa-core = "=1.1.6"
 log = "=0.4.29"
 moka = { version = "=0.12.11", features = ["future"] }
 nom = "=7.1.3"
@@ -74,7 +72,10 @@ rand_chacha = "=0.3.1"
 rand_core = "=0.6.4"
 regex = "=1.12.2"
 reqwest = { version = "=0.11.27", features = ["blocking", "json"] }
-rust-embed = { version = "=8.9.0", features = ["include-exclude", "interpolate-folder-path"] }
+rust-embed = { version = "=8.9.0", features = [
+    "include-exclude",
+    "interpolate-folder-path",
+] }
 rustc_version = "=0.4.1"
 seahash = "=4.1.0"
 serde = "=1.0.228"
@@ -111,6 +112,8 @@ spl-associated-token-account = "=6.0.0"
 spl-token = "=7.0.0"
 
 # TPU client for direct validator transaction submission
-solana-tpu-client-next = { version = "=3.1.4", features = ["agave-unstable-api"] }
+solana-tpu-client-next = { version = "=3.1.4", features = [
+    "agave-unstable-api",
+] }
 solana-rpc-client = "=3.1.4"
 tokio-util = "=0.7"

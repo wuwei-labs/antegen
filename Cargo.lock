@@ -2846,9 +2846,9 @@ checksum = "6373607a59f0be73a39b6fe456b8192fcc3585f602af20751600e974dd455e77"
 
 [[package]]
 name = "loa-core"
-version = "1.0.1"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b35f5a5122e15278511583461ac005bed8c850775f76fc116c28aefe2e3cf5c"
+checksum = "30a3c19d22350efa481a31e9989bf9cb1edf2320b6b55f4ac5241dec9f8a6a4d"
 dependencies = [
  "anyhow",
  "async-trait",
