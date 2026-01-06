@@ -167,6 +167,12 @@ setup_systemd() {
         info "Using RPC_URL from environment: $RPC_URL"
     fi
 
+    # Strip surrounding quotes if user accidentally included them
+    RPC_URL="${RPC_URL#\"}"
+    RPC_URL="${RPC_URL%\"}"
+    RPC_URL="${RPC_URL#\'}"
+    RPC_URL="${RPC_URL%\'}"
+
     # Generate config with CLI flags (handles permissions automatically)
     info "Generating config via CLI..."
     sudo $INSTALL_DIR/$BINARY config init \
