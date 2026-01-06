@@ -158,10 +158,14 @@ setup_systemd() {
     sudo chown antegen:antegen /var/lib/antegen
     sudo chmod 700 /var/lib/antegen
 
-    # Prompt for RPC endpoint (use /dev/tty for input when piped through curl)
-    echo ""
-    read -p "Enter RPC endpoint URL [http://localhost:8899]: " RPC_URL </dev/tty
-    RPC_URL="${RPC_URL:-http://localhost:8899}"
+    # Use RPC_URL env var if set, otherwise prompt interactively
+    if [ -z "$RPC_URL" ]; then
+        echo ""
+        read -p "Enter RPC endpoint URL [http://localhost:8899]: " RPC_URL </dev/tty || true
+        RPC_URL="${RPC_URL:-http://localhost:8899}"
+    else
+        info "Using RPC_URL from environment: $RPC_URL"
+    fi
 
     # Generate config with CLI flags (handles permissions automatically)
     info "Generating config via CLI..."
