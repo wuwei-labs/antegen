@@ -158,9 +158,9 @@ setup_systemd() {
     sudo chown antegen:antegen /var/lib/antegen
     sudo chmod 700 /var/lib/antegen
 
-    # Prompt for RPC endpoint
+    # Prompt for RPC endpoint (use /dev/tty for input when piped through curl)
     echo ""
-    read -p "Enter RPC endpoint URL [http://localhost:8899]: " RPC_URL
+    read -p "Enter RPC endpoint URL [http://localhost:8899]: " RPC_URL </dev/tty
     RPC_URL="${RPC_URL:-http://localhost:8899}"
 
     # Generate config with CLI flags (handles permissions automatically)
