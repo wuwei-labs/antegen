@@ -23,8 +23,8 @@ info() {
     echo -e "${GREEN}==>${NC} $1"
 }
 
-# Extract version from root Cargo.toml
-VERSION=$(grep -m1 '^version' "$ROOT_DIR/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
+# Extract version from [workspace.package] section in root Cargo.toml
+VERSION=$(sed -n '/\[workspace.package\]/,/^\[/p' "$ROOT_DIR/Cargo.toml" | grep '^version' | sed 's/version = "\(.*\)"/\1/')
 
 if [[ -z "$VERSION" ]]; then
     error "Could not extract version from Cargo.toml"
@@ -89,7 +89,7 @@ git tag "$TAG"
 
 # Push
 info "Pushing to origin..."
-git push origin main --tags
+git push origin main "$TAG"
 
 echo ""
 info "Release $TAG complete!"
