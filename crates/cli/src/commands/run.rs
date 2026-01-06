@@ -5,8 +5,9 @@ use antegen_client::rpc::websocket::WsClient;
 use antegen_client::rpc::RpcPool;
 use antegen_client::ClientConfig;
 use solana_sdk::native_token::LAMPORTS_PER_SOL;
-use solana_sdk::signature::{read_keypair_file, Keypair, Signer};
+use solana_sdk::signature::{read_keypair_file, Signer};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// Minimum lamports required to start (100x base fee = 100 transactions)
 const MIN_BALANCE_LAMPORTS: u64 = 500_000; // 0.0005 SOL
@@ -64,8 +65,9 @@ pub async fn execute(config_path: PathBuf, log_level: Option<crate::LogLevel>) -
     let config = ClientConfig::load(&config_path)?;
 
     // Ensure keypair exists (generate if needed)
-    let keypair_path = expand_tilde(&config.executor.keypair_path)?;
-    ensure_keypair_exists(&keypair_path)?;
+    let keypair_path = super::expand_tilde(&config.executor.keypair_path)?;
+    let pubkey = super::ensure_keypair_exists(&keypair_path)?;
+    log::info!("Executor pubkey: {}", pubkey);
 
     // Check balance and wait if necessary
     let rpc_endpoint = config
@@ -83,49 +85,6 @@ pub async fn execute(config_path: PathBuf, log_level: Option<crate::LogLevel>) -
 
     // Run the client
     antegen_client::run_standalone(config).await
-}
-
-/// Expand ~ in path to home directory
-fn expand_tilde(path: &str) -> Result<PathBuf> {
-    if path.starts_with("~/") {
-        let home = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
-        Ok(home.join(&path[2..]))
-    } else {
-        Ok(PathBuf::from(path))
-    }
-}
-
-/// Ensure keypair exists, generating a new one if needed
-fn ensure_keypair_exists(keypair_path: &Path) -> Result<()> {
-    if keypair_path.exists() {
-        log::info!("Using existing keypair: {}", keypair_path.display());
-        return Ok(());
-    }
-
-    log::warn!("Keypair not found: {}", keypair_path.display());
-    log::info!("Generating new keypair...");
-
-    // Create parent directory if needed
-    if let Some(parent) = keypair_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
-    }
-
-    // Generate new keypair
-    let keypair = Keypair::new();
-
-    // Write to file (JSON format compatible with solana-keygen)
-    let keypair_bytes = keypair.to_bytes();
-    let json = serde_json::to_string(&keypair_bytes.to_vec())?;
-    std::fs::write(keypair_path, json)
-        .with_context(|| format!("Failed to write keypair to: {}", keypair_path.display()))?;
-
-    log::info!("✓ Generated new keypair: {}", keypair_path.display());
-    log::info!("  Pubkey: {}", keypair.pubkey());
-    log::warn!("⚠️  IMPORTANT: Fund this address with SOL before executing threads!");
-
-    Ok(())
 }
 
 /// Check if executor has sufficient balance, wait for funding if not
@@ -149,7 +108,7 @@ async fn check_balance_or_wait(rpc_url: &str, ws_url: &str, keypair_path: &Path)
         return Ok(());
     }
 
-    // Insufficient balance - wait for funding via WebSocket
+    // Insufficient balance - wait for funding
     let min_sol = MIN_BALANCE_LAMPORTS as f64 / LAMPORTS_PER_SOL as f64;
     log::warn!("Insufficient balance: {} lamports", balance);
     log::warn!(
@@ -160,14 +119,33 @@ async fn check_balance_or_wait(rpc_url: &str, ws_url: &str, keypair_path: &Path)
     log::info!("Fund address: {}", pubkey);
     log::info!("Waiting for deposit...");
 
-    // Wait until balance meets threshold
-    let account = WsClient::wait_until(ws_url, &pubkey, |acc| {
-        acc.lamports >= MIN_BALANCE_LAMPORTS
-    })
-    .await?;
+    // Race: WebSocket subscription vs polling (every 10s)
+    // This ensures funding is detected even if WebSocket fails to connect
+    let ws_future =
+        WsClient::wait_until(ws_url, &pubkey, |acc| acc.lamports >= MIN_BALANCE_LAMPORTS);
 
-    let sol = account.lamports as f64 / LAMPORTS_PER_SOL as f64;
-    log::info!("Funded! Executor balance: {:.4} SOL", sol);
+    let poll_future = async {
+        loop {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            if let Ok(bal) = client.get_balance(&pubkey).await {
+                if bal >= MIN_BALANCE_LAMPORTS {
+                    return bal;
+                }
+            }
+        }
+    };
+
+    tokio::select! {
+        ws_result = ws_future => {
+            let account = ws_result?;
+            let sol = account.lamports as f64 / LAMPORTS_PER_SOL as f64;
+            log::info!("Funded! Executor balance: {:.4} SOL", sol);
+        }
+        balance = poll_future => {
+            let sol = balance as f64 / LAMPORTS_PER_SOL as f64;
+            log::info!("Funded! Executor balance: {:.4} SOL", sol);
+        }
+    }
 
     Ok(())
 }

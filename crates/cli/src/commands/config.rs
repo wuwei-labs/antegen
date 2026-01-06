@@ -54,9 +54,14 @@ pub fn init(
     }
 
     println!("✓ Generated config: {}", output.display());
+
+    // Generate keypair if it doesn't exist
+    let keypair_path = super::expand_tilde(&config.executor.keypair_path)?;
+    let pubkey = super::ensure_keypair_exists(&keypair_path)?;
+    println!("✓ Keypair: {} ({})", keypair_path.display(), pubkey);
     println!();
     println!("Next steps:");
-    println!("  1. Edit the config file with your RPC endpoints");
+    println!("  1. Fund address {} with SOL", pubkey);
     println!("  2. Run: antegen start -c {}", output.display());
 
     Ok(())
