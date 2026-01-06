@@ -110,6 +110,15 @@ install_binary() {
     info "Installed $BINARY to $INSTALL_DIR/$BINARY"
 }
 
+# Restart systemd service if running (for updates)
+restart_service_if_running() {
+    if [ "$OS" = "linux" ] && systemctl is-active --quiet antegen 2>/dev/null; then
+        info "Restarting antegen service..."
+        sudo systemctl daemon-reload
+        sudo systemctl restart antegen
+    fi
+}
+
 # Verify installation
 verify_installation() {
     if command -v $BINARY &> /dev/null; then
@@ -149,18 +158,19 @@ setup_systemd() {
     sudo chown antegen:antegen /var/lib/antegen
     sudo chmod 700 /var/lib/antegen
 
-    # Generate default config if it doesn't exist
-    if [ ! -f /etc/antegen/antegen.toml ]; then
-        info "Generating default config via CLI..."
-        sudo $INSTALL_DIR/$BINARY config init -o /etc/antegen/antegen.toml
-        # Update paths to use /var/lib/antegen (system user has no home dir)
-        sudo sed -i 's|keypair_path = .*|keypair_path = "/var/lib/antegen/executor.json"|' /etc/antegen/antegen.toml
-        sudo sed -i 's|storage_path = .*|storage_path = "/var/lib/antegen/observability"|' /etc/antegen/antegen.toml
-        sudo chown root:antegen /etc/antegen/antegen.toml
-        sudo chmod 640 /etc/antegen/antegen.toml
-    else
-        info "Config already exists at /etc/antegen/antegen.toml"
-    fi
+    # Prompt for RPC endpoint
+    echo ""
+    read -p "Enter RPC endpoint URL [http://localhost:8899]: " RPC_URL
+    RPC_URL="${RPC_URL:-http://localhost:8899}"
+
+    # Generate config with CLI flags (handles permissions automatically)
+    info "Generating config via CLI..."
+    sudo $INSTALL_DIR/$BINARY config init \
+        -o /etc/antegen/antegen.toml \
+        --rpc "$RPC_URL" \
+        --keypair-path "/var/lib/antegen/executor.json" \
+        --storage-path "/var/lib/antegen/observability" \
+        --force
 
     # Create systemd service file
     info "Creating systemd service..."
@@ -215,6 +225,7 @@ main() {
     detect_platform
     get_latest_version
     install_binary
+    restart_service_if_running
     verify_installation
 
     if [ "$SETUP_SYSTEMD" = true ]; then

@@ -40,6 +40,9 @@ tar = { workspace = true }
 flate2 = { workspace = true }
 tempfile = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+file-owner = "0.1"
+
 [build-dependencies]
 
 [features]

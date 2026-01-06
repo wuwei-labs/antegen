@@ -135,6 +135,22 @@ enum ConfigCommands {
         /// Output path for config file
         #[arg(short, long, default_value = "antegen.toml")]
         output: PathBuf,
+
+        /// RPC endpoint URL
+        #[arg(long)]
+        rpc: Option<String>,
+
+        /// Path to executor keypair file
+        #[arg(long)]
+        keypair_path: Option<String>,
+
+        /// Path to observability storage
+        #[arg(long)]
+        storage_path: Option<String>,
+
+        /// Overwrite existing config file
+        #[arg(long)]
+        force: bool,
     },
 
     /// Validate config file
@@ -366,7 +382,9 @@ async fn main() -> Result<()> {
             GeyserCommands::Extract { output } => commands::geyser::extract(output).await,
         },
         Commands::Config(config_cmd) => match config_cmd {
-            ConfigCommands::Init { output } => commands::config::init(output),
+            ConfigCommands::Init { output, rpc, keypair_path, storage_path, force } => {
+                commands::config::init(output, rpc, keypair_path, storage_path, force)
+            }
             ConfigCommands::Validate { config } => commands::config::validate(config),
         },
         Commands::Thread(thread_cmd) => match thread_cmd {

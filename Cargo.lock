@@ -421,11 +421,11 @@ dependencies = [
 
 [[package]]
 name = "antegen"
-version = "4.0.3"
+version = "4.0.4"
 
 [[package]]
 name = "antegen-cli"
-version = "4.0.3"
+version = "4.0.4"
 dependencies = [
  "anchor-lang",
  "antegen-client",
@@ -435,6 +435,7 @@ dependencies = [
  "clap 4.5.53",
  "dirs 5.0.1",
  "env_logger 0.10.2",
+ "file-owner",
  "flate2",
  "log",
  "reqwest 0.11.27",
@@ -453,7 +454,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-client"
-version = "4.0.3"
+version = "4.0.4"
 dependencies = [
  "anchor-lang",
  "antegen-thread-program",
@@ -504,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-geyser-plugin"
-version = "4.0.3"
+version = "4.0.4"
 dependencies = [
  "agave-geyser-plugin-interface",
  "antegen-client",
@@ -1835,6 +1836,15 @@ name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
+
+[[package]]
+name = "file-owner"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36f03ecafcffaf8add486d5424ffd60a25690f9da6a026692bc6c657379fc60c"
+dependencies = [
+ "nix",
+]
 
 [[package]]
 name = "filetime"
