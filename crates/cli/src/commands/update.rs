@@ -5,6 +5,9 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+
 /// GitHub repository for releases
 const GITHUB_REPO: &str = "wuwei-labs/antegen";
 
@@ -36,10 +39,24 @@ pub fn get_platform_target() -> &'static str {
     compile_error!("Unsupported platform for update");
 }
 
-/// Get the binary install path
+/// Get the binary symlink path
 pub fn binary_path() -> Result<PathBuf> {
     dirs::home_dir()
         .map(|p| p.join(".local/bin/antegen"))
+        .context("Could not determine home directory")
+}
+
+/// Get the versioned binary path (e.g., ~/.local/bin/antegen-v4.3.1)
+fn versioned_binary_path(version: &str) -> Result<PathBuf> {
+    dirs::home_dir()
+        .map(|p| p.join(format!(".local/bin/antegen-{}", version)))
+        .context("Could not determine home directory")
+}
+
+/// Get the bin directory path
+fn bin_dir() -> Result<PathBuf> {
+    dirs::home_dir()
+        .map(|p| p.join(".local/bin"))
         .context("Could not determine home directory")
 }
 
@@ -120,7 +137,7 @@ pub async fn download_binary(url: &str) -> Result<PathBuf> {
     Ok(temp_path)
 }
 
-/// Update the CLI binary
+/// Update the CLI binary using symlink-based atomic updates with rollback
 pub async fn update(no_restart: bool) -> Result<()> {
     let current = current_version();
     println!("Current version: {}", current);
@@ -135,40 +152,141 @@ pub async fn update(no_restart: bool) -> Result<()> {
 
     println!("New version available: {} -> {}", current, latest);
 
-    // Download new binary
+    // Download new binary to versioned path
     let url = build_download_url(&latest);
     let temp_path = download_binary(&url).await?;
 
-    // Get install path
-    let bin_path = binary_path()?;
+    // Get paths
+    let bin_dir = bin_dir()?;
+    let symlink_path = binary_path()?;
+    let new_versioned_path = versioned_binary_path(&latest)?;
+    let old_versioned_path = versioned_binary_path(current)?;
 
-    // Create parent directory if needed
-    if let Some(parent) = bin_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    // Create bin directory if needed
+    fs::create_dir_all(&bin_dir)?;
 
-    // Replace binary
-    println!("Installing to: {}", bin_path.display());
-    fs::copy(&temp_path, &bin_path).context("Failed to copy binary")?;
+    // Install new versioned binary
+    println!("Installing {} ...", new_versioned_path.display());
+    fs::copy(&temp_path, &new_versioned_path).context("Failed to copy binary")?;
 
-    // Make executable
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&bin_path, fs::Permissions::from_mode(0o755))?;
+        fs::set_permissions(&new_versioned_path, fs::Permissions::from_mode(0o755))?;
     }
 
     // Clean up temp file
     let _ = fs::remove_file(&temp_path);
 
+    // Check if current binary is a symlink or regular file (migration case)
+    let was_symlink = symlink_path.is_symlink();
+    let old_target = if was_symlink {
+        fs::read_link(&symlink_path).ok()
+    } else {
+        None
+    };
+
+    // If current binary is a regular file (not symlink), migrate it to versioned path
+    if symlink_path.exists() && !was_symlink {
+        println!("Migrating existing binary to versioned path...");
+        fs::rename(&symlink_path, &old_versioned_path)
+            .context("Failed to migrate existing binary")?;
+    }
+
+    // Atomically swap symlink to new version
+    // Remove old symlink first (atomic_symlink not available in std)
+    if symlink_path.exists() || symlink_path.is_symlink() {
+        fs::remove_file(&symlink_path).context("Failed to remove old symlink")?;
+    }
+
+    #[cfg(unix)]
+    symlink(&new_versioned_path, &symlink_path).context("Failed to create symlink")?;
+
     println!("✓ Updated to {}", latest);
 
-    // Auto-restart service if running
+    // Auto-restart service if running and verify it works
     if !no_restart && super::service::is_installed() {
         println!("Restarting service...");
+
         if let Err(e) = super::service::restart() {
-            println!("Warning: Failed to restart service: {}", e);
-            println!("You may need to run 'antegen restart' manually.");
+            println!("✗ Failed to restart service: {}", e);
+            println!("Rolling back to previous version...");
+
+            // Rollback: restore old symlink
+            let _ = fs::remove_file(&symlink_path);
+
+            #[cfg(unix)]
+            if let Some(ref old_target) = old_target {
+                symlink(old_target, &symlink_path)?;
+            } else if old_versioned_path.exists() {
+                symlink(&old_versioned_path, &symlink_path)?;
+            }
+
+            // Clean up failed new version
+            let _ = fs::remove_file(&new_versioned_path);
+
+            anyhow::bail!(
+                "Update failed: service did not start with new version.\n\
+                 Rolled back to {}",
+                current
+            );
+        }
+
+        // Give service time to stabilize
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        // Verify service is still running
+        use service_manager::{ServiceManager, ServiceStatus, ServiceStatusCtx};
+        let manager = <dyn ServiceManager>::native()?;
+        let label = "antegen".parse()?;
+        let status = manager.status(ServiceStatusCtx { label })?;
+
+        match status {
+            ServiceStatus::Running => {
+                println!("✓ Service running with new version");
+
+                // Clean up old versioned binary
+                if old_versioned_path.exists() && old_versioned_path != new_versioned_path {
+                    let _ = fs::remove_file(&old_versioned_path);
+                    println!("✓ Cleaned up old version");
+                }
+            }
+            ServiceStatus::Stopped(reason) => {
+                println!("✗ Service stopped after update");
+                if let Some(msg) = reason {
+                    println!("  Reason: {}", msg);
+                }
+
+                println!("Rolling back to previous version...");
+
+                // Rollback
+                let _ = fs::remove_file(&symlink_path);
+
+                #[cfg(unix)]
+                if let Some(ref old_target) = old_target {
+                    symlink(old_target, &symlink_path)?;
+                } else if old_versioned_path.exists() {
+                    symlink(&old_versioned_path, &symlink_path)?;
+                }
+
+                // Restart with old version
+                let _ = super::service::restart();
+
+                // Clean up failed new version
+                let _ = fs::remove_file(&new_versioned_path);
+
+                anyhow::bail!(
+                    "Update failed: service crashed with new version.\n\
+                     Rolled back to {}",
+                    current
+                );
+            }
+            _ => {}
+        }
+    } else {
+        // No service or --no-restart, just clean up old version
+        if old_versioned_path.exists() && old_versioned_path != new_versioned_path {
+            let _ = fs::remove_file(&old_versioned_path);
         }
     }
 
@@ -188,57 +306,70 @@ fn is_dev_build() -> Option<PathBuf> {
     }
 }
 
-/// Ensure the binary is installed at ~/.local/bin/antegen
+/// Ensure the binary is installed at ~/.local/bin/antegen (as symlink to versioned binary)
 /// In dev mode, copies the current binary. Otherwise downloads from GitHub.
 pub async fn ensure_binary_installed() -> Result<PathBuf> {
-    let bin_path = binary_path()?;
+    let symlink_path = binary_path()?;
+    let bin_dir = bin_dir()?;
 
-    if bin_path.exists() {
-        return Ok(bin_path);
+    // If symlink exists and points to valid binary, we're good
+    if symlink_path.exists() {
+        return Ok(symlink_path);
     }
 
-    // Create parent directory if needed
-    if let Some(parent) = bin_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    // Create bin directory if needed
+    fs::create_dir_all(&bin_dir)?;
 
     // Check if we're running from cargo (dev mode)
     if let Some(dev_binary) = is_dev_build() {
-        println!("Dev mode: copying current binary to {}", bin_path.display());
-        fs::copy(&dev_binary, &bin_path).context("Failed to copy dev binary")?;
+        let version = current_version();
+        let versioned_path = versioned_binary_path(version)?;
+
+        println!("Dev mode: installing {} ...", versioned_path.display());
+        fs::copy(&dev_binary, &versioned_path).context("Failed to copy dev binary")?;
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&bin_path, fs::Permissions::from_mode(0o755))?;
+            fs::set_permissions(&versioned_path, fs::Permissions::from_mode(0o755))?;
         }
 
-        println!("✓ Installed dev binary");
-        return Ok(bin_path);
+        // Create symlink
+        #[cfg(unix)]
+        symlink(&versioned_path, &symlink_path).context("Failed to create symlink")?;
+
+        println!("✓ Installed dev binary {}", version);
+        return Ok(symlink_path);
     }
 
     // Production mode: download from GitHub
-    println!("Binary not found at {}", bin_path.display());
+    println!("Binary not found at {}", symlink_path.display());
     println!("Downloading latest release...");
 
     let version = fetch_latest_version().await?;
     println!("Latest version: {}", version);
 
+    let versioned_path = versioned_binary_path(&version)?;
+
     let url = build_download_url(&version);
     let temp_path = download_binary(&url).await?;
 
-    println!("Installing to: {}", bin_path.display());
-    fs::copy(&temp_path, &bin_path).context("Failed to copy binary")?;
+    println!("Installing {} ...", versioned_path.display());
+    fs::copy(&temp_path, &versioned_path).context("Failed to copy binary")?;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&bin_path, fs::Permissions::from_mode(0o755))?;
+        fs::set_permissions(&versioned_path, fs::Permissions::from_mode(0o755))?;
     }
 
     let _ = fs::remove_file(&temp_path);
 
+    // Create symlink
+    #[cfg(unix)]
+    symlink(&versioned_path, &symlink_path).context("Failed to create symlink")?;
+
     println!("✓ Installed antegen {}", version);
 
-    Ok(bin_path)
+    Ok(symlink_path)
 }

@@ -421,11 +421,11 @@ dependencies = [
 
 [[package]]
 name = "antegen"
-version = "4.3.1"
+version = "4.3.2"
 
 [[package]]
 name = "antegen-cli"
-version = "4.3.1"
+version = "4.3.2"
 dependencies = [
  "anchor-lang",
  "antegen-client",
