@@ -162,6 +162,74 @@ fn print_thread(thread: &Thread) {
 }
 
 // =============================================================================
+// Admin commands (only available with `dev` feature)
+// =============================================================================
+
+/// Admin: force delete a thread (skips all checks)
+#[cfg(feature = "dev")]
+pub async fn admin_delete(
+    address: String,
+    rpc_url: Option<String>,
+    keypair_path: Option<std::path::PathBuf>,
+) -> Result<()> {
+    use anchor_lang::{InstructionData, ToAccountMetas};
+    use solana_sdk::{instruction::Instruction, message::Message, signer::Signer, transaction::Transaction};
+
+    let thread_pubkey =
+        Pubkey::from_str(&address).map_err(|e| anyhow!("Invalid pubkey '{}': {}", address, e))?;
+
+    let rpc_url = get_rpc_url(rpc_url)?;
+    let admin = get_keypair(keypair_path)?;
+
+    println!("Admin delete thread: {}", thread_pubkey);
+    println!("Admin: {}", admin.pubkey());
+    println!("RPC: {}", rpc_url);
+
+    let client = RpcPool::with_url(&rpc_url)
+        .map_err(|e| anyhow!("Failed to create RPC client: {}", e))?;
+
+    // Get config PDA
+    let (config_pubkey, _) = Pubkey::find_program_address(
+        &[antegen_thread_program::SEED_CONFIG],
+        &antegen_thread_program::ID,
+    );
+
+    // Build ThreadDelete instruction
+    let accounts = antegen_thread_program::accounts::ThreadDelete {
+        admin: admin.pubkey(),
+        config: config_pubkey,
+        thread: thread_pubkey,
+    };
+
+    let data = antegen_thread_program::instruction::DeleteThread {}.data();
+
+    let ix = Instruction {
+        program_id: antegen_thread_program::ID,
+        accounts: accounts.to_account_metas(None),
+        data,
+    };
+
+    // Build and send transaction
+    let (blockhash, _) = client
+        .get_latest_blockhash()
+        .await
+        .map_err(|e| anyhow!("Failed to get blockhash: {}", e))?;
+
+    let message = Message::new(&[ix], Some(&admin.pubkey()));
+    let tx = Transaction::new(&[&admin], message, blockhash);
+
+    let sig = client
+        .send_and_confirm_transaction(&tx)
+        .await
+        .map_err(|e| anyhow!("Failed to delete thread: {}", e))?;
+
+    println!("\n✓ Thread deleted successfully!");
+    println!("Signature: {}", sig);
+
+    Ok(())
+}
+
+// =============================================================================
 // Test commands (only available with `dev` feature)
 // =============================================================================
 

@@ -287,6 +287,13 @@ enum ThreadCommands {
         address: String,
     },
 
+    /// Admin: force delete a thread (skips all checks)
+    #[cfg(feature = "dev")]
+    Delete {
+        /// Thread public key to delete
+        address: String,
+    },
+
     /// Test thread operations (create, list, delete)
     #[cfg(feature = "dev")]
     #[command(subcommand)]
@@ -435,6 +442,10 @@ async fn main() -> Result<()> {
         },
         Commands::Thread(thread_cmd) => match thread_cmd {
             ThreadCommands::Get { address } => commands::thread::get(address, cli.rpc).await,
+            #[cfg(feature = "dev")]
+            ThreadCommands::Delete { address } => {
+                commands::thread::admin_delete(address, cli.rpc, cli.keypair).await
+            }
             #[cfg(feature = "dev")]
             ThreadCommands::Test(test_cmd) => {
                 commands::thread::test(cli.rpc, cli.keypair, test_cmd).await
