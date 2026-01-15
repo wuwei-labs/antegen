@@ -1,6 +1,6 @@
 [package]
 name = "antegen-cli"
-version = "4.2.1"
+version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -18,7 +18,9 @@ path = "src/main.rs"
 
 [dependencies]
 antegen-client = { version = "4.1.1", path = "../client" }
-antegen-thread-program = { version = "4.1.1", path = "../../programs/thread", features = ["cpi"] }
+antegen-thread-program = { version = "4.1.1", path = "../../programs/thread", features = [
+  "cpi",
+] }
 anchor-lang = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
