@@ -1,6 +1,6 @@
 [package]
 name = "antegen-cli"
-version = "4.1.1"
+version = "4.2.1"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -39,6 +39,7 @@ toml = { workspace = true }
 tar = { workspace = true }
 flate2 = { workspace = true }
 tempfile = { workspace = true }
+service-manager = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 file-owner = "0.1"
