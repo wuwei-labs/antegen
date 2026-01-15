@@ -2,7 +2,7 @@ use crate::{constants::*, errors::*, state::*};
 use anchor_lang::prelude::*;
 
 /// Parameters for updating the thread config
-#[derive(AnchorSerialize, AnchorDeserialize)]
+#[derive(AnchorSerialize, AnchorDeserialize, Default)]
 pub struct ConfigUpdateParams {
     pub admin: Option<Pubkey>,
     pub paused: Option<bool>,

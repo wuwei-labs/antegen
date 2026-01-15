@@ -98,9 +98,9 @@ pub mod thread_program {
         fiber_create(ctx, fiber_index, instruction, signer_seeds, priority_fee)
     }
 
-    /// Deletes a fiber from a thread.
-    pub fn delete_fiber(ctx: Context<FiberDelete>, fiber_index: u8) -> Result<()> {
-        fiber_delete(ctx, fiber_index)
+    /// Closes a fiber from a thread.
+    pub fn close_fiber(ctx: Context<FiberClose>, fiber_index: u8) -> Result<()> {
+        fiber_close(ctx, fiber_index)
     }
 
     /// Updates a fiber's instruction and resets execution stats.
@@ -128,8 +128,8 @@ pub mod thread_program {
     /// Closes an existing thread account and returns the lamports to the owner.
     /// Requires authority (owner) or thread itself to sign.
     /// External fiber accounts should be passed via remaining_accounts.
-    pub fn delete_thread(ctx: Context<ThreadDelete>) -> Result<()> {
-        thread_delete(ctx)
+    pub fn close_thread(ctx: Context<ThreadClose>) -> Result<()> {
+        thread_close(ctx)
     }
 
     /// Executes a thread fiber with trigger validation and fee distribution.
@@ -142,14 +142,9 @@ pub mod thread_program {
         thread_exec(ctx, forgo_commission, fiber_cursor)
     }
 
-    /// Toggles a thread's pause state.
-    pub fn toggle_thread(ctx: Context<ThreadToggle>) -> Result<()> {
-        thread_toggle(ctx)
-    }
-
-    /// Allows an owner to update the thread's trigger.
-    pub fn update_thread(ctx: Context<ThreadUpdate>, new_trigger: Option<Trigger>) -> Result<()> {
-        thread_update(ctx, new_trigger)
+    /// Allows an owner to update the thread's properties (paused state, trigger).
+    pub fn update_thread(ctx: Context<ThreadUpdate>, params: ThreadUpdateParams) -> Result<()> {
+        thread_update(ctx, params)
     }
 
     /// Allows an owner to withdraw from a thread's lamport balance.
@@ -177,9 +172,9 @@ pub mod thread_program {
         instructions::thread_memo::thread_memo(ctx, memo, signal)
     }
 
-    /// Force deletes a thread - admin only, skips all checks.
-    /// Used for cleaning up stuck/broken threads during development.
-    pub fn force_delete_thread(ctx: Context<ThreadForceDelete>) -> Result<()> {
-        thread_force_delete(ctx)
+    /// Deletes a thread - admin only, skips all checks.
+    /// Used for cleaning up stuck/broken threads.
+    pub fn delete_thread(ctx: Context<ThreadDelete>) -> Result<()> {
+        thread_delete(ctx)
     }
 }

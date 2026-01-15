@@ -59,25 +59,30 @@ pub fn create_thread(
 ) -> Result<()>
 ```
 
+#### `close_thread`
+Close thread account and return lamports to authority. Requires authority (owner) or thread itself to sign.
+```rust
+pub fn close_thread(ctx: Context<ThreadClose>) -> Result<()>
+```
+
 #### `delete_thread`
-Close thread account and return lamports to authority.
+Admin-only instruction to delete a thread, skipping all checks. Used for cleaning up stuck/broken threads.
 ```rust
 pub fn delete_thread(ctx: Context<ThreadDelete>) -> Result<()>
 ```
 
-#### `toggle_thread`
-Pause or resume thread execution.
-```rust
-pub fn toggle_thread(ctx: Context<ThreadToggle>) -> Result<()>
-```
-
 #### `update_thread`
-Modify thread's trigger condition.
+Modify thread properties (pause state, trigger). Only provided fields are updated.
 ```rust
 pub fn update_thread(
     ctx: Context<ThreadUpdate>,
-    new_trigger: Option<Trigger>
+    params: ThreadUpdateParams
 ) -> Result<()>
+
+pub struct ThreadUpdateParams {
+    pub paused: Option<bool>,    // Explicitly set pause state
+    pub trigger: Option<Trigger>, // Update trigger condition
+}
 ```
 
 #### `withdraw_thread`
@@ -102,11 +107,11 @@ pub fn create_fiber(
 ) -> Result<()>
 ```
 
-#### `delete_fiber`
+#### `close_fiber`
 Remove instruction from thread's sequence.
 ```rust
-pub fn delete_fiber(
-    ctx: Context<FiberDelete>,
+pub fn close_fiber(
+    ctx: Context<FiberClose>,
     index: u8
 ) -> Result<()>
 ```

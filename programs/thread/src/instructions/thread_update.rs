@@ -1,6 +1,15 @@
 use crate::{state::*, utils::next_timestamp, *};
 use anchor_lang::prelude::*;
 
+/// Parameters for updating a thread
+#[derive(AnchorSerialize, AnchorDeserialize, Default)]
+pub struct ThreadUpdateParams {
+    /// Explicitly set the paused state (not a toggle)
+    pub paused: Option<bool>,
+    /// Update the thread's trigger
+    pub trigger: Option<Trigger>,
+}
+
 /// Accounts required by the `thread_update` instruction.
 #[derive(Accounts)]
 pub struct ThreadUpdate<'info> {
@@ -22,11 +31,16 @@ pub struct ThreadUpdate<'info> {
     pub thread: Account<'info, Thread>,
 }
 
-pub fn thread_update(ctx: Context<ThreadUpdate>, new_trigger: Option<Trigger>) -> Result<()> {
+pub fn thread_update(ctx: Context<ThreadUpdate>, params: ThreadUpdateParams) -> Result<()> {
     let thread = &mut ctx.accounts.thread;
 
+    // Update paused state if provided (explicit, not toggle)
+    if let Some(paused) = params.paused {
+        thread.paused = paused;
+    }
+
     // Update the trigger if provided
-    if let Some(trigger) = new_trigger {
+    if let Some(trigger) = params.trigger {
         let clock = Clock::get()?;
         let current_timestamp = clock.unix_timestamp;
         let thread_pubkey = thread.key();

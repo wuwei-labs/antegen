@@ -1,7 +1,7 @@
 [package]
 name = "antegen-thread-program"
 description = "Solana program for Antegen - automation and scheduling threads"
-version = "4.0.0"
+version = "4.1.1"
 authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
 repository = "https://github.com/wuwei-labs/antegen"
 homepage = "https://antegen.xyz/"
@@ -23,6 +23,8 @@ idl-build = ["anchor-lang/idl-build"]
 no-entrypoint = []
 no-log-ix-name = []
 no-idl = []
+custom-heap = []
+custom-panic = []
 
 [dependencies]
 antegen-cron = { version = "4.0.0", path = "../../crates/cron" }

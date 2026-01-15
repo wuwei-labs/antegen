@@ -1,6 +1,6 @@
 [package]
 name = "antegen-geyser-plugin"
-version.workspace = true
+version = "4.1.1"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,7 +12,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-antegen-client = { version = "4.0.0", path = "../../crates/client" }
+antegen-client = { version = "4.1.1", path = "../../crates/client" }
 agave-geyser-plugin-interface = { workspace = true }
 solana-logger = { workspace = true }
 solana-program = { workspace = true }

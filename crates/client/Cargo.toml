@@ -1,6 +1,6 @@
 [package]
 name = "antegen-client"
-version.workspace = true
+version = "4.1.1"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,7 +13,7 @@ readme = "../../README.md"
 
 [dependencies]
 # Internal crates
-antegen-thread-program = { version = "4.0.0", path = "../../programs/thread", features = ["cpi"] }
+antegen-thread-program = { version = "4.1.1", path = "../../programs/thread", features = ["cpi"] }
 solana-sdk = { workspace = true }
 solana-program = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

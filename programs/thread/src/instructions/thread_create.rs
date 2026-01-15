@@ -201,19 +201,19 @@ pub fn thread_create(
     // Initialize fiber_signal to None (no pending signal)
     thread.fiber_signal = Signal::None;
 
-    // Build and store pre-compiled thread_delete instruction for self-closing
-    let delete_ix = Instruction {
+    // Build and store pre-compiled thread_close instruction for self-closing
+    let close_ix = Instruction {
         program_id: crate::ID,
-        accounts: crate::accounts::ThreadDelete {
+        accounts: crate::accounts::ThreadClose {
             authority: thread_pubkey,   // thread signs as authority
             close_to: thread.authority, // rent goes to owner
             thread: thread_pubkey,
         }
         .to_account_metas(None),
-        data: crate::instruction::DeleteThread {}.data(),
+        data: crate::instruction::CloseThread {}.data(),
     };
 
-    let compiled = compile_instruction(delete_ix, signer_seeds)?;
+    let compiled = compile_instruction(close_ix, signer_seeds)?;
     thread.close_fiber = borsh::to_vec(&compiled)?;
 
     // Transfer SOL from payer to the thread.

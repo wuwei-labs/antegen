@@ -986,9 +986,9 @@ mod test_commands {
         let thread = Thread::try_deserialize(&mut data.as_slice())
             .map_err(|e| anyhow!("Failed to deserialize thread: {:?}", e))?;
 
-        // Build ThreadDelete accounts
+        // Build ThreadClose accounts
         // Close_to receives the lamports - send to payer
-        let mut accounts = antegen_thread_program::accounts::ThreadDelete {
+        let mut accounts = antegen_thread_program::accounts::ThreadClose {
             authority: authority.pubkey(),
             close_to: payer.pubkey(),
             thread: thread_pubkey,
@@ -1014,7 +1014,7 @@ mod test_commands {
         }
 
         // Build instruction data
-        let data = antegen_thread_program::instruction::DeleteThread {}.data();
+        let data = antegen_thread_program::instruction::CloseThread {}.data();
 
         let ix = Instruction {
             program_id: antegen_thread_program::ID,
@@ -1463,8 +1463,8 @@ mod test_commands {
             &antegen_thread_program::ID,
         );
 
-        // Build fiber_delete instruction
-        let accounts = antegen_thread_program::accounts::FiberDelete {
+        // Build fiber_close instruction
+        let accounts = antegen_thread_program::accounts::FiberClose {
             authority: authority.pubkey(),
             close_to: payer.pubkey(),
             thread: thread_pubkey,
@@ -1472,7 +1472,7 @@ mod test_commands {
         }
         .to_account_metas(Some(false));
 
-        let data = antegen_thread_program::instruction::DeleteFiber { fiber_index }.data();
+        let data = antegen_thread_program::instruction::CloseFiber { fiber_index }.data();
 
         let ix = Instruction {
             program_id: antegen_thread_program::ID,
