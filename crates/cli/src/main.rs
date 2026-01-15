@@ -82,7 +82,11 @@ enum Commands {
     },
 
     /// Install and start the antegen service (init if needed)
-    Start,
+    Start {
+        /// RPC endpoint URL (prompts if not provided and interactive)
+        #[arg(long)]
+        rpc: Option<String>,
+    },
 
     /// Show service status
     Status,
@@ -422,7 +426,7 @@ async fn main() -> Result<()> {
             commands::run::execute(cfg, cli.log_level).await
         }
         Commands::Init { rpc, force } => commands::service::init(rpc, force),
-        Commands::Start => commands::service::start().await,
+        Commands::Start { rpc } => commands::service::start(rpc).await,
         Commands::Status => commands::service::status(),
         Commands::Stop => commands::service::stop(),
         Commands::Restart => commands::service::restart(),

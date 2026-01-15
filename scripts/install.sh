@@ -131,15 +131,14 @@ verify_installation() {
     fi
 }
 
-# Initialize antegen (config + service)
+# Initialize antegen (config + service) - only if RPC provided
 initialize() {
-    info "Initializing antegen..."
-
     if [ -n "$RPC_URL" ]; then
+        info "Initializing antegen with RPC: $RPC_URL"
         "$INSTALL_DIR/$BINARY" init --rpc "$RPC_URL"
-    else
-        "$INSTALL_DIR/$BINARY" init
+        return 0
     fi
+    return 1
 }
 
 main() {
@@ -154,7 +153,16 @@ main() {
 
     if verify_installation; then
         echo ""
-        initialize
+        if initialize; then
+            info "Initialization complete!"
+        else
+            info "Binary installed. To start the service, run:"
+            echo ""
+            echo "    antegen start --rpc <YOUR_RPC_URL>"
+            echo ""
+            echo "  Or install with RPC in one step:"
+            echo "    curl -sSfL .../install.sh | bash -s -- --rpc <YOUR_RPC_URL>"
+        fi
     else
         error "Installation verification failed"
     fi
@@ -164,6 +172,7 @@ main() {
     echo ""
     echo "  Useful commands:"
     echo "    antegen --help      Show help"
+    echo "    antegen status      Show service status"
     echo "    antegen stop        Stop the service"
     echo "    antegen start       Start the service"
     echo "    antegen restart     Restart the service"

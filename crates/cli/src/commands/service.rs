@@ -47,7 +47,15 @@ fn data_dir() -> Result<PathBuf> {
 }
 
 /// Prompt user for RPC endpoint
-fn prompt_for_rpc() -> Result<String> {
+/// Returns None if stdin is not interactive (non-TTY mode)
+fn prompt_for_rpc() -> Result<Option<String>> {
+    use std::io::IsTerminal;
+
+    // Check if stdin is interactive
+    if !std::io::stdin().is_terminal() {
+        return Ok(None);
+    }
+
     print!("Enter RPC endpoint URL [http://localhost:8899]: ");
     io::stdout().flush()?;
 
@@ -56,9 +64,9 @@ fn prompt_for_rpc() -> Result<String> {
 
     let trimmed = input.trim();
     if trimmed.is_empty() {
-        Ok("http://localhost:8899".to_string())
+        Ok(Some("http://localhost:8899".to_string()))
     } else {
-        Ok(trimmed.to_string())
+        Ok(Some(trimmed.to_string()))
     }
 }
 
@@ -77,7 +85,16 @@ fn do_init(rpc: Option<String>, force: bool) -> Result<PathBuf> {
     // Prompt for RPC if not provided
     let rpc_url = match rpc {
         Some(url) => url,
-        None => prompt_for_rpc()?,
+        None => match prompt_for_rpc()? {
+            Some(url) => url,
+            None => {
+                anyhow::bail!(
+                    "RPC endpoint required. Use --rpc flag in non-interactive mode:\n  \
+                     antegen init --rpc <URL>\n  \
+                     antegen start --rpc <URL>"
+                );
+            }
+        },
     };
 
     // Create directories
@@ -156,8 +173,8 @@ pub fn ensure_config() -> Result<PathBuf> {
 }
 
 /// Start the antegen service (init + install + start)
-pub async fn start() -> Result<()> {
-    let config_path = do_init(None, false)?;
+pub async fn start(rpc: Option<String>) -> Result<()> {
+    let config_path = do_init(rpc, false)?;
 
     println!("Installing service...");
     install_service(&config_path).await?;
@@ -222,7 +239,7 @@ pub fn status() -> Result<()> {
     println!("\nFor detailed status: launchctl print gui/$(id -u)/{}", SERVICE_LABEL);
 
     #[cfg(target_os = "linux")]
-    println!("\nFor detailed status: systemctl --user status {}", SERVICE_LABEL);
+    println!("\nFor logs: journalctl --user -u {} -f", SERVICE_LABEL);
 
     Ok(())
 }
