@@ -37,63 +37,33 @@ fi
 
 TAG="v$VERSION"
 
-info "Preparing release $TAG"
-
 # Check if tag already exists
 if git tag -l | grep -q "^$TAG$"; then
-    error "Tag $TAG already exists"
+    info "Tag $TAG already exists - nothing to release"
+    exit 0
 fi
 
-# Check for uncommitted changes to non-Cargo files
-NON_CARGO_CHANGES=$(git status --porcelain | grep -v "Cargo.toml" | grep -v "Cargo.lock" || true)
-if [[ -n "$NON_CARGO_CHANGES" ]]; then
-    error "Uncommitted changes to non-Cargo files detected:\n$NON_CARGO_CHANGES\n\nCommit or stash these changes before releasing."
+# Check for uncommitted changes
+if [[ -n "$(git status --porcelain)" ]]; then
+    error "Uncommitted changes detected. Commit or stash changes before releasing."
 fi
 
-# Run cargo check to update Cargo.lock
-info "Running cargo check..."
-cd "$ROOT_DIR"
-cargo check --quiet
-
-# Stage all Cargo files
-info "Staging Cargo files..."
-git add Cargo.toml Cargo.lock
-git add crates/*/Cargo.toml 2>/dev/null || true
-git add programs/*/Cargo.toml 2>/dev/null || true
-git add plugin/*/Cargo.toml 2>/dev/null || true
-
-# Check if there are changes to commit
-if git diff --cached --quiet; then
-    error "No changes staged for commit. Did you update the version in Cargo.toml?"
-fi
-
-# Show diff
-echo ""
-info "Changes to be committed:"
-echo "----------------------------------------"
-git diff --cached --stat
-echo "----------------------------------------"
-echo ""
+info "Releasing $TAG"
 
 # Confirmation prompt
-read -p "Release $TAG? [y/N] " -n 1 -r
+read -p "Create and push tag $TAG? [y/N] " -n 1 -r
 echo ""
 
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     info "Aborting release"
-    git reset HEAD --quiet
     exit 0
 fi
-
-# Commit
-info "Creating commit..."
-git commit -m "chore: release $TAG"
 
 # Create tag
 info "Creating tag $TAG..."
 git tag "$TAG"
 
-# Push
+# Push commits and tag
 info "Pushing to origin..."
 git push origin main "$TAG"
 

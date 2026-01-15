@@ -81,9 +81,11 @@ get_latest_version() {
     info "Latest version: $VERSION"
 }
 
-# Download and install binary
+# Download and install binary using symlink for atomic updates
 install_binary() {
     URL="https://github.com/$REPO/releases/download/$VERSION/$BINARY-$VERSION-$TARGET"
+    VERSIONED_BINARY="$INSTALL_DIR/$BINARY-$VERSION"
+    SYMLINK_PATH="$INSTALL_DIR/$BINARY"
 
     info "Downloading from: $URL"
 
@@ -99,11 +101,17 @@ install_binary() {
         error "Failed to download binary. Check if release exists for your platform."
     fi
 
-    # Make executable and install
+    # Make executable and install to versioned path
     chmod +x "$TMP_DIR/$BINARY"
-    mv "$TMP_DIR/$BINARY" "$INSTALL_DIR/$BINARY"
+    mv "$TMP_DIR/$BINARY" "$VERSIONED_BINARY"
 
-    info "Installed $BINARY to $INSTALL_DIR/$BINARY"
+    # Remove old symlink if exists
+    rm -f "$SYMLINK_PATH"
+
+    # Create symlink
+    ln -s "$VERSIONED_BINARY" "$SYMLINK_PATH"
+
+    info "Installed $BINARY $VERSION to $INSTALL_DIR/"
 }
 
 # Check if ~/.local/bin is in PATH
