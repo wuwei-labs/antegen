@@ -44,6 +44,12 @@ if git tag -l | grep -q "^$TAG$"; then
     error "Tag $TAG already exists"
 fi
 
+# Check for uncommitted changes to non-Cargo files
+NON_CARGO_CHANGES=$(git status --porcelain | grep -v "Cargo.toml" | grep -v "Cargo.lock" || true)
+if [[ -n "$NON_CARGO_CHANGES" ]]; then
+    error "Uncommitted changes to non-Cargo files detected:\n$NON_CARGO_CHANGES\n\nCommit or stash these changes before releasing."
+fi
+
 # Run cargo check to update Cargo.lock
 info "Running cargo check..."
 cd "$ROOT_DIR"
