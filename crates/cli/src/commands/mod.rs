@@ -10,7 +10,9 @@ pub mod config;
 pub mod geyser;
 pub mod program;
 pub mod run;
+pub mod service;
 pub mod thread;
+pub mod update;
 
 /// Expand ~ in path to home directory
 pub fn expand_tilde(path: &str) -> Result<PathBuf> {

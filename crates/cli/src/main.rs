@@ -63,11 +63,44 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the executor in standalone mode (RPC datasource)
-    Start {
-        /// Path to configuration file
-        #[arg(short, long, default_value = "antegen.toml")]
-        config: PathBuf,
+    /// Run the executor directly (no service, blocking)
+    Run {
+        /// Path to configuration file (defaults to ~/.config/antegen/antegen.toml, will init if needed)
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+    },
+
+    /// Initialize config only (no service)
+    Init {
+        /// RPC endpoint URL (prompts if not provided)
+        #[arg(long)]
+        rpc: Option<String>,
+
+        /// Overwrite existing config
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Install and start the antegen service (init if needed)
+    Start,
+
+    /// Show service status
+    Status,
+
+    /// Stop the antegen service
+    Stop,
+
+    /// Restart the antegen service
+    Restart,
+
+    /// Uninstall the antegen service
+    Uninstall,
+
+    /// Update antegen to the latest version
+    Update {
+        /// Don't restart the service after updating
+        #[arg(long)]
+        no_restart: bool,
     },
 
     /// Geyser plugin operations (downloads plugin from GitHub releases)
@@ -374,7 +407,20 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Start { config } => commands::run::execute(config, cli.log_level).await,
+        Commands::Run { config } => {
+            let cfg = match config {
+                Some(p) => p,
+                None => commands::service::ensure_config()?,
+            };
+            commands::run::execute(cfg, cli.log_level).await
+        }
+        Commands::Init { rpc, force } => commands::service::init(rpc, force),
+        Commands::Start => commands::service::start().await,
+        Commands::Status => commands::service::status(),
+        Commands::Stop => commands::service::stop(),
+        Commands::Restart => commands::service::restart(),
+        Commands::Uninstall => commands::service::uninstall(),
+        Commands::Update { no_restart } => commands::update::update(no_restart).await,
         Commands::Geyser(geyser_cmd) => match geyser_cmd {
             GeyserCommands::Init { output, config } => {
                 commands::geyser::init(output, config).await
