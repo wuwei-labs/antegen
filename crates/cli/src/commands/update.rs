@@ -16,6 +16,28 @@ pub fn current_version() -> &'static str {
     concat!("v", env!("CARGO_PKG_VERSION"))
 }
 
+/// Parse a version string like "v4.3.2" into (major, minor, patch)
+fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
+    let v = v.strip_prefix('v').unwrap_or(v);
+    let parts: Vec<&str> = v.split('.').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    Some((
+        parts[0].parse().ok()?,
+        parts[1].parse().ok()?,
+        parts[2].parse().ok()?,
+    ))
+}
+
+/// Compare two version strings, returns true if v1 < v2
+fn version_less_than(v1: &str, v2: &str) -> bool {
+    match (parse_version(v1), parse_version(v2)) {
+        (Some(a), Some(b)) => a < b,
+        _ => false, // If parsing fails, don't update
+    }
+}
+
 /// Get the platform target string for the current system
 pub fn get_platform_target() -> &'static str {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -145,7 +167,7 @@ pub async fn update(no_restart: bool) -> Result<()> {
     println!("Checking for updates...");
     let latest = fetch_latest_version().await?;
 
-    if current == latest {
+    if !version_less_than(current, &latest) {
         println!("✓ Already up to date ({})", current);
         return Ok(());
     }

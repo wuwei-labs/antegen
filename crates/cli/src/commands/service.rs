@@ -126,6 +126,25 @@ async fn install_service(config_path: &PathBuf) -> Result<()> {
     // Ensure binary is installed, download if missing
     let binary = super::update::ensure_binary_installed().await?;
 
+    // Create logs directory
+    let log_dir = dirs::data_local_dir()
+        .map(|p| p.join("antegen").join("logs"))
+        .context("Could not determine log directory")?;
+    std::fs::create_dir_all(&log_dir)?;
+
+    // Generate platform-specific service config with log paths
+    // Note: Rust logger writes to stderr, so stderr gets the main log file
+    #[cfg(target_os = "macos")]
+    let contents = Some(generate_launchd_plist(
+        &binary,
+        config_path,
+        &log_dir.join("antegen.out"),
+        &log_dir.join("antegen.log"),
+    ));
+
+    #[cfg(not(target_os = "macos"))]
+    let contents = None;
+
     manager
         .install(ServiceInstallCtx {
             label: label.clone(),
@@ -135,7 +154,7 @@ async fn install_service(config_path: &PathBuf) -> Result<()> {
                 OsString::from("-c"),
                 OsString::from(config_path.as_os_str()),
             ],
-            contents: None,
+            contents,
             username: None,
             working_directory: None,
             environment: None,
@@ -145,6 +164,51 @@ async fn install_service(config_path: &PathBuf) -> Result<()> {
         .context("Failed to install service")?;
 
     Ok(())
+}
+
+/// Generate launchd plist with log file paths
+#[cfg(target_os = "macos")]
+fn generate_launchd_plist(
+    binary: &std::path::Path,
+    config_path: &std::path::Path,
+    stdout_log: &std::path::Path,
+    stderr_log: &std::path::Path,
+) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{}</string>
+        <string>run</string>
+        <string>-c</string>
+        <string>{}</string>
+    </array>
+    <key>StandardOutPath</key>
+    <string>{}</string>
+    <key>StandardErrorPath</key>
+    <string>{}</string>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+</dict>
+</plist>"#,
+        SERVICE_LABEL,
+        binary.display(),
+        config_path.display(),
+        stdout_log.display(),
+        stderr_log.display(),
+    )
 }
 
 /// Start the service (helper)
@@ -234,12 +298,16 @@ pub fn status() -> Result<()> {
         }
     }
 
-    // Print platform-specific command for detailed status
+    // Print platform-specific log location
     #[cfg(target_os = "macos")]
-    println!("\nFor detailed status: launchctl print gui/$(id -u)/{}", SERVICE_LABEL);
+    {
+        if let Some(log_dir) = dirs::data_local_dir().map(|p| p.join("antegen").join("logs")) {
+            println!("\nLogs: tail -f \"{}/antegen.log\"", log_dir.display());
+        }
+    }
 
     #[cfg(target_os = "linux")]
-    println!("\nFor logs: journalctl --user -u {} -f", SERVICE_LABEL);
+    println!("\nLogs: journalctl --user -u {} -f", SERVICE_LABEL);
 
     Ok(())
 }
@@ -302,6 +370,50 @@ pub fn uninstall() -> Result<()> {
     println!("Note: Config and data files are preserved in:");
     println!("  Config: {}", config_dir()?.display());
     println!("  Data: {}", data_dir()?.display());
+
+    Ok(())
+}
+
+/// Get the log file path
+fn get_log_path() -> Result<PathBuf> {
+    dirs::data_local_dir()
+        .map(|p| p.join("antegen").join("logs").join("antegen.log"))
+        .context("Could not determine log directory")
+}
+
+/// View service logs
+pub fn logs(follow: bool) -> Result<()> {
+    let log_file = get_log_path()?;
+
+    if !log_file.exists() {
+        println!("No log file found at: {}", log_file.display());
+        println!("Is the service running? Use 'antegen start' to start it.");
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = std::process::Command::new("tail");
+        if follow {
+            cmd.arg("-f");
+        } else {
+            cmd.arg("-n").arg("100");
+        }
+        cmd.arg(&log_file);
+        cmd.status().context("Failed to run tail")?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let mut cmd = std::process::Command::new("journalctl");
+        cmd.arg("--user").arg("-u").arg(SERVICE_LABEL);
+        if follow {
+            cmd.arg("-f");
+        } else {
+            cmd.arg("-n").arg("100");
+        }
+        cmd.status().context("Failed to run journalctl")?;
+    }
 
     Ok(())
 }

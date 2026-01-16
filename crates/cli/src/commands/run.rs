@@ -13,7 +13,11 @@ use std::time::Duration;
 const MIN_BALANCE_LAMPORTS: u64 = 500_000; // 0.0005 SOL
 
 /// Execute the run command (standalone mode)
-pub async fn execute(config_path: PathBuf, log_level: Option<crate::LogLevel>) -> Result<()> {
+pub async fn execute(
+    config_path: PathBuf,
+    rpc_override: Option<String>,
+    log_level: Option<crate::LogLevel>,
+) -> Result<()> {
     // Initialize logging
     let mut builder = env_logger::Builder::new();
 
@@ -62,7 +66,19 @@ pub async fn execute(config_path: PathBuf, log_level: Option<crate::LogLevel>) -
     }
 
     // Load configuration
-    let config = ClientConfig::load(&config_path)?;
+    let mut config = ClientConfig::load(&config_path)?;
+
+    // Override RPC if provided via CLI
+    if let Some(rpc_url) = rpc_override {
+        log::info!("Using RPC override: {}", rpc_url);
+        use antegen_client::config::{EndpointRole, RpcEndpoint};
+        config.rpc.endpoints = vec![RpcEndpoint {
+            url: rpc_url,
+            ws_url: None,
+            role: EndpointRole::Both,
+            priority: 1,
+        }];
+    }
 
     // Ensure keypair exists (generate if needed)
     let keypair_path = super::expand_tilde(&config.executor.keypair_path)?;

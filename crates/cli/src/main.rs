@@ -91,6 +91,13 @@ enum Commands {
     /// Show service status
     Status,
 
+    /// View service logs
+    Logs {
+        /// Follow log output (like tail -f)
+        #[arg(short, long)]
+        follow: bool,
+    },
+
     /// Stop the antegen service
     Stop,
 
@@ -423,11 +430,12 @@ async fn main() -> Result<()> {
                 Some(p) => p,
                 None => commands::service::ensure_config()?,
             };
-            commands::run::execute(cfg, cli.log_level).await
+            commands::run::execute(cfg, cli.rpc, cli.log_level).await
         }
         Commands::Init { rpc, force } => commands::service::init(rpc, force),
         Commands::Start { rpc } => commands::service::start(rpc).await,
         Commands::Status => commands::service::status(),
+        Commands::Logs { follow } => commands::service::logs(follow),
         Commands::Stop => commands::service::stop(),
         Commands::Restart => commands::service::restart(),
         Commands::Uninstall => commands::service::uninstall(),
