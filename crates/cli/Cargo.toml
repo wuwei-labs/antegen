@@ -30,6 +30,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 log = { workspace = true }
+loa-core = { workspace = true }
 dirs = { workspace = true }
 env_logger = { workspace = true }
 solana-sdk = { workspace = true }
@@ -50,6 +51,7 @@ file-owner = "0.1"
 
 [features]
 dev = []
+prod = []  # Production mode - no dev build detection
 
 [dev-dependencies]
 tempfile = { workspace = true }

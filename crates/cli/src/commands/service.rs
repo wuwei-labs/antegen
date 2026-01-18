@@ -119,12 +119,12 @@ fn do_init(rpc: Option<String>, force: bool) -> Result<PathBuf> {
 }
 
 /// Install the service (helper for start command)
-async fn install_service(config_path: &PathBuf) -> Result<()> {
+async fn install_service(config_path: &PathBuf, version: Option<&str>) -> Result<()> {
     let manager = get_service_manager()?;
     let label = get_label()?;
 
     // Ensure binary is installed, download if missing
-    let binary = super::update::ensure_binary_installed().await?;
+    let binary = super::update::ensure_binary_installed(version).await?;
 
     // Create logs directory
     let log_dir = dirs::data_local_dir()
@@ -237,11 +237,11 @@ pub fn ensure_config() -> Result<PathBuf> {
 }
 
 /// Start the antegen service (init + install + start)
-pub async fn start(rpc: Option<String>) -> Result<()> {
+pub async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
     let config_path = do_init(rpc, false)?;
 
     println!("Installing service...");
-    install_service(&config_path).await?;
+    install_service(&config_path, version.as_deref()).await?;
     println!("✓ Service installed");
 
     println!("Starting service...");
@@ -259,6 +259,12 @@ pub async fn start(rpc: Option<String>) -> Result<()> {
             println!();
             println!("Antegen is now running as a user service.");
             println!("Use 'antegen stop' to stop or 'antegen restart' to restart.");
+
+            // Check for updates
+            if let Some(latest) = check_update_available().await {
+                println!();
+                println!("Update available: {} -> Run `antegen update`", latest);
+            }
         }
         ServiceStatus::Stopped(reason) => {
             println!("✗ Service started but crashed immediately");
@@ -431,4 +437,52 @@ pub fn is_installed() -> bool {
         manager.status(ServiceStatusCtx { label }),
         Ok(ServiceStatus::Running) | Ok(ServiceStatus::Stopped(_))
     )
+}
+
+/// Parse a version string like "v4.3.2" into (major, minor, patch)
+fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
+    let v = v.strip_prefix('v').unwrap_or(v);
+    let parts: Vec<&str> = v.split('.').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    Some((
+        parts[0].parse().ok()?,
+        parts[1].parse().ok()?,
+        parts[2].parse().ok()?,
+    ))
+}
+
+/// Compare two version strings, returns true if v1 < v2
+fn version_less_than(v1: &str, v2: &str) -> bool {
+    match (parse_version(v1), parse_version(v2)) {
+        (Some(a), Some(b)) => a < b,
+        _ => false,
+    }
+}
+
+/// Check if an update is available (compares installed binary to latest release)
+async fn check_update_available() -> Option<String> {
+    // Skip in dev mode - dev always uses local build
+    #[cfg(not(feature = "prod"))]
+    if super::update::is_dev_build() {
+        return None;
+    }
+
+    let binary_path = super::update::binary_path().ok()?;
+    if !binary_path.is_symlink() {
+        return None;
+    }
+
+    let target = std::fs::read_link(&binary_path).ok()?;
+    let filename = target.file_name()?.to_str()?;
+    let installed = filename.strip_prefix("antegen-")?;
+
+    let latest = super::update::fetch_latest_version().await.ok()?;
+
+    if version_less_than(installed, &latest) {
+        Some(latest)
+    } else {
+        None
+    }
 }

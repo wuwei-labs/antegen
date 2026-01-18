@@ -17,7 +17,13 @@ pub async fn execute(
     config_path: PathBuf,
     rpc_override: Option<String>,
     log_level: Option<crate::LogLevel>,
+    version: Option<String>,
 ) -> Result<()> {
+    // If version specified, ensure that version is installed and symlinked
+    if version.is_some() {
+        super::update::ensure_binary_installed(version.as_deref()).await?;
+    }
+
     // Initialize logging
     let mut builder = env_logger::Builder::new();
 

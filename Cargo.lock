@@ -421,11 +421,11 @@ dependencies = [
 
 [[package]]
 name = "antegen"
-version = "4.4.0"
+version = "4.5.0"
 
 [[package]]
 name = "antegen-cli"
-version = "4.4.0"
+version = "4.5.0"
 dependencies = [
  "anchor-lang",
  "antegen-client",
@@ -437,6 +437,7 @@ dependencies = [
  "env_logger 0.10.2",
  "file-owner",
  "flate2",
+ "loa-core",
  "log",
  "reqwest 0.11.27",
  "serde",
@@ -2912,12 +2913,13 @@ checksum = "6373607a59f0be73a39b6fe456b8192fcc3585f602af20751600e974dd455e77"
 
 [[package]]
 name = "loa-core"
-version = "1.1.6"
+version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30a3c19d22350efa481a31e9989bf9cb1edf2320b6b55f4ac5241dec9f8a6a4d"
+checksum = "5ff41f0d5f2d23284663b58be9facb81438bcbe5260b5e4dbf075dda2a9cfde1"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chacha20poly1305",
  "chrono",
  "hex",
@@ -2937,6 +2939,7 @@ dependencies = [
  "sha2",
  "thiserror 2.0.17",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
  "tsink",

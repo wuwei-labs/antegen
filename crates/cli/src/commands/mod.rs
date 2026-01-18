@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 pub mod client;
 pub mod config;
 pub mod geyser;
+pub mod info;
 pub mod program;
 pub mod run;
 pub mod service;

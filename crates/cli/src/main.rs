@@ -68,6 +68,10 @@ enum Commands {
         /// Path to configuration file (defaults to ~/.config/antegen/antegen.toml, will init if needed)
         #[arg(short, long)]
         config: Option<PathBuf>,
+
+        /// Run a specific version (e.g., v4.4.0)
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
     },
 
     /// Initialize config only (no service)
@@ -86,6 +90,10 @@ enum Commands {
         /// RPC endpoint URL (prompts if not provided and interactive)
         #[arg(long)]
         rpc: Option<String>,
+
+        /// Start a specific version (e.g., v4.4.0)
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
     },
 
     /// Show service status
@@ -109,9 +117,20 @@ enum Commands {
 
     /// Update antegen to the latest version
     Update {
-        /// Don't restart the service after updating
+        /// Update to a specific version (e.g., v4.4.0)
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+
+        /// Don't automatically restart the service after updating
         #[arg(long)]
-        no_restart: bool,
+        manual_restart: bool,
+    },
+
+    /// Show antegen configuration and status
+    Info {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Geyser plugin operations (downloads plugin from GitHub releases)
@@ -425,21 +444,24 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Run { config } => {
+        Commands::Run { config, version } => {
             let cfg = match config {
                 Some(p) => p,
                 None => commands::service::ensure_config()?,
             };
-            commands::run::execute(cfg, cli.rpc, cli.log_level).await
+            commands::run::execute(cfg, cli.rpc, cli.log_level, version).await
         }
         Commands::Init { rpc, force } => commands::service::init(rpc, force),
-        Commands::Start { rpc } => commands::service::start(rpc).await,
+        Commands::Start { rpc, version } => commands::service::start(rpc, version).await,
         Commands::Status => commands::service::status(),
         Commands::Logs { follow } => commands::service::logs(follow),
         Commands::Stop => commands::service::stop(),
         Commands::Restart => commands::service::restart(),
         Commands::Uninstall => commands::service::uninstall(),
-        Commands::Update { no_restart } => commands::update::update(no_restart).await,
+        Commands::Update { version, manual_restart } => {
+            commands::update::update(version, manual_restart).await
+        }
+        Commands::Info { json } => commands::info::info(json).await,
         Commands::Geyser(geyser_cmd) => match geyser_cmd {
             GeyserCommands::Init { output, config } => {
                 commands::geyser::init(output, config).await

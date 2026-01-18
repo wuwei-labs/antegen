@@ -26,7 +26,7 @@ members = ["crates/*", "plugin/geyser", "programs/thread"]
 default-members = ["crates/cli"]
 
 [workspace.package]
-version = "4.4.0"
+version = "4.5.0"
 authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
 repository = "https://github.com/wuwei-labs/antegen"
 homepage = "https://antegen.xyz/"
@@ -69,7 +69,7 @@ getrandom = { version = "=0.2.16", features = ["custom"] }
 hex = "=0.4.3"
 hyper = { version = "=0.14.32", features = ["server", "tcp", "http1"] }
 lazy_static = "=1.5.0"
-loa-core = "=1.1.6"
+loa-core = "=1.2.2"
 log = "=0.4.29"
 moka = { version = "=0.12.11", features = ["future"] }
 nom = "=7.1.3"
