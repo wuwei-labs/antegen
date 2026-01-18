@@ -397,7 +397,8 @@ pub fn uninstall() -> Result<()> {
     Ok(())
 }
 
-/// Get the log file path
+/// Get the log file path (macOS only)
+#[cfg(target_os = "macos")]
 fn get_log_path() -> Result<PathBuf> {
     dirs::data_local_dir()
         .map(|p| p.join("antegen").join("logs").join("antegen.log"))
