@@ -126,6 +126,13 @@ enum Commands {
         manual_restart: bool,
     },
 
+    /// Install antegen binary to ~/.local/bin (used by install script)
+    Install {
+        /// Install a specific version (e.g., v4.4.0)
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+    },
+
     /// Show antegen configuration and status
     Info {
         /// Output as JSON
@@ -461,6 +468,7 @@ async fn main() -> Result<()> {
         Commands::Update { version, manual_restart } => {
             commands::update::update(version, manual_restart).await
         }
+        Commands::Install { version } => commands::update::install(version).await,
         Commands::Info { json } => commands::info::info(json).await,
         Commands::Geyser(geyser_cmd) => match geyser_cmd {
             GeyserCommands::Init { output, config } => {

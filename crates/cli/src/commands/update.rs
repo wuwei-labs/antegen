@@ -330,6 +330,24 @@ pub async fn update(version: Option<String>, manual_restart: bool) -> Result<()>
     Ok(())
 }
 
+/// Install the binary (called by install script)
+/// Downloads if needed, sets up symlink, configures PATH
+pub async fn install(version: Option<String>) -> Result<()> {
+    let target_version = match &version {
+        Some(v) => normalize_version(v),
+        None => {
+            println!("Fetching latest version...");
+            fetch_latest_version().await?
+        }
+    };
+
+    println!("Installing antegen {}...", target_version);
+    ensure_binary_installed(Some(&target_version)).await?;
+
+    println!("✓ Installed antegen {}", target_version);
+    Ok(())
+}
+
 /// Check if we're running from a cargo target directory (dev mode)
 /// Returns the path to the dev binary if in dev mode
 #[cfg(not(feature = "prod"))]
