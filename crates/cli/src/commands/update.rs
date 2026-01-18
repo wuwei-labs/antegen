@@ -2,14 +2,15 @@
 
 use anyhow::{Context, Result};
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
-/// GitHub repository for releases
-const GITHUB_REPO: &str = "wuwei-labs/antegen";
+/// GitHub repository owner
+const REPO_OWNER: &str = "wuwei-labs";
+/// GitHub repository name
+const REPO_NAME: &str = "antegen";
 
 /// Get the current CLI version
 pub fn current_version() -> &'static str {
@@ -17,7 +18,7 @@ pub fn current_version() -> &'static str {
 }
 
 /// Parse a version string like "v4.3.2" into (major, minor, patch)
-fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
+pub fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
     let v = v.strip_prefix('v').unwrap_or(v);
     let parts: Vec<&str> = v.split('.').collect();
     if parts.len() != 3 {
@@ -31,7 +32,7 @@ fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
 }
 
 /// Compare two version strings, returns true if v1 < v2
-fn version_less_than(v1: &str, v2: &str) -> bool {
+pub fn version_less_than(v1: &str, v2: &str) -> bool {
     match (parse_version(v1), parse_version(v2)) {
         (Some(a), Some(b)) => a < b,
         _ => false, // If parsing fails, don't update
@@ -40,25 +41,7 @@ fn version_less_than(v1: &str, v2: &str) -> bool {
 
 /// Get the platform target string for the current system
 pub fn get_platform_target() -> &'static str {
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    return "x86_64-unknown-linux-gnu";
-
-    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-    return "aarch64-unknown-linux-gnu";
-
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    return "x86_64-apple-darwin";
-
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    return "aarch64-apple-darwin";
-
-    #[cfg(not(any(
-        all(target_os = "linux", target_arch = "x86_64"),
-        all(target_os = "linux", target_arch = "aarch64"),
-        all(target_os = "macos", target_arch = "x86_64"),
-        all(target_os = "macos", target_arch = "aarch64"),
-    )))]
-    compile_error!("Unsupported platform for update");
+    self_update::get_target()
 }
 
 /// Get the binary symlink path
@@ -82,44 +65,115 @@ fn bin_dir() -> Result<PathBuf> {
         .context("Could not determine home directory")
 }
 
-/// Fetch the latest version from GitHub API
-pub async fn fetch_latest_version() -> Result<String> {
-    let url = format!(
-        "https://api.github.com/repos/{}/releases/latest",
-        GITHUB_REPO
-    );
+/// Shell script for ~/.antegen/env (rustup-style PATH setup)
+const ENV_SCRIPT: &str = r#"# Antegen PATH setup - sourced by shell rc files
+# Add ~/.local/bin to PATH if not already present
+case ":${PATH}:" in
+    *:"$HOME/.local/bin":*)
+        ;;
+    *)
+        export PATH="$HOME/.local/bin:$PATH"
+        ;;
+esac
+"#;
 
-    let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
-        .header("User-Agent", "antegen-cli")
-        .send()
-        .await
-        .context("Failed to connect to GitHub API")?;
+/// Ensure ~/.local/bin is in PATH using rustup-style env file approach
+/// Creates ~/.antegen/env and sources it from the user's shell rc file
+fn ensure_path_configured() {
+    use std::io::Write;
 
-    if !response.status().is_success() {
-        anyhow::bail!("Failed to fetch latest version: HTTP {}", response.status());
+    let Some(home) = dirs::home_dir() else {
+        return;
+    };
+
+    let antegen_dir = home.join(".antegen");
+    let env_file = antegen_dir.join("env");
+
+    // Create ~/.antegen/env if it doesn't exist
+    if !env_file.exists() {
+        if fs::create_dir_all(&antegen_dir).is_err() {
+            return;
+        }
+        if fs::write(&env_file, ENV_SCRIPT).is_err() {
+            return;
+        }
     }
 
-    let json: serde_json::Value = response.json().await?;
-    let tag = json["tag_name"]
-        .as_str()
-        .context("No tag_name in release response")?;
+    // Check if already in PATH - skip rc file modification if so
+    if std::env::var("PATH")
+        .map(|p| p.contains(".local/bin"))
+        .unwrap_or(false)
+    {
+        return;
+    }
 
-    Ok(tag.to_string())
+    // Shell rc files in priority order (zshenv runs for all zsh, including non-interactive)
+    let rc_files = [
+        ".zshenv",
+        ".zshrc",
+        ".bashrc",
+        ".bash_profile",
+        ".profile",
+    ];
+
+    for rc_name in rc_files {
+        let rc_path = home.join(rc_name);
+        if !rc_path.exists() {
+            continue;
+        }
+
+        // Check if already sourcing our env file
+        if let Ok(content) = fs::read_to_string(&rc_path) {
+            if content.contains(".antegen/env") {
+                return; // Already configured
+            }
+        }
+
+        // Append source line to this rc file
+        if let Ok(mut file) = fs::OpenOptions::new().append(true).open(&rc_path) {
+            if writeln!(file, "\n# Added by antegen\n. \"$HOME/.antegen/env\"").is_ok() {
+                println!("Added antegen to PATH in {}", rc_name);
+                println!("Run 'source ~/{}' or restart your shell to apply.", rc_name);
+                return; // Only update one file
+            }
+        }
+    }
+}
+
+/// Fetch the latest version from GitHub API using self_update
+pub async fn fetch_latest_version() -> Result<String> {
+    // self_update's fetch is blocking, so run in spawn_blocking
+    tokio::task::spawn_blocking(|| {
+        let releases = self_update::backends::github::ReleaseList::configure()
+            .repo_owner(REPO_OWNER)
+            .repo_name(REPO_NAME)
+            .build()
+            .context("Failed to build release list")?
+            .fetch()
+            .context("Failed to fetch releases from GitHub")?;
+
+        releases
+            .first()
+            .map(|r| normalize_version(&r.version)) // Ensure "v" prefix
+            .ok_or_else(|| anyhow::anyhow!("No releases found"))
+    })
+    .await
+    .context("Task failed")?
 }
 
 /// Build the download URL for the CLI binary
 pub fn build_download_url(version: &str) -> String {
     let target = get_platform_target();
     format!(
-        "https://github.com/{}/releases/download/{}/antegen-{}-{}",
-        GITHUB_REPO, version, version, target
+        "https://github.com/{}/{}/releases/download/{}/antegen-{}-{}",
+        REPO_OWNER, REPO_NAME, version, version, target
     )
 }
 
 /// Download the binary to a temporary file
 pub async fn download_binary(url: &str) -> Result<PathBuf> {
+    use std::io::Write;
+
     println!("Downloading from: {}", url);
 
     let response = reqwest::get(url)
@@ -133,9 +187,10 @@ pub async fn download_binary(url: &str) -> Result<PathBuf> {
                  - The version hasn't been released yet\n\
                  - Pre-built binaries aren't available for your platform ({})\n\
                  \n\
-                 You can download manually from: https://github.com/{}/releases",
+                 You can download manually from: https://github.com/{}/{}/releases",
                 get_platform_target(),
-                GITHUB_REPO
+                REPO_OWNER,
+                REPO_NAME
             );
         }
         anyhow::bail!("Failed to download: HTTP {}", response.status());
@@ -241,6 +296,9 @@ pub async fn update(version: Option<String>, manual_restart: bool) -> Result<()>
     symlink(&new_versioned_path, &symlink_path).context("Failed to create symlink")?;
 
     println!("✓ Updated to {}", latest);
+
+    // Ensure PATH is configured for the user
+    ensure_path_configured();
 
     // Check if service is running and handle restart
     if super::service::is_installed() {
@@ -394,6 +452,9 @@ pub async fn ensure_binary_installed(version: Option<&str>) -> Result<PathBuf> {
     symlink(&versioned_path, &symlink_path).context("Failed to create symlink")?;
 
     println!("✓ Switched to {}", version);
+
+    // Ensure PATH is configured for the user
+    ensure_path_configured();
 
     Ok(symlink_path)
 }

@@ -43,9 +43,11 @@ tar = { workspace = true }
 flate2 = { workspace = true }
 tempfile = { workspace = true }
 service-manager = "0.10"
+self_update = { version = "0.42", default-features = false, features = ["rustls"] }
 
 [target.'cfg(unix)'.dependencies]
 file-owner = "0.1"
+libc = "0.2"
 
 [build-dependencies]
 

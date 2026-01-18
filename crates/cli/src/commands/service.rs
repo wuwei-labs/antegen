@@ -12,15 +12,32 @@ use std::path::PathBuf;
 /// Service label for antegen
 const SERVICE_LABEL: &str = "antegen";
 
-/// Get a user-level service manager
+/// Check if running as root user (Linux only)
+#[cfg(target_os = "linux")]
+fn is_root() -> bool {
+    unsafe { libc::getuid() == 0 }
+}
+
+/// Get a service manager (user-level by default, system-level for root on Linux)
 fn get_service_manager() -> Result<Box<dyn ServiceManager>> {
     let mut manager = <dyn ServiceManager>::native()
         .context("Failed to get native service manager for this platform")?;
 
-    // Use user-level services (no sudo required)
+    // On Linux, use system-level services when running as root
+    // (systemd user services don't work properly for root)
+    #[cfg(target_os = "linux")]
+    let level = if is_root() {
+        ServiceLevel::System
+    } else {
+        ServiceLevel::User
+    };
+
+    #[cfg(not(target_os = "linux"))]
+    let level = ServiceLevel::User;
+
     manager
-        .set_level(ServiceLevel::User)
-        .context("Service manager does not support user-level services")?;
+        .set_level(level)
+        .context("Service manager does not support the required service level")?;
 
     Ok(manager)
 }
@@ -389,16 +406,15 @@ fn get_log_path() -> Result<PathBuf> {
 
 /// View service logs
 pub fn logs(follow: bool) -> Result<()> {
-    let log_file = get_log_path()?;
-
-    if !log_file.exists() {
-        println!("No log file found at: {}", log_file.display());
-        println!("Is the service running? Use 'antegen start' to start it.");
-        return Ok(());
-    }
-
     #[cfg(target_os = "macos")]
     {
+        let log_file = get_log_path()?;
+        if !log_file.exists() {
+            println!("No log file found at: {}", log_file.display());
+            println!("Is the service running? Use 'antegen start' to start it.");
+            return Ok(());
+        }
+
         let mut cmd = std::process::Command::new("tail");
         if follow {
             cmd.arg("-f");
@@ -411,8 +427,15 @@ pub fn logs(follow: bool) -> Result<()> {
 
     #[cfg(target_os = "linux")]
     {
+        // Linux uses journalctl for systemd user services - no log file check needed
         let mut cmd = std::process::Command::new("journalctl");
-        cmd.arg("--user").arg("-u").arg(SERVICE_LABEL);
+        if is_root() {
+            // System service (root)
+            cmd.arg("-u").arg(SERVICE_LABEL);
+        } else {
+            // User service
+            cmd.arg("--user").arg("-u").arg(SERVICE_LABEL);
+        }
         if follow {
             cmd.arg("-f");
         } else {
@@ -439,28 +462,6 @@ pub fn is_installed() -> bool {
     )
 }
 
-/// Parse a version string like "v4.3.2" into (major, minor, patch)
-fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
-    let v = v.strip_prefix('v').unwrap_or(v);
-    let parts: Vec<&str> = v.split('.').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    Some((
-        parts[0].parse().ok()?,
-        parts[1].parse().ok()?,
-        parts[2].parse().ok()?,
-    ))
-}
-
-/// Compare two version strings, returns true if v1 < v2
-fn version_less_than(v1: &str, v2: &str) -> bool {
-    match (parse_version(v1), parse_version(v2)) {
-        (Some(a), Some(b)) => a < b,
-        _ => false,
-    }
-}
-
 /// Check if an update is available (compares installed binary to latest release)
 async fn check_update_available() -> Option<String> {
     // Skip in dev mode - dev always uses local build
@@ -480,7 +481,7 @@ async fn check_update_available() -> Option<String> {
 
     let latest = super::update::fetch_latest_version().await.ok()?;
 
-    if version_less_than(installed, &latest) {
+    if super::update::version_less_than(installed, &latest) {
         Some(latest)
     } else {
         None

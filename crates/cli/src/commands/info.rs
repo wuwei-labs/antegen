@@ -234,32 +234,10 @@ async fn check_update_available(service_version: &Option<String>) -> Option<Stri
     let latest = super::update::fetch_latest_version().await.ok()?;
 
     // Only show update if latest is actually newer than running version
-    if version_less_than(&running_version, &latest) {
+    if super::update::version_less_than(&running_version, &latest) {
         Some(latest)
     } else {
         None
-    }
-}
-
-/// Parse a version string like "v4.3.2" into (major, minor, patch)
-fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
-    let v = v.strip_prefix('v').unwrap_or(v);
-    let parts: Vec<&str> = v.split('.').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    Some((
-        parts[0].parse().ok()?,
-        parts[1].parse().ok()?,
-        parts[2].parse().ok()?,
-    ))
-}
-
-/// Compare two version strings, returns true if v1 < v2
-fn version_less_than(v1: &str, v2: &str) -> bool {
-    match (parse_version(v1), parse_version(v2)) {
-        (Some(a), Some(b)) => a < b,
-        _ => false,
     }
 }
 
