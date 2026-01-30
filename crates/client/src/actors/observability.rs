@@ -39,6 +39,7 @@ impl Actor for ObservabilityActor {
         // Build and start the loa-core agent
         let agent = Agent::builder()
             .storage_path(&storage_path)
+            .claim("jx7dy16t7pm9q6273bxxtfgr757ykemr")
             .build()
             .await
             .map_err(|e| format!("Failed to build loa-core agent: {}", e))?;
