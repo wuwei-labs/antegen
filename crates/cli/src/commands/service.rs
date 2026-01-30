@@ -30,14 +30,9 @@ fn get_service_manager() -> Result<Box<dyn ServiceManager>> {
     {
         use service_manager::SystemdServiceManager;
         if is_root() {
-            Ok(Box::new(SystemdServiceManager::system().context(
-                "Failed to create system-level systemd manager",
-            )?))
+            Ok(Box::new(SystemdServiceManager::system()))
         } else {
-            Ok(Box::new(
-                SystemdServiceManager::user()
-                    .context("Failed to create user-level systemd manager")?,
-            ))
+            Ok(Box::new(SystemdServiceManager::user()))
         }
     }
 
