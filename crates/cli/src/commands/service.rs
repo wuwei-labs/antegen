@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use service_manager::{
-    ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager, ServiceStartCtx, ServiceStatus,
+    ServiceInstallCtx, ServiceLabel, ServiceManager, ServiceStartCtx, ServiceStatus,
     ServiceStatusCtx, ServiceStopCtx, ServiceUninstallCtx,
 };
 use std::ffi::OsString;
@@ -20,26 +20,31 @@ fn is_root() -> bool {
 
 /// Get a service manager (user-level by default, system-level for root on Linux)
 fn get_service_manager() -> Result<Box<dyn ServiceManager>> {
-    let mut manager = <dyn ServiceManager>::native()
-        .context("Failed to get native service manager for this platform")?;
+    #[cfg(target_os = "macos")]
+    {
+        use service_manager::LaunchdServiceManager;
+        Ok(Box::new(LaunchdServiceManager::user()))
+    }
 
-    // On Linux, use system-level services when running as root
-    // (systemd user services don't work properly for root)
     #[cfg(target_os = "linux")]
-    let level = if is_root() {
-        ServiceLevel::System
-    } else {
-        ServiceLevel::User
-    };
+    {
+        use service_manager::SystemdServiceManager;
+        if is_root() {
+            Ok(Box::new(SystemdServiceManager::system().context(
+                "Failed to create system-level systemd manager",
+            )?))
+        } else {
+            Ok(Box::new(
+                SystemdServiceManager::user()
+                    .context("Failed to create user-level systemd manager")?,
+            ))
+        }
+    }
 
-    #[cfg(not(target_os = "linux"))]
-    let level = ServiceLevel::User;
-
-    manager
-        .set_level(level)
-        .context("Service manager does not support the required service level")?;
-
-    Ok(manager)
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        anyhow::bail!("Service management is not supported on this platform")
+    }
 }
 
 /// Get the service label

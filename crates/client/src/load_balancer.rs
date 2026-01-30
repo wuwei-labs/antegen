@@ -10,25 +10,29 @@ use log::{debug, info};
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 
 /// Configuration for the load balancer
 #[derive(Clone, Debug)]
 pub struct LoadBalancerConfig {
+    /// Whether load balancing is enabled
+    pub enabled: bool,
     /// Consecutive losses before releasing ownership
     pub capacity_threshold: u32,
     /// Time to wait before attempting takeover of overdue threads (seconds)
-    pub takeover_delay_seconds: i64,
-    /// Whether load balancing is enabled
-    pub enabled: bool,
+    pub thread_takeover_delay: i64,
+    /// Delay before claiming new threads (seconds)
+    pub thread_process_delay: u64,
 }
 
 impl Default for LoadBalancerConfig {
     fn default() -> Self {
         Self {
-            capacity_threshold: 5,
-            takeover_delay_seconds: 10,
             enabled: true,
+            capacity_threshold: 5,
+            thread_takeover_delay: 10,
+            thread_process_delay: 0,
         }
     }
 }
@@ -76,6 +80,11 @@ impl LoadBalancer {
             tracking: Arc::new(RwLock::new(HashMap::new())),
             at_capacity: Arc::new(RwLock::new(false)),
         }
+    }
+
+    /// Get the thread process delay as a Duration
+    pub fn thread_process_delay(&self) -> Duration {
+        Duration::from_secs(self.config.thread_process_delay)
     }
 
     /// Decide whether to process a thread based on ownership and competition
@@ -147,16 +156,16 @@ impl LoadBalancer {
         if thread_track.map_or(false, |t| t.owned) {
             // We own this thread - always try to process
             Ok(ProcessDecision::Process)
-        } else if is_overdue && overdue_seconds > self.config.takeover_delay_seconds {
+        } else if is_overdue && overdue_seconds > self.config.thread_takeover_delay {
             // Thread is overdue beyond takeover delay - attempt takeover
             info!(
                 "Thread {} - attempting TAKEOVER (overdue by {}s, threshold {}s, last_executor: {})",
-                thread_pubkey, overdue_seconds, self.config.takeover_delay_seconds, last_executor
+                thread_pubkey, overdue_seconds, self.config.thread_takeover_delay, last_executor
             );
             Ok(ProcessDecision::Process)
         } else if at_capacity {
             // We're at capacity - only process critically overdue threads (1.5x takeover delay)
-            if is_overdue && overdue_seconds > (self.config.takeover_delay_seconds * 3) / 2 {
+            if is_overdue && overdue_seconds > (self.config.thread_takeover_delay * 3) / 2 {
                 info!(
                     "Thread {} - at capacity but attempting CRITICAL TAKEOVER (overdue by {}s)",
                     thread_pubkey, overdue_seconds
@@ -285,9 +294,10 @@ mod tests {
 
     fn test_config() -> LoadBalancerConfig {
         LoadBalancerConfig {
-            capacity_threshold: 3,
-            takeover_delay_seconds: 5,
             enabled: true,
+            capacity_threshold: 3,
+            thread_takeover_delay: 5,
+            thread_process_delay: 0,
         }
     }
 
@@ -327,9 +337,10 @@ mod tests {
     async fn test_ownership_released_after_losses() {
         let executor = Pubkey::new_unique();
         let config = LoadBalancerConfig {
-            capacity_threshold: 2,
-            takeover_delay_seconds: 5,
             enabled: true,
+            capacity_threshold: 2,
+            thread_takeover_delay: 5,
+            thread_process_delay: 0,
         };
         let lb = LoadBalancer::new(executor, config);
         let thread = Pubkey::new_unique();
@@ -395,5 +406,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(decision, ProcessDecision::Process);
+    }
+
+    #[test]
+    fn test_thread_process_delay() {
+        let config = LoadBalancerConfig {
+            thread_process_delay: 2,
+            ..Default::default()
+        };
+        let lb = LoadBalancer::new(Pubkey::new_unique(), config);
+        assert_eq!(lb.thread_process_delay(), Duration::from_secs(2));
     }
 }

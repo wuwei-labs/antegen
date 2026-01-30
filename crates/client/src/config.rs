@@ -155,29 +155,35 @@ impl Default for CacheConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LoadBalancerConfigFile {
     /// Grace period in seconds - for fee decay calculations
-    #[serde(default = "default_grace_period_secs")]
-    pub grace_period_secs: u64,
+    #[serde(default = "default_grace_period")]
+    pub grace_period: u64,
 
     /// Extra time in seconds to keep threads in cache after grace period
     /// Allows takeover attempts before cache eviction
-    /// Cache TTL = trigger_time + grace_period_secs + eviction_buffer_secs
-    #[serde(default = "default_eviction_buffer_secs")]
-    pub eviction_buffer_secs: u64,
+    /// Cache TTL = trigger_time + grace_period + eviction_buffer
+    #[serde(default = "default_eviction_buffer")]
+    pub eviction_buffer: u64,
+
+    /// Delay in seconds before claiming new threads (default: 0)
+    /// Slower clients can set higher values to avoid wasting fees on races
+    #[serde(default)]
+    pub thread_process_delay: u64,
 }
 
-fn default_grace_period_secs() -> u64 {
+fn default_grace_period() -> u64 {
     10
 }
 
-fn default_eviction_buffer_secs() -> u64 {
+fn default_eviction_buffer() -> u64 {
     20
 }
 
 impl Default for LoadBalancerConfigFile {
     fn default() -> Self {
         Self {
-            grace_period_secs: default_grace_period_secs(),
-            eviction_buffer_secs: default_eviction_buffer_secs(),
+            grace_period: default_grace_period(),
+            eviction_buffer: default_eviction_buffer(),
+            thread_process_delay: 0,
         }
     }
 }
@@ -186,24 +192,27 @@ impl Default for LoadBalancerConfigFile {
 /// Used internally - not serialized to config file
 #[derive(Debug, Clone)]
 pub struct LoadBalancerConfig {
-    /// Grace period from config file
-    pub grace_period_secs: u64,
-    /// Eviction buffer from config file
-    pub eviction_buffer_secs: u64,
+    /// Grace period from config file (seconds)
+    pub grace_period: u64,
+    /// Eviction buffer from config file (seconds)
+    pub eviction_buffer: u64,
     /// Capacity threshold (from on-chain ThreadConfig)
     pub capacity_threshold: u32,
-    /// Takeover delay for overdue threads (from on-chain ThreadConfig)
-    pub takeover_delay_secs: i64,
+    /// Takeover delay for overdue threads (from on-chain ThreadConfig, seconds)
+    pub thread_takeover_delay: i64,
+    /// Delay before claiming new threads (seconds)
+    pub thread_process_delay: u64,
 }
 
 impl Default for LoadBalancerConfig {
     fn default() -> Self {
         Self {
-            grace_period_secs: default_grace_period_secs(),
-            eviction_buffer_secs: default_eviction_buffer_secs(),
+            grace_period: default_grace_period(),
+            eviction_buffer: default_eviction_buffer(),
             // Default values, should be overridden by on-chain ThreadConfig
             capacity_threshold: 100,
-            takeover_delay_secs: 300,
+            thread_takeover_delay: 300,
+            thread_process_delay: 0,
         }
     }
 }
@@ -211,11 +220,12 @@ impl Default for LoadBalancerConfig {
 impl From<&LoadBalancerConfigFile> for LoadBalancerConfig {
     fn from(file_config: &LoadBalancerConfigFile) -> Self {
         Self {
-            grace_period_secs: file_config.grace_period_secs,
-            eviction_buffer_secs: file_config.eviction_buffer_secs,
+            grace_period: file_config.grace_period,
+            eviction_buffer: file_config.eviction_buffer,
             // On-chain values use defaults, will be updated at runtime
             capacity_threshold: 100,
-            takeover_delay_secs: 300,
+            thread_takeover_delay: 300,
+            thread_process_delay: file_config.thread_process_delay,
         }
     }
 }

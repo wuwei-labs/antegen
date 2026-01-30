@@ -179,9 +179,38 @@ async fn execute_thread(
         );
     }
 
-    // Check load balancer decision
+    // Re-fetch thread from cache to get latest last_executor
+    // This narrows the race window with other executors
+    let current_last_executor = match resources.cache.get(&thread_pubkey).await {
+        Some(cached) => {
+            use anchor_lang::AccountDeserialize;
+            match Thread::try_deserialize(&mut cached.data.as_slice()) {
+                Ok(fresh_thread) => {
+                    // Also check if exec_count changed - thread was already executed
+                    if fresh_thread.exec_count != thread.exec_count {
+                        log::debug!(
+                            "Thread {} exec_count changed ({} -> {}), skipping",
+                            thread_pubkey,
+                            thread.exec_count,
+                            fresh_thread.exec_count
+                        );
+                        return ExecutionResult::failed(
+                            thread_pubkey,
+                            "Thread already executed (exec_count changed)".to_string(),
+                            0,
+                        );
+                    }
+                    fresh_thread.last_executor
+                }
+                Err(_) => thread.last_executor, // Fall back to original if deserialize fails
+            }
+        }
+        None => thread.last_executor, // Fall back to original if not in cache
+    };
+
+    // Check load balancer decision with fresh last_executor
     let decision = match load_balancer
-        .should_process(&thread_pubkey, &thread.last_executor, is_overdue, overdue_seconds)
+        .should_process(&thread_pubkey, &current_last_executor, is_overdue, overdue_seconds)
         .await
     {
         Ok(d) => d,
@@ -224,6 +253,39 @@ async fn execute_thread(
         }
         ProcessDecision::Process => {
             log::debug!("Load balancer approved processing thread {}", thread_pubkey);
+        }
+    }
+
+    // Add delay for new threads (no previous executor) if configured
+    // This allows slower clients to avoid wasting fees on races
+    if current_last_executor.eq(&Pubkey::default()) {
+        let delay = load_balancer.thread_process_delay();
+        if !delay.is_zero() {
+            log::debug!(
+                "Thread {} - waiting {:?} before claiming new thread",
+                thread_pubkey,
+                delay
+            );
+            tokio::time::sleep(delay).await;
+
+            // Re-check cache after delay - another executor may have claimed it
+            if let Some(cached) = resources.cache.get(&thread_pubkey).await {
+                use anchor_lang::AccountDeserialize;
+                if let Ok(t) = Thread::try_deserialize(&mut cached.data.as_slice()) {
+                    if !t.last_executor.eq(&Pubkey::default()) {
+                        log::debug!(
+                            "Thread {} claimed by {} during delay, skipping",
+                            thread_pubkey,
+                            t.last_executor
+                        );
+                        return ExecutionResult::failed(
+                            thread_pubkey,
+                            "Claimed during delay".to_string(),
+                            0,
+                        );
+                    }
+                }
+            }
         }
     }
 

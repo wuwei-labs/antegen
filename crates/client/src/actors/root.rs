@@ -65,8 +65,13 @@ impl Actor for RootSupervisor {
             config.executor.forgo_commission,
         );
 
-        // Create LoadBalancer
-        let load_balancer_config = LoadBalancerConfig::default();
+        // Create LoadBalancer with config values
+        let load_balancer_config = LoadBalancerConfig {
+            enabled: true,
+            capacity_threshold: 5,
+            thread_takeover_delay: config.load_balancer.grace_period as i64,
+            thread_process_delay: config.load_balancer.thread_process_delay,
+        };
         let load_balancer = Arc::new(LoadBalancer::new(executor_pubkey, load_balancer_config));
 
         // Spawn StagingActor first (others depend on it)

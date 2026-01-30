@@ -55,8 +55,8 @@ impl SharedResources {
 
         let cache = Arc::new(AccountCache::with_config(
             &config.cache,
-            config.load_balancer.grace_period_secs,
-            config.load_balancer.eviction_buffer_secs,
+            config.load_balancer.grace_period,
+            config.load_balancer.eviction_buffer,
             Some(eviction_tx),
         ));
 

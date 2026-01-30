@@ -74,17 +74,28 @@ max_concurrent_threads = 10
 max_capacity = 10000
 
 [load_balancer]
-# Grace period in seconds - shared by cache eviction AND load balancer takeover
+# All time values are in seconds
+
+# Grace period - shared by cache eviction AND load balancer takeover
 #
 # For cache eviction:
-#   Time-triggered threads expire from cache at: trigger_time + grace_period_secs
+#   Time-triggered threads expire from cache at: trigger_time + grace_period
 #   Slot/Epoch-triggered threads never expire (updated via datasource events)
 #
 # For load balancer:
 #   Used in takeover logic for overdue threads
-grace_period_secs = 10
+grace_period = 10
 
-# NOTE: Other load balancer settings (capacity_threshold, takeover_delay_secs)
+# Extra time to keep threads in cache after grace period
+# Allows takeover attempts before cache eviction
+eviction_buffer = 20
+
+# Delay before claiming new threads (no previous executor)
+# Slower clients should set higher values to let faster clients win
+# Default: 0 (no delay)
+thread_process_delay = 0
+
+# NOTE: Other load balancer settings (capacity_threshold)
 # are read from the on-chain ThreadConfig account to ensure network-wide
 # coordination among all executors.
 

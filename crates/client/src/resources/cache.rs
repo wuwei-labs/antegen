@@ -2,7 +2,7 @@
 //!
 //! Provides a thread-safe account cache as the single source of truth for account data.
 //! Uses per-entry variable expiration:
-//! - Time triggers: expire after trigger_time + grace_period_secs
+//! - Time triggers: expire after trigger_time + grace_period
 //! - Slot/Epoch/Account triggers: no TTL (persist until capacity eviction)
 
 use crate::config::CacheConfig;
@@ -65,11 +65,11 @@ pub struct CachedAccount {
 }
 
 /// Per-entry expiration policy
-/// - Time triggers: expire after trigger_time + grace_period_secs + eviction_buffer_secs
+/// - Time triggers: expire after trigger_time + grace_period + eviction_buffer
 /// - Other triggers: no expiration
 struct ThreadExpiry {
-    grace_period_secs: u64,
-    eviction_buffer_secs: u64,
+    grace_period: u64,
+    eviction_buffer: u64,
 }
 
 impl Expiry<Pubkey, CachedAccount> for ThreadExpiry {
@@ -120,8 +120,8 @@ impl ThreadExpiry {
                 // Cache TTL = trigger_time + grace_period + eviction_buffer
                 // This gives time for takeover attempts before cache eviction
                 let expire_at = next_timestamp
-                    .saturating_add(self.grace_period_secs as i64)
-                    .saturating_add(self.eviction_buffer_secs as i64);
+                    .saturating_add(self.grace_period as i64)
+                    .saturating_add(self.eviction_buffer as i64);
 
                 if expire_at > now {
                     // Safe subtraction since we checked expire_at > now
@@ -143,7 +143,7 @@ impl ThreadExpiry {
 /// Thread-safe account cache - single source of truth for account data
 pub struct AccountCache {
     cache: Cache<Pubkey, CachedAccount>,
-    grace_period_secs: u64,
+    grace_period: u64,
     /// Channel to notify when cache entries expire (for refetch)
     /// Note: Stored here for lifetime management; actual send happens in eviction_listener closure
     _eviction_tx: Option<mpsc::UnboundedSender<Pubkey>>,
@@ -158,13 +158,13 @@ impl AccountCache {
     /// Create a new account cache from config
     pub fn with_config(
         config: &CacheConfig,
-        grace_period_secs: u64,
-        eviction_buffer_secs: u64,
+        grace_period: u64,
+        eviction_buffer: u64,
         eviction_tx: Option<mpsc::UnboundedSender<Pubkey>>,
     ) -> Self {
         let expiry = ThreadExpiry {
-            grace_period_secs,
-            eviction_buffer_secs,
+            grace_period,
+            eviction_buffer,
         };
         let eviction_tx_clone = eviction_tx.clone();
 
@@ -194,7 +194,7 @@ impl AccountCache {
                     }
                 })
                 .build(),
-            grace_period_secs,
+            grace_period,
             _eviction_tx: eviction_tx,
         }
     }
@@ -204,7 +204,7 @@ impl AccountCache {
     pub fn with_capacity(max_capacity: u64) -> Self {
         Self {
             cache: Cache::builder().max_capacity(max_capacity).build(),
-            grace_period_secs: 10,
+            grace_period: 10,
             _eviction_tx: None,
         }
     }
@@ -330,8 +330,8 @@ impl AccountCache {
     }
 
     /// Get configured grace period
-    pub fn grace_period_secs(&self) -> u64 {
-        self.grace_period_secs
+    pub fn grace_period(&self) -> u64 {
+        self.grace_period
     }
 
     /// Run pending maintenance tasks (for testing)

@@ -421,11 +421,11 @@ dependencies = [
 
 [[package]]
 name = "antegen"
-version = "4.7.0"
+version = "4.8.0"
 
 [[package]]
 name = "antegen-cli"
-version = "4.7.0"
+version = "4.8.0"
 dependencies = [
  "anchor-lang",
  "antegen-client",
@@ -2928,9 +2928,9 @@ checksum = "6373607a59f0be73a39b6fe456b8192fcc3585f602af20751600e974dd455e77"
 
 [[package]]
 name = "loa-core"
-version = "1.2.2"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ff41f0d5f2d23284663b58be9facb81438bcbe5260b5e4dbf075dda2a9cfde1"
+checksum = "245a023ab24e0d9c9c67ac50e745b2098d703c610c07b8e390913645398b8fe0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4540,14 +4540,14 @@ dependencies = [
 
 [[package]]
 name = "service-manager"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b73b205a13c82cdd9fd05e22d5f4ff0269f656adf68732c4d4e4f11360975ebb"
+version = "0.11.0"
+source = "git+https://github.com/wuwei-labs/service-manager-rs?branch=fix%2Flaunchd-status-detection#8bd70d3f4375868e36a933eff1e57a801ada134f"
 dependencies = [
  "cfg-if",
  "dirs 4.0.0",
  "encoding-utils",
  "encoding_rs",
+ "libc",
  "log",
  "plist",
  "which",
