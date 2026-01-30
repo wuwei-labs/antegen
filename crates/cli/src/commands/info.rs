@@ -203,7 +203,7 @@ fn get_observability_info(config: &ClientConfig) -> ObservabilityInfo {
     };
 
     // Use loa-core AgentInfo API
-    match loa_core::AgentInfo::read(&storage_path) {
+    match loa_core::AgentInfo::read(&storage_path, None) {
         Ok(info) => ObservabilityInfo {
             enabled: true,
             name: info.name.clone(),
