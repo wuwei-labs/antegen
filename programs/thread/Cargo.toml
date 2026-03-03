@@ -31,3 +31,11 @@ antegen-cron = { version = "4.0.0", path = "../../crates/cron" }
 solana-nonce = { workspace = true }
 anchor-lang = { workspace = true, features = ["init-if-needed"] }
 chrono = { workspace = true }
+
+[dev-dependencies]
+litesvm = { git = "https://github.com/wuwei-labs/litesvm.git", branch = "fix/durable-nonce-slot-warp" }
+litesvm-token = { git = "https://github.com/wuwei-labs/litesvm.git", branch = "fix/durable-nonce-slot-warp" }
+solana-sdk = { workspace = true }
+solana-system-interface = { workspace = true }
+anchor-lang = { workspace = true }
+borsh = { workspace = true }
