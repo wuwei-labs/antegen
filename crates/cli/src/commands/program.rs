@@ -1,44 +1,143 @@
-//! Program configuration commands
+//! Program configuration and deployment commands
 //!
-//! Commands for managing the thread program's global configuration.
+//! Commands for managing the thread program's global configuration and deploying via Anchor.
 
 use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
 use antegen_client::rpc::RpcPool;
 use antegen_thread_program::state::ThreadConfig;
 use anyhow::{anyhow, Result};
 use solana_sdk::{
-    instruction::Instruction, message::Message, signature::read_keypair_file, signer::Signer,
+    instruction::Instruction, message::Message, signer::Signer,
     transaction::Transaction,
 };
 use std::path::PathBuf;
 
-/// Get RPC URL from arg or Solana CLI config
-fn get_rpc_url(rpc: Option<String>) -> Result<String> {
-    if let Some(url) = rpc {
-        return Ok(url);
+use super::{get_keypair, get_rpc_url};
+
+// =============================================================================
+// Deploy command
+// =============================================================================
+
+/// Deploy the program binary to a Solana cluster using `solana program deploy`
+///
+/// When `rpc` and `keypair_path` are None, solana CLI reads its own config —
+/// this is the desired default so users' Solana CLI settings are respected.
+pub async fn deploy(
+    program_binary: PathBuf,
+    rpc: Option<String>,
+    keypair_path: Option<PathBuf>,
+    program_id: Option<String>,
+    skip_init: bool,
+    skip_verify: bool,
+) -> Result<()> {
+    use std::process::Command;
+
+    // 1. Validate binary exists
+    if !program_binary.exists() {
+        return Err(anyhow!(
+            "Program binary not found: {}\n\
+             Build your program first, then pass the path to the .so file.",
+            program_binary.display()
+        ));
     }
-    let config_file = solana_cli_config::CONFIG_FILE
-        .as_ref()
-        .ok_or_else(|| anyhow!("Unable to find Solana CLI config file"))?;
-    let config = solana_cli_config::Config::load(config_file)
-        .map_err(|e| anyhow!("Failed to load Solana CLI config: {}", e))?;
-    Ok(config.json_rpc_url)
+    println!("Binary: {}", program_binary.display());
+
+    // 2. Check solana CLI is installed
+    {
+        let output = Command::new("solana")
+            .arg("--version")
+            .output()
+            .map_err(|_| anyhow!("'solana' CLI not found. Install it: https://solana.com/docs/intro/installation"))?;
+        let version = String::from_utf8_lossy(&output.stdout);
+        println!("Solana: {}", version.trim());
+    }
+
+    // 3. Deploy — only pass --url / --keypair when the user explicitly provided them
+    println!("\n--- Deploying ---");
+    let mut deploy_args: Vec<String> = vec![
+        "program".to_string(),
+        "deploy".to_string(),
+        program_binary.to_string_lossy().to_string(),
+    ];
+
+    if let Some(ref url) = rpc {
+        deploy_args.push("--url".to_string());
+        deploy_args.push(url.clone());
+    }
+
+    if let Some(ref kp) = keypair_path {
+        deploy_args.push("--keypair".to_string());
+        deploy_args.push(kp.to_string_lossy().to_string());
+    }
+
+    if let Some(ref pid) = program_id {
+        deploy_args.push("--program-id".to_string());
+        deploy_args.push(pid.clone());
+    }
+
+    let deploy_args_ref: Vec<&str> = deploy_args.iter().map(|s| s.as_str()).collect();
+    let status = Command::new("solana")
+        .args(&deploy_args_ref)
+        .status()
+        .map_err(|e| anyhow!("Failed to run 'solana program deploy': {}", e))?;
+
+    if !status.success() {
+        return Err(anyhow!("'solana program deploy' failed with status: {}", status));
+    }
+    println!("Deploy complete.");
+
+    // 4. Post-deploy: resolve RPC via Solana CLI config fallback for our own calls
+    let rpc_url = get_rpc_url(rpc.clone())?;
+
+    // 5. Init config
+    if !skip_init {
+        println!("\n--- Initializing ThreadConfig ---");
+        match config_init(Some(rpc_url.clone()), keypair_path.clone()).await {
+            Ok(()) => {}
+            Err(e) => {
+                println!("Warning: config init failed: {}", e);
+                println!("You can run it manually: antegen program config init");
+            }
+        }
+    } else {
+        println!("\nSkipping config init (--skip-init)");
+    }
+
+    // 6. Verify
+    if !skip_verify {
+        println!("\n--- Verifying ---");
+        let client = RpcPool::with_url(&rpc_url)
+            .map_err(|e| anyhow!("Failed to create RPC client: {}", e))?;
+
+        let pid = antegen_thread_program::ID;
+        println!("Program ID: {}", pid);
+
+        match client.get_account(&pid).await {
+            Ok(Some(account)) => {
+                if account.executable {
+                    println!("Program is deployed and executable.");
+                } else {
+                    println!("Warning: Account exists but is not marked executable.");
+                }
+            }
+            Ok(None) => {
+                println!("Warning: Program account not found at {}", pid);
+            }
+            Err(e) => {
+                println!("Warning: Failed to verify program: {}", e);
+            }
+        }
+    } else {
+        println!("\nSkipping verification (--skip-verify)");
+    }
+
+    println!("\nDone.");
+    Ok(())
 }
 
-/// Get keypair from arg or Solana CLI config
-fn get_keypair(keypair_path: Option<PathBuf>) -> Result<solana_sdk::signature::Keypair> {
-    let path = if let Some(p) = keypair_path {
-        p
-    } else {
-        let config_file = solana_cli_config::CONFIG_FILE
-            .as_ref()
-            .ok_or_else(|| anyhow!("Unable to find Solana CLI config file"))?;
-        let config = solana_cli_config::Config::load(config_file)
-            .map_err(|e| anyhow!("Failed to load Solana CLI config: {}", e))?;
-        PathBuf::from(config.keypair_path)
-    };
-    read_keypair_file(&path).map_err(|e| anyhow!("Failed to read keypair from {:?}: {}", path, e))
-}
+// =============================================================================
+// Config commands
+// =============================================================================
 
 /// Initialize the ThreadConfig account
 pub async fn config_init(rpc: Option<String>, keypair_path: Option<PathBuf>) -> Result<()> {

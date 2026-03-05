@@ -255,7 +255,7 @@ fn print_info(info: &InfoOutput) {
 
     // Check if we have config
     if info.executor.is_none() && info.rpc.is_none() {
-        println!("Config not found. Run `antegen init` to get started.");
+        println!("Config not found. Run `antegen node init` to get started.");
         return;
     }
 
@@ -283,7 +283,7 @@ fn print_info(info: &InfoOutput) {
 
     if let Some(update) = &info.update_available {
         println!();
-        println!("Update available: {} -> Run `antegen update`", update);
+        println!("Update available: {} -> Run `antegen node update`", update);
     }
 }
 

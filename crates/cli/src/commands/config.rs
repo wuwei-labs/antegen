@@ -62,7 +62,7 @@ pub fn init(
     println!();
     println!("Next steps:");
     println!("  1. Fund address {} with SOL", pubkey);
-    println!("  2. Run: antegen start -c {}", output.display());
+    println!("  2. Run: antegen node start -c {}", output.display());
 
     Ok(())
 }

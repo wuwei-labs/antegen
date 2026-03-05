@@ -107,8 +107,8 @@ fn do_init(rpc: Option<String>, force: bool) -> Result<PathBuf> {
             None => {
                 anyhow::bail!(
                     "RPC endpoint required. Use --rpc flag in non-interactive mode:\n  \
-                     antegen init --rpc <URL>\n  \
-                     antegen start --rpc <URL>"
+                     antegen node init --rpc <URL>\n  \
+                     antegen node start --rpc <URL>"
                 );
             }
         },
@@ -140,8 +140,27 @@ async fn install_service(config_path: &PathBuf, version: Option<&str>) -> Result
     let manager = get_service_manager()?;
     let label = get_label()?;
 
-    // Ensure binary is installed, download if missing
-    let binary = super::update::ensure_binary_installed(version).await?;
+    // Use the binary the user is currently running so the service matches
+    // the CLI they have installed. For explicit version requests, download
+    // the release binary instead.
+    let binary = if version.is_some() {
+        // Explicit version: download from GitHub
+        super::update::ensure_binary_installed(version).await?
+    } else {
+        let current = std::env::current_exe()
+            .context("Failed to determine current executable path")?;
+        let current_str = current.to_string_lossy();
+
+        if current_str.contains("/target/debug/") || current_str.contains("/target/release/") {
+            // Dev build from target/: copy to ~/.local/bin so the service
+            // doesn't point at an ephemeral build artifact
+            super::update::ensure_binary_installed(None).await?
+        } else {
+            // cargo install (~/.cargo/bin) or downloaded (~/.local/bin):
+            // use whatever the user is running right now
+            current
+        }
+    };
 
     // Create logs directory
     let log_dir = dirs::data_local_dir()
@@ -167,6 +186,7 @@ async fn install_service(config_path: &PathBuf, version: Option<&str>) -> Result
             label: label.clone(),
             program: binary.clone(),
             args: vec![
+                OsString::from("node"),
                 OsString::from("run"),
                 OsString::from("-c"),
                 OsString::from(config_path.as_os_str()),
@@ -201,6 +221,7 @@ fn generate_launchd_plist(
     <key>ProgramArguments</key>
     <array>
         <string>{}</string>
+        <string>node</string>
         <string>run</string>
         <string>-c</string>
         <string>{}</string>
@@ -275,12 +296,12 @@ pub async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
             println!("✓ Service started");
             println!();
             println!("Antegen is now running as a user service.");
-            println!("Use 'antegen stop' to stop or 'antegen restart' to restart.");
+            println!("Use 'antegen node stop' to stop or 'antegen node restart' to restart.");
 
             // Check for updates
             if let Some(latest) = check_update_available().await {
                 println!();
-                println!("Update available: {} -> Run `antegen update`", latest);
+                println!("Update available: {} -> Run `antegen node update`", latest);
             }
         }
         ServiceStatus::Stopped(reason) => {
@@ -289,7 +310,7 @@ pub async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
                 println!("  Reason: {}", msg);
             }
             println!();
-            println!("Check the configuration and try 'antegen run' to see error output.");
+            println!("Check the configuration and try 'antegen node run' to see error output.");
         }
         ServiceStatus::NotInstalled => {
             println!("✗ Service failed to install");
@@ -316,7 +337,7 @@ pub fn status() -> Result<()> {
         }
         ServiceStatus::NotInstalled => {
             println!("✗ Service is not installed");
-            println!("  Run 'antegen start' to install and start the service.");
+            println!("  Run 'antegen node start' to install and start the service.");
             return Ok(());
         }
     }
@@ -412,7 +433,7 @@ pub fn logs(follow: bool) -> Result<()> {
         let log_file = get_log_path()?;
         if !log_file.exists() {
             println!("No log file found at: {}", log_file.display());
-            println!("Is the service running? Use 'antegen start' to start it.");
+            println!("Is the service running? Use 'antegen node start' to start it.");
             return Ok(());
         }
 

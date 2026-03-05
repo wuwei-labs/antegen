@@ -11,38 +11,9 @@ use solana_sdk::signature::{read_keypair_file, Keypair};
 use std::path::PathBuf;
 use std::str::FromStr;
 
-// =============================================================================
-// Common utilities (always available)
-// =============================================================================
-
-/// Get RPC URL from arg or Solana CLI config
-fn get_rpc_url(rpc: Option<String>) -> Result<String> {
-    if let Some(url) = rpc {
-        return Ok(url);
-    }
-    let config_file = solana_cli_config::CONFIG_FILE
-        .as_ref()
-        .ok_or_else(|| anyhow!("Unable to find Solana CLI config file"))?;
-    let config = solana_cli_config::Config::load(config_file)
-        .map_err(|e| anyhow!("Failed to load Solana CLI config: {}", e))?;
-    Ok(config.json_rpc_url)
-}
-
-/// Get keypair from arg or Solana CLI config
+use super::get_rpc_url;
 #[cfg(feature = "dev")]
-fn get_keypair(keypair_path: Option<PathBuf>) -> Result<Keypair> {
-    let path = if let Some(p) = keypair_path {
-        p
-    } else {
-        let config_file = solana_cli_config::CONFIG_FILE
-            .as_ref()
-            .ok_or_else(|| anyhow!("Unable to find Solana CLI config file"))?;
-        let config = solana_cli_config::Config::load(config_file)
-            .map_err(|e| anyhow!("Failed to load Solana CLI config: {}", e))?;
-        PathBuf::from(config.keypair_path)
-    };
-    read_keypair_file(&path).map_err(|e| anyhow!("Failed to read keypair from {:?}: {}", path, e))
-}
+use super::get_keypair;
 
 // =============================================================================
 // Thread inspection commands (always available)

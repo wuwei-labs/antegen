@@ -310,14 +310,14 @@ pub async fn update(version: Option<String>, manual_restart: bool) -> Result<()>
                         // User opted out of auto-restart
                         println!();
                         println!("Note: Service is still running {}.", installed);
-                        println!("Run `antegen restart` to update the service to {}.", latest);
+                        println!("Run `antegen node restart` to update the service to {}.", latest);
                     } else {
                         // Auto-restart service with new version
                         println!();
                         println!("Restarting service...");
                         if let Err(e) = super::service::restart() {
                             println!("✗ Failed to restart service: {}", e);
-                            println!("Run `antegen restart` manually to update the service.");
+                            println!("Run `antegen node restart` manually to update the service.");
                         } else {
                             println!("✓ Service restarted with {}", latest);
                         }
