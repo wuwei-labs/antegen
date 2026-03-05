@@ -9,8 +9,7 @@ use solana_sdk::signature::{read_keypair_file, Signer};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// Minimum lamports required to start (100x base fee = 100 transactions)
-const MIN_BALANCE_LAMPORTS: u64 = 500_000; // 0.0005 SOL
+use super::MIN_BALANCE_LAMPORTS;
 
 /// Execute the run command (standalone mode)
 pub async fn execute(

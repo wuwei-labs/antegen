@@ -63,6 +63,110 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Executor node management
+    #[command(subcommand)]
+    Node(NodeCommands),
+
+    /// Thread program management
+    #[command(subcommand)]
+    Program(ProgramCommands),
+
+    /// Thread inspection operations
+    #[command(subcommand)]
+    Thread(ThreadCommands),
+
+    /// Geyser plugin operations (downloads plugin from GitHub releases)
+    #[command(subcommand)]
+    Geyser(GeyserCommands),
+
+    // =========================================================================
+    // Hidden backwards-compatibility aliases (deprecated)
+    // =========================================================================
+
+    /// Run the executor directly (no service, blocking)
+    #[command(hide = true)]
+    Run {
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+    },
+
+    /// Initialize config only (no service)
+    #[command(hide = true)]
+    Init {
+        #[arg(long)]
+        rpc: Option<String>,
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Install and start the antegen service (init if needed)
+    #[command(hide = true)]
+    Start {
+        #[arg(long)]
+        rpc: Option<String>,
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+    },
+
+    /// Show service status
+    #[command(hide = true)]
+    Status,
+
+    /// View service logs
+    #[command(hide = true)]
+    Logs {
+        #[arg(short, long)]
+        follow: bool,
+    },
+
+    /// Stop the antegen service
+    #[command(hide = true)]
+    Stop,
+
+    /// Restart the antegen service
+    #[command(hide = true)]
+    Restart,
+
+    /// Uninstall the antegen service
+    #[command(hide = true)]
+    Uninstall,
+
+    /// Update antegen to the latest version
+    #[command(hide = true)]
+    Update {
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+        #[arg(long)]
+        manual_restart: bool,
+    },
+
+    /// Install antegen binary to ~/.local/bin (used by install script)
+    #[command(hide = true)]
+    Install {
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+    },
+
+    /// Show antegen configuration and status
+    #[command(hide = true)]
+    Info {
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Config file operations
+    #[command(hide = true, subcommand)]
+    Config(NodeConfigCommands),
+}
+
+// =============================================================================
+// Node commands
+// =============================================================================
+
+#[derive(Subcommand)]
+enum NodeCommands {
     /// Run the executor directly (no service, blocking)
     Run {
         /// Path to configuration file (defaults to ~/.config/antegen/antegen.toml, will init if needed)
@@ -140,66 +244,25 @@ enum Commands {
         json: bool,
     },
 
-    /// Geyser plugin operations (downloads plugin from GitHub releases)
-    #[command(subcommand)]
-    Geyser(GeyserCommands),
+    /// Fund the executor with SOL from your Solana CLI wallet
+    Fund {
+        /// Amount of SOL to transfer (defaults to minimum required)
+        amount: Option<f64>,
+    },
+
+    /// Withdraw SOL from executor to Solana CLI keypair
+    Withdraw {
+        /// Amount of SOL to withdraw (defaults to everything above minimum)
+        amount: Option<f64>,
+    },
 
     /// Config file operations
     #[command(subcommand)]
-    Config(ConfigCommands),
-
-    /// Thread inspection operations
-    #[command(subcommand)]
-    Thread(ThreadCommands),
-
-    /// Client identity and utility operations
-    #[command(subcommand)]
-    Client(ClientCommands),
-
-    /// Thread program management
-    #[command(subcommand)]
-    Program(ProgramCommands),
+    Config(NodeConfigCommands),
 }
 
 #[derive(Subcommand)]
-enum GeyserCommands {
-    /// Initialize plugin for validator
-    Init {
-        /// Output path for validator plugin config
-        #[arg(short, long, default_value = "validator-plugin-config.json")]
-        output: PathBuf,
-
-        /// Path to antegen.toml config file
-        #[arg(short, long, default_value = "antegen.toml")]
-        config: PathBuf,
-    },
-
-    /// Extract plugin .so to custom location
-    Extract {
-        /// Output path for the .so file
-        #[arg(short, long)]
-        output: PathBuf,
-    },
-}
-
-#[derive(Subcommand)]
-enum ProgramCommands {
-    /// Program configuration management
-    #[command(subcommand)]
-    Config(ProgramConfigCommands),
-}
-
-#[derive(Subcommand)]
-enum ProgramConfigCommands {
-    /// Initialize the ThreadConfig account (required before threads can execute)
-    Init,
-
-    /// Display the current ThreadConfig settings
-    Get,
-}
-
-#[derive(Subcommand)]
-enum ConfigCommands {
+enum NodeConfigCommands {
     /// Generate default config file
     Init {
         /// Output path for config file
@@ -231,90 +294,72 @@ enum ConfigCommands {
     },
 }
 
+// =============================================================================
+// Program commands
+// =============================================================================
+
 #[derive(Subcommand)]
-enum ClientCommands {
-    /// Show executor public key (address)
-    Address {
-        /// Path to configuration file
+enum ProgramCommands {
+    /// Deploy the program binary to a Solana cluster
+    Deploy {
+        /// Path to the compiled program .so file
+        program_binary: PathBuf,
+
+        /// Program ID or path to program keypair (defaults to declared program ID)
+        #[arg(long)]
+        program_id: Option<String>,
+
+        /// Skip `config init` after deploy
+        #[arg(long)]
+        skip_init: bool,
+
+        /// Skip on-chain verification after deploy
+        #[arg(long)]
+        skip_verify: bool,
+    },
+
+    /// Program configuration management
+    #[command(subcommand)]
+    Config(ProgramConfigCommands),
+}
+
+#[derive(Subcommand)]
+enum ProgramConfigCommands {
+    /// Initialize the ThreadConfig account (required before threads can execute)
+    Init,
+
+    /// Display the current ThreadConfig settings
+    Get,
+}
+
+// =============================================================================
+// Geyser commands (unchanged)
+// =============================================================================
+
+#[derive(Subcommand)]
+enum GeyserCommands {
+    /// Initialize plugin for validator
+    Init {
+        /// Output path for validator plugin config
+        #[arg(short, long, default_value = "validator-plugin-config.json")]
+        output: PathBuf,
+
+        /// Path to antegen.toml config file
         #[arg(short, long, default_value = "antegen.toml")]
         config: PathBuf,
     },
 
-    /// Show executor SOL balance
-    Balance {
-        /// Path to configuration file
-        #[arg(short, long, default_value = "antegen.toml")]
-        config: PathBuf,
-
-        /// RPC endpoint (overrides config)
-        #[arg(long)]
-        rpc: Option<String>,
-    },
-
-    /// Transfer SOL to an address (fund executor or any wallet)
-    Refill {
-        /// Destination address (executor pubkey or any wallet)
-        #[arg(long)]
-        address: String,
-
-        /// Amount of SOL to transfer
-        #[arg(long)]
-        amount: f64,
-
-        /// Funding keypair (defaults to Solana CLI keypair)
+    /// Extract plugin .so to custom location
+    Extract {
+        /// Output path for the .so file
         #[arg(short, long)]
-        keypair: Option<PathBuf>,
-
-        /// RPC endpoint (defaults to Solana CLI config)
-        #[arg(long)]
-        rpc: Option<String>,
-    },
-
-    /// Export client identity for backup/migration
-    Export {
-        /// Path to configuration file
-        #[arg(short, long, default_value = "antegen.toml")]
-        config: PathBuf,
-
-        /// Output archive path
-        #[arg(short, long, default_value = "antegen-backup.tar.gz")]
         output: PathBuf,
     },
-
-    /// Import client identity from backup
-    Import {
-        /// Input archive path
-        #[arg(short, long)]
-        input: PathBuf,
-
-        /// Use existing keypair instead of generating new one
-        #[arg(long)]
-        keypair: Option<PathBuf>,
-
-        /// Overwrite existing files
-        #[arg(long)]
-        force: bool,
-    },
-
-    /// Withdraw SOL from executor to Solana CLI keypair
-    Withdraw {
-        /// Path to configuration file
-        #[arg(short, long, default_value = "antegen.toml")]
-        config: PathBuf,
-
-        /// Amount of SOL to withdraw
-        #[arg(long)]
-        amount: Option<f64>,
-
-        /// Withdraw all SOL (minus transaction fee)
-        #[arg(long)]
-        all: bool,
-
-        /// RPC endpoint (overrides config)
-        #[arg(long)]
-        rpc: Option<String>,
-    },
 }
+
+// =============================================================================
+// Thread commands (unchanged)
+// =============================================================================
 
 #[derive(Subcommand)]
 enum ThreadCommands {
@@ -446,42 +491,86 @@ EXAMPLES:
     },
 }
 
+// =============================================================================
+// Deprecation warning helper
+// =============================================================================
+
+fn deprecation_warning(old: &str, new: &str) {
+    eprintln!("Warning: `antegen {}` is deprecated. Use `antegen {}` instead.", old, new);
+    eprintln!();
+}
+
+// =============================================================================
+// Main dispatch
+// =============================================================================
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Run { config, version } => {
-            let cfg = match config {
-                Some(p) => p,
-                None => commands::service::ensure_config()?,
-            };
-            commands::run::execute(cfg, cli.rpc, cli.log_level, version).await
-        }
-        Commands::Init { rpc, force } => commands::service::init(rpc, force),
-        Commands::Start { rpc, version } => commands::service::start(rpc, version).await,
-        Commands::Status => commands::service::status(),
-        Commands::Logs { follow } => commands::service::logs(follow),
-        Commands::Stop => commands::service::stop(),
-        Commands::Restart => commands::service::restart(),
-        Commands::Uninstall => commands::service::uninstall(),
-        Commands::Update { version, manual_restart } => {
-            commands::update::update(version, manual_restart).await
-        }
-        Commands::Install { version } => commands::update::install(version).await,
-        Commands::Info { json } => commands::info::info(json).await,
-        Commands::Geyser(geyser_cmd) => match geyser_cmd {
-            GeyserCommands::Init { output, config } => {
-                commands::geyser::init(output, config).await
+        // =================================================================
+        // Node commands
+        // =================================================================
+        Commands::Node(node_cmd) => match node_cmd {
+            NodeCommands::Run { config, version } => {
+                let cfg = match config {
+                    Some(p) => p,
+                    None => commands::service::ensure_config()?,
+                };
+                commands::run::execute(cfg, cli.rpc, cli.log_level, version).await
             }
-            GeyserCommands::Extract { output } => commands::geyser::extract(output).await,
-        },
-        Commands::Config(config_cmd) => match config_cmd {
-            ConfigCommands::Init { output, rpc, keypair_path, storage_path, force } => {
-                commands::config::init(output, rpc, keypair_path, storage_path, force)
+            NodeCommands::Init { rpc, force } => commands::service::init(rpc, force),
+            NodeCommands::Start { rpc, version } => commands::service::start(rpc, version).await,
+            NodeCommands::Status => commands::service::status(),
+            NodeCommands::Logs { follow } => commands::service::logs(follow),
+            NodeCommands::Stop => commands::service::stop(),
+            NodeCommands::Restart => commands::service::restart(),
+            NodeCommands::Uninstall => commands::service::uninstall(),
+            NodeCommands::Update { version, manual_restart } => {
+                commands::update::update(version, manual_restart).await
             }
-            ConfigCommands::Validate { config } => commands::config::validate(config),
+            NodeCommands::Install { version } => commands::update::install(version).await,
+            NodeCommands::Info { json } => commands::info::info(json).await,
+            NodeCommands::Fund { amount } => {
+                let config = commands::default_config_path()?;
+                commands::client::fund(config, amount, cli.keypair, cli.rpc).await
+            }
+            NodeCommands::Withdraw { amount } => {
+                let config = commands::default_config_path()?;
+                commands::client::withdraw(config, amount, cli.rpc).await
+            }
+            NodeCommands::Config(config_cmd) => match config_cmd {
+                NodeConfigCommands::Init { output, rpc, keypair_path, storage_path, force } => {
+                    commands::config::init(output, rpc, keypair_path, storage_path, force)
+                }
+                NodeConfigCommands::Validate { config } => commands::config::validate(config),
+            },
         },
+
+        // =================================================================
+        // Program commands
+        // =================================================================
+        Commands::Program(program_cmd) => match program_cmd {
+            ProgramCommands::Deploy {
+                program_binary,
+                program_id,
+                skip_init,
+                skip_verify,
+            } => {
+                commands::program::deploy(program_binary, cli.rpc, cli.keypair, program_id, skip_init, skip_verify).await
+            }
+            ProgramCommands::Config(config_cmd) => match config_cmd {
+                ProgramConfigCommands::Init => {
+                    commands::program::config_init(cli.rpc, cli.keypair).await
+                }
+                ProgramConfigCommands::Get => commands::program::config_get(cli.rpc).await,
+            },
+        },
+
+        // =================================================================
+        // Thread commands
+        // =================================================================
         Commands::Thread(thread_cmd) => match thread_cmd {
             ThreadCommands::Get { address } => commands::thread::get(address, cli.rpc).await,
             #[cfg(feature = "dev")]
@@ -493,37 +582,76 @@ async fn main() -> Result<()> {
                 commands::thread::test(cli.rpc, cli.keypair, test_cmd).await
             }
         },
-        Commands::Client(client_cmd) => match client_cmd {
-            ClientCommands::Address { config } => commands::client::address(config),
-            ClientCommands::Balance { config, rpc } => {
-                commands::client::balance(config, rpc).await
+
+        // =================================================================
+        // Geyser commands
+        // =================================================================
+        Commands::Geyser(geyser_cmd) => match geyser_cmd {
+            GeyserCommands::Init { output, config } => {
+                commands::geyser::init(output, config).await
             }
-            ClientCommands::Refill {
-                address,
-                amount,
-                keypair,
-                rpc,
-            } => commands::client::refill(address, amount, keypair, rpc).await,
-            ClientCommands::Export { config, output } => commands::client::export(config, output),
-            ClientCommands::Import {
-                input,
-                keypair,
-                force,
-            } => commands::client::import(input, keypair, force),
-            ClientCommands::Withdraw {
-                config,
-                amount,
-                all,
-                rpc,
-            } => commands::client::withdraw(config, amount, all, rpc).await,
+            GeyserCommands::Extract { output } => commands::geyser::extract(output).await,
         },
-        Commands::Program(program_cmd) => match program_cmd {
-            ProgramCommands::Config(config_cmd) => match config_cmd {
-                ProgramConfigCommands::Init => {
-                    commands::program::config_init(cli.rpc, cli.keypair).await
+
+        // =================================================================
+        // Hidden backwards-compatibility aliases (deprecated)
+        // =================================================================
+        Commands::Run { config, version } => {
+            deprecation_warning("run", "node run");
+            let cfg = match config {
+                Some(p) => p,
+                None => commands::service::ensure_config()?,
+            };
+            commands::run::execute(cfg, cli.rpc, cli.log_level, version).await
+        }
+        Commands::Init { rpc, force } => {
+            deprecation_warning("init", "node init");
+            commands::service::init(rpc, force)
+        }
+        Commands::Start { rpc, version } => {
+            deprecation_warning("start", "node start");
+            commands::service::start(rpc, version).await
+        }
+        Commands::Status => {
+            deprecation_warning("status", "node status");
+            commands::service::status()
+        }
+        Commands::Logs { follow } => {
+            deprecation_warning("logs", "node logs");
+            commands::service::logs(follow)
+        }
+        Commands::Stop => {
+            deprecation_warning("stop", "node stop");
+            commands::service::stop()
+        }
+        Commands::Restart => {
+            deprecation_warning("restart", "node restart");
+            commands::service::restart()
+        }
+        Commands::Uninstall => {
+            deprecation_warning("uninstall", "node uninstall");
+            commands::service::uninstall()
+        }
+        Commands::Update { version, manual_restart } => {
+            deprecation_warning("update", "node update");
+            commands::update::update(version, manual_restart).await
+        }
+        Commands::Install { version } => {
+            deprecation_warning("install", "node install");
+            commands::update::install(version).await
+        }
+        Commands::Info { json } => {
+            deprecation_warning("info", "node info");
+            commands::info::info(json).await
+        }
+        Commands::Config(config_cmd) => {
+            deprecation_warning("config", "node config");
+            match config_cmd {
+                NodeConfigCommands::Init { output, rpc, keypair_path, storage_path, force } => {
+                    commands::config::init(output, rpc, keypair_path, storage_path, force)
                 }
-                ProgramConfigCommands::Get => commands::program::config_get(cli.rpc).await,
-            },
-        },
+                NodeConfigCommands::Validate { config } => commands::config::validate(config),
+            }
+        }
     }
 }
