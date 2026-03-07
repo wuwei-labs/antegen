@@ -10,22 +10,18 @@
     <meta name="generator" content="Retype 4.1.0">
 
     <!-- Primary Meta Tags -->
-    <title>antegen Runbooks</title>
-    <meta name="title" content="antegen Runbooks">
-    <meta name="description" content="Surfpool">
+    <title>Antegen: From Protocol Platform to Production-Ready Executor</title>
+    <meta name="title" content="Antegen: From Protocol Platform to Production-Ready Executor">
+    <meta name="description" content="A lot has changed since v2.2.9. Here's a high-level look at where Antegen is today.">
 
     <!-- Canonical -->
-    <link rel="canonical" href="https://docs.antegen.xyz/runbooks/">
+    <link rel="canonical" href="https://docs.antegen.xyz/update_announcement/">
 
     <!-- Open Graph -->
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://docs.antegen.xyz/runbooks/">
-    <meta property="og:title" content="antegen Runbooks">
-    <meta property="og:description" content="Surfpool">
-    <meta property="og:image" content="https://img.shields.io/badge/Operated%20with-Surfpool-gree?labelColor=gray">
-    <meta property="og:image:width" content="1200">
-    <meta property="og:image:height" content="630">
-    <meta property="og:image:alt" content="antegen Runbooks">
+    <meta property="og:url" content="https://docs.antegen.xyz/update_announcement/">
+    <meta property="og:title" content="Antegen: From Protocol Platform to Production-Ready Executor">
+    <meta property="og:description" content="A lot has changed since v2.2.9. Here's a high-level look at where Antegen is today.">
     <meta property="og:site_name" content="<span class=\"docs-emoji\">&#x1F9A0;</span> Antegen">
     <meta property="og:locale" content="en_US">
 
@@ -36,7 +32,6 @@
     <script data-cfasync="false" src="../resources/js/config.js?v=4.1.0.826211707642" data-turbo-eval="false" defer></script>
     <script data-cfasync="false" src="../resources/js/retype.js?v=4.1.0" data-turbo-eval="false" defer></script>
     <script id="lunr-js" data-cfasync="false" src="../resources/js/lunr.js?v=4.1.0.826211707642" data-turbo-eval="false" defer></script>
-    <script id="prism-js" data-cfasync="false" src="../resources/js/prism.js?v=4.1.0.826211707642" defer></script>
 </head>
 <body>
     <div id="retype-app" class="relative text-base antialiased text-base-text bg-base-bg font-body">
@@ -140,133 +135,102 @@
                 <!-- Rendered if sidebar right is enabled -->
                 <div id="retype-sidebar-right-toggle"></div>
                 <!-- Page content  -->
-<doc-anchor-target id="antegen-runbooks" class="break-words">
+<doc-anchor-target id="antegen-from-protocol-platform-to-production-ready-executor" class="break-words">
     <h1>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#antegen-runbooks">#</doc-anchor-trigger>
-        <span>antegen Runbooks</span>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#antegen-from-protocol-platform-to-production-ready-executor">#</doc-anchor-trigger>
+        <span>Antegen: From Protocol Platform to Production-Ready Executor</span>
     </h1>
 </doc-anchor-target>
-<p><figure class="content-center">
-    <a href="https://surfpool.run">
-        <img src="https://img.shields.io/badge/Operated%20with-Surfpool-gree?labelColor=gray" alt="Surfpool" class="rounded-image-rounded border-image-border border-image-border-width" />
-    </a>
-    <figcaption class="caption">Surfpool</figcaption>
-</figure>
-</p>
-<doc-anchor-target id="available-runbooks">
+<p>A lot has changed since v2.2.9. Here&#x27;s a high-level look at where Antegen is today.</p>
+<doc-anchor-target id="a-new-foundation">
     <h2>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#available-runbooks">#</doc-anchor-trigger>
-        <span>Available Runbooks</span>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#a-new-foundation">#</doc-anchor-trigger>
+        <span>A New Foundation</span>
     </h2>
 </doc-anchor-target>
-<doc-anchor-target id="deployment">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#deployment">#</doc-anchor-trigger>
-        <span>deployment</span>
-    </h3>
-</doc-anchor-target>
-<p>Deploy programs</p>
-<doc-anchor-target id="getting-started">
+<p>Antegen started as a hard fork of Clockwork. Since then, the project has been completely restructured — new crate layout, new on-chain program architecture, and a modern dependency stack built on <strong>Solana v3</strong> and <strong>Anchor 1.0</strong>.</p>
+<p>The old multi-program design (thread, network, webhook) has been replaced with a single, focused <strong>Thread program</strong> for scheduled transaction execution. Fewer moving parts, simpler mental model, easier to audit.</p>
+<doc-anchor-target id="one-binary-fully-self-managed">
     <h2>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#getting-started">#</doc-anchor-trigger>
-        <span>Getting Started</span>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#one-binary-fully-self-managed">#</doc-anchor-trigger>
+        <span>One Binary, Fully Self-Managed</span>
     </h2>
 </doc-anchor-target>
-<p>This repository is using <a href="https://surfpool.run">Surfpool</a> as a part of its development workflow.</p>
-<p>Surfpool provides three major upgrades to the Solana development experience:</p>
+<p>The CLI is now a single <code translate="no" v-pre>antegen</code> binary that handles everything:</p>
 <ul>
-<li><strong>Surfnet</strong>: A local validator that runs on your machine, allowing you fork mainnet on the fly so that you always use the latest chain data when testing your programs.</li>
-<li><strong>Runbooks</strong>: Bringing the devops best practice of <code translate="no" v-pre>infrastructure as code</code> to Solana, Runbooks allow you to have secure, reproducible, and composable scripts for managing on-chain operations &amp; deployments.</li>
-<li><strong>Surfpool Studio</strong>: An all-local Web UI that gives new levels of introspection into your transactions.</li>
+<li><strong>Install &amp; update itself</strong> — <code translate="no" v-pre>antegen node update</code> pulls the latest release, swaps the binary atomically, and restarts the service.</li>
+<li><strong>Run as a system service</strong> — <code translate="no" v-pre>antegen node start</code> configures and launches a systemd/launchd service automatically. No manual unit files.</li>
+<li><strong>Fund &amp; withdraw</strong> — <code translate="no" v-pre>antegen node fund</code> tops up your executor to the minimum balance. <code translate="no" v-pre>antegen node withdraw</code> pulls out everything above it.</li>
+<li><strong>Observe</strong> — <code translate="no" v-pre>antegen node info</code> shows executor address, balance, service status, and version at a glance. <code translate="no" v-pre>antegen node logs</code> streams live output.</li>
 </ul>
-<doc-anchor-target id="installation">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#installation">#</doc-anchor-trigger>
-        <span>Installation</span>
-    </h3>
-</doc-anchor-target>
-<p>Install pre-built binaries:</p>
-<div id="installation-code-1" class="codeblock-wrapper"><doc-codeblock>
-<pre translate="no" class="language-shell-session"><code v-pre class="language-shell-session"># macOS (Homebrew)
-brew install txtx/taps/surfpool
-
-# Updating surfpool for Homebrew users
-brew tap txtx/taps
-brew reinstall surfpool
-
-# Linux (Snap Store)
-snap install surfpool</code></pre>
-</doc-codeblock></div>
-<p>Install from source:</p>
-<div id="installation-code-2" class="codeblock-wrapper"><doc-codeblock>
-<pre translate="no" class="language-shell-session"><code v-pre class="language-shell-session"># Clone repo
-git clone https://github.com/txtx/surfpool.git
-
-# Set repo as current directory
-cd surfpool
-
-# Build
-cargo surfpool-install</code></pre>
-</doc-codeblock></div>
-<doc-anchor-target id="start-a-surfnet">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#start-a-surfnet">#</doc-anchor-trigger>
-        <span>Start a Surfnet</span>
-    </h3>
-</doc-anchor-target>
-<div id="start-a-surfnet-code-1" class="codeblock-wrapper"><doc-codeblock>
-<pre translate="no" class="language-shell-session"><code v-pre class="language-shell-session">$ surfpool start</code></pre>
-</doc-codeblock></div>
-<doc-anchor-target id="resources">
+<doc-anchor-target id="on-chain-simplified-thread-program">
     <h2>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#resources">#</doc-anchor-trigger>
-        <span>Resources</span>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#on-chain-simplified-thread-program">#</doc-anchor-trigger>
+        <span>On-Chain: Simplified Thread Program</span>
     </h2>
 </doc-anchor-target>
-<p>Access tutorials and documentation at <a href="https://docs.surfpool.run">docs.surfpool.run</a> to understand Surfnets and the Runbook syntax, and to discover the powerful features of surfpool.</p>
-<p>Additionally, the <a href="https://marketplace.visualstudio.com/items?itemName=txtx.txtx">Visual Studio Code extension</a> will make writing runbooks easier.</p>
-<p>Our <a href="https://www.youtube.com/playlist?list=PL0FMgRjJMRzO1FdunpMS-aUS4GNkgyr3T">Surfpool 101 Series</a> is also a great place to start learning about Surfpool and its features:
-<a href="https://www.youtube.com/playlist?list=PL0FMgRjJMRzO1FdunpMS-aUS4GNkgyr3T">
-<picture>
-<source srcset="https://raw.githubusercontent.com/txtx/surfpool/main/doc/assets/youtube.png">
-<img alt="Surfpool 101 series" style="max-width: 100%;">
-</picture>
-</a></p>
-<doc-anchor-target id="quickstart">
+<p>The thread program has been redesigned around <strong>fibers</strong> — individual instructions within a thread&#x27;s execution sequence. Key changes:</p>
+<ul>
+<li>New instruction set: <code translate="no" v-pre>fiber_create</code>, <code translate="no" v-pre>fiber_delete</code>, <code translate="no" v-pre>fiber_update</code> replace the old <code translate="no" v-pre>thread_instruction_add/remove</code> pattern
+<ul>
+<li>Enabling on-chain &quot;chaining&quot; like n8n workflows</li>
+</ul>
+</li>
+<li>Global configuration via <code translate="no" v-pre>config_init</code> / <code translate="no" v-pre>config_update</code></li>
+<li>Fairer fee model — execution fees decay over time, so threads that run late don&#x27;t pay full price (can be 0 if too late)</li>
+<li>Durable nonces for transaction reliability across all threads (not enabled for default threads)</li>
+</ul>
+<doc-anchor-target id="under-the-hood">
     <h2>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#quickstart">#</doc-anchor-trigger>
-        <span>Quickstart</span>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#under-the-hood">#</doc-anchor-trigger>
+        <span>Under the Hood</span>
     </h2>
 </doc-anchor-target>
-<doc-anchor-target id="list-runbooks-available-in-this-repository">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#list-runbooks-available-in-this-repository">#</doc-anchor-trigger>
-        <span>List runbooks available in this repository</span>
-    </h3>
+<ul>
+<li><strong>Actor-based execution</strong> via Ractor for concurrent thread processing</li>
+<li><strong>TPU direct submission</strong> bypasses RPC for lower-latency transactions</li>
+<li><strong>RPC load balancing</strong> with race condition handling and automatic requeueing</li>
+<li><strong>Workspace claims</strong> via loa-core integration for the agent builder ecosystem</li>
+</ul>
+<doc-anchor-target id="modern-stack">
+    <h2>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#modern-stack">#</doc-anchor-trigger>
+        <span>Modern Stack</span>
+    </h2>
 </doc-anchor-target>
-<div id="list-runbooks-available-in-this-repository-code-1" class="codeblock-wrapper"><doc-codeblock>
-<pre translate="no" class="language-shell-session"><code v-pre class="language-shell-session">$ surfpool ls
-Name                                    Description
-deployment                              Deploy programs</code></pre>
-</doc-codeblock></div>
-<doc-anchor-target id="start-a-surfnet-automatically-executing-the-deployment-runbook-on-program-recompile">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#start-a-surfnet-automatically-executing-the-deployment-runbook-on-program-recompile">#</doc-anchor-trigger>
-        <span>Start a Surfnet, automatically executing the <code translate="no" v-pre>deployment</code> runbook on program recompile:</span>
-    </h3>
-</doc-anchor-target>
-<div id="start-a-surfnet-automatically-executing-the-deployment-runbook-on-program-recompile-code-1" class="codeblock-wrapper"><doc-codeblock>
-<pre translate="no" class="language-shell-session"><code v-pre class="language-shell-session">$ surfpool start --watch</code></pre>
-</doc-codeblock></div>
-<doc-anchor-target id="execute-an-existing-runbook">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#execute-an-existing-runbook">#</doc-anchor-trigger>
-        <span>Execute an existing runbook</span>
-    </h3>
-</doc-anchor-target>
-<div id="execute-an-existing-runbook-code-1" class="codeblock-wrapper"><doc-codeblock>
-<pre translate="no" class="language-shell-session"><code v-pre class="language-shell-session">$ surfpool run deployment</code></pre>
-</doc-codeblock></div>
+<div class="table-wrapper scrollbar overflow-hidden">
+<table class="comfortable">
+<thead>
+<tr>
+<th>Component</th>
+<th>v2.2.9</th>
+<th>v4.8.2</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Solana</td>
+<td>1.x</td>
+<td>3.1.4</td>
+</tr>
+<tr>
+<td>Anchor</td>
+<td>0.29.x</td>
+<td>1.0.0-rc.1</td>
+</tr>
+<tr>
+<td>Rust</td>
+<td>1.81</td>
+<td>1.82+</td>
+</tr>
+<tr>
+<td>Programs</td>
+<td>4 (thread, network, webhook, test)</td>
+<td>1 (thread)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
                 
                 <!-- Required only on API pages -->
@@ -276,23 +240,16 @@ deployment                              Deploy programs</code></pre>
             
                 <nav id="retype-nextprev" class="print:hidden flex mt-14">
                     <div class="w-1/2">
-                        <a class="px-5 py-4 h-full flex items-center break-normal font-medium text-body-link border border-base-border hover:border-base-border-hover rounded-l-lg transition-colors duration-150 relative hover:z-5" href="../programs/thread/tests/coverage/">
+                        <a class="px-5 py-4 h-full flex items-center break-normal font-medium text-body-link border border-base-border hover:border-base-border-hover rounded-r rounded-l-lg transition-colors duration-150 relative hover:z-5" href="../runbooks/">
                             <svg xmlns="http://www.w3.org/2000/svg" class="mr-3" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" overflow="visible"><path d="M19 11H7.41l5.29-5.29a.996.996 0 10-1.41-1.41l-7 7a1 1 0 000 1.42l7 7a1.024 1.024 0 001.42-.01.996.996 0 000-1.41L7.41 13H19c.55 0 1-.45 1-1s-.45-1-1-1z" /><path fill="none" d="M0 0h24v24H0z" /></svg>
                             <span>
                                 <span class="block text-xs font-normal text-base-text-muted">Previous</span>
-                                <span class="block mt-1">Thread Program Test Coverage</span>
+                                <span class="block mt-1">antegen Runbooks</span>
                             </span>
                         </a>
                     </div>
             
                     <div class="w-1/2">
-                        <a class="px-5 py-4 -mx-px h-full flex items-center justify-end break-normal font-medium text-body-link border border-base-border hover:border-base-border-hover rounded-r-lg transition-colors duration-150 relative hover:z-5" href="../update_announcement/">
-                            <span>
-                                <span class="block text-xs font-normal text-right text-base-text-muted">Next</span>
-                                <span class="block mt-1">Antegen: From Protocol Platform to Production-​Ready Executor</span>
-                            </span>
-                            <svg xmlns="http://www.w3.org/2000/svg" class="ml-3" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" overflow="visible"><path d="M19.92 12.38a1 1 0 00-.22-1.09l-7-7a.996.996 0 10-1.41 1.41l5.3 5.3H5c-.55 0-1 .45-1 1s.45 1 1 1h11.59l-5.29 5.29a.996.996 0 000 1.41c.19.2.44.3.7.3s.51-.1.71-.29l7-7c.09-.09.16-.21.21-.33z" /><path fill="none" d="M0 0h24v24H0z" /></svg>
-                        </a>
                     </div>
                 </nav>
             </footer>
@@ -333,6 +290,6 @@ deployment                              Deploy programs</code></pre>
 
     <div id="retype-overlay-target"></div>
 
-    <script data-cfasync="false">window.__DOCS__ = { "title": "antegen Runbooks", level: 1, icon: "file", hasPrism: true, hasMermaid: false, hasMath: false, tocDepth: 23 }</script>
+    <script data-cfasync="false">window.__DOCS__ = { "title": "Antegen: From Protocol Platform to Production-Ready Executor", level: 1, icon: "file", hasPrism: false, hasMermaid: false, hasMath: false, tocDepth: 23 }</script>
 </body>
 </html>
