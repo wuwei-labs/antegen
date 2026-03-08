@@ -147,6 +147,7 @@ pub fn get(config_path: PathBuf) -> Result<()> {
 #[allow(clippy::too_many_arguments)]
 pub fn set(
     config_path: PathBuf,
+    rpc: Option<String>,
     keypair_path: Option<String>,
     forgo_commission: Option<bool>,
     commitment: Option<String>,
@@ -164,6 +165,11 @@ pub fn set(
     let mut config = ClientConfig::load(&config_path)?;
     let mut changes: Vec<String> = Vec::new();
 
+    if let Some(v) = rpc {
+        let v = strip_quotes(v);
+        config.rpc.endpoints[0].url = v.clone();
+        changes.push(format!("rpc.endpoints[0].url = {}", v));
+    }
     if let Some(v) = keypair_path {
         let v = strip_quotes(v);
         config.executor.keypair_path = v.clone();

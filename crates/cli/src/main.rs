@@ -645,7 +645,7 @@ fn deprecation_warning(old: &str, new: &str) {
 // Config command dispatch (shared between anm and backward-compat aliases)
 // =============================================================================
 
-fn dispatch_config(config_cmd: NodeConfigCommands) -> Result<()> {
+fn dispatch_config(config_cmd: NodeConfigCommands, global_rpc: Option<String>) -> Result<()> {
     match config_cmd {
         NodeConfigCommands::Get { config } => {
             let path = config
@@ -674,6 +674,7 @@ fn dispatch_config(config_cmd: NodeConfigCommands) -> Result<()> {
                 .unwrap_or_else(commands::default_config_path)?;
             commands::config::set(
                 path,
+                global_rpc,
                 keypair_path,
                 forgo_commission,
                 commitment,
@@ -759,7 +760,7 @@ async fn run_anm() -> Result<()> {
         AnmCommands::List => commands::update::list_node().await,
         AnmCommands::Use { version } => commands::update::use_node_version(version).await,
         AnmCommands::Install { version } => commands::update::install_node_version(version).await,
-        AnmCommands::Config(config_cmd) => dispatch_config(config_cmd),
+        AnmCommands::Config(config_cmd) => dispatch_config(config_cmd, cli.rpc),
     }
 }
 
@@ -899,7 +900,7 @@ async fn run_antegen() -> Result<()> {
         }
         Commands::Config(config_cmd) => {
             deprecation_warning("config", "config");
-            dispatch_config(config_cmd)
+            dispatch_config(config_cmd, cli.rpc)
         }
     }
 }
