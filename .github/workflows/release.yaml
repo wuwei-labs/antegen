@@ -43,6 +43,7 @@ jobs:
             local name=$1 version=$2
             local status
             status=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "User-Agent: antegen-ci (github.com/wuwei-labs/antegen)" \
               "https://crates.io/api/v1/crates/${name}/${version}")
             [ "$status" = "200" ]
           }
