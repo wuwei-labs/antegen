@@ -98,7 +98,7 @@ install_binary() {
     chmod +x "$TMP_DIR/$BINARY"
 
     # Use the binary to install itself (handles symlink, PATH setup)
-    "$TMP_DIR/$BINARY" install --version "$VERSION"
+    "$TMP_DIR/$BINARY" node install --version "$VERSION"
 
     # Add to PATH for this session so verify_installation works
     export PATH="$INSTALL_DIR:$PATH"
@@ -119,7 +119,7 @@ verify_installation() {
 initialize() {
     if [ -n "$RPC_URL" ]; then
         info "Initializing antegen with RPC: $RPC_URL"
-        "$INSTALL_DIR/$BINARY" init --rpc "$RPC_URL"
+        "$INSTALL_DIR/$BINARY" node init --rpc "$RPC_URL"
         return 0
     fi
     return 1
@@ -136,32 +136,15 @@ main() {
 
     if verify_installation; then
         echo ""
-        if initialize; then
-            info "Initialization complete!"
-        else
-            info "Binary installed. To start the service, run:"
-            echo ""
-            echo "    antegen start --rpc <YOUR_RPC_URL>"
-            echo ""
-            echo "  Or install with RPC in one step:"
-            echo "    curl -sSfL .../install.sh | bash -s -- --rpc <YOUR_RPC_URL>"
-        fi
+        initialize || true
+        info "Installation complete!"
+        echo ""
+        echo "  Restart your shell or run: source ~/.bashrc"
+        echo "  Then run: antegen --help"
+        echo ""
     else
         error "Installation verification failed"
     fi
-
-    echo ""
-    info "Installation complete!"
-    echo ""
-    echo "  Useful commands:"
-    echo "    antegen --help      Show help"
-    echo "    antegen status      Show service status"
-    echo "    antegen stop        Stop the service"
-    echo "    antegen start       Start the service"
-    echo "    antegen restart     Restart the service"
-    echo "    antegen update      Update to latest version"
-    echo "    antegen uninstall   Remove the service"
-    echo ""
 }
 
 main "$@"

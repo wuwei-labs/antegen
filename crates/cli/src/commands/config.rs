@@ -24,6 +24,11 @@ pub fn init(
         );
     }
 
+    // Create parent directories if they don't exist
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
     let mut config = ClientConfig::default();
 
     // Apply overrides if provided (strip quotes for user-friendliness)

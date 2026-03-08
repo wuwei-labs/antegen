@@ -345,9 +345,9 @@ EXAMPLES:
 
     /// Generate default config file
     Init {
-        /// Output path for config file
-        #[arg(short, long, default_value = "antegen.toml")]
-        output: PathBuf,
+        /// Output path for config file (defaults to ~/.config/antegen/antegen.toml)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
 
         /// RPC endpoint URL
         #[arg(long)]
@@ -660,7 +660,8 @@ async fn main() -> Result<()> {
                     )
                 }
                 NodeConfigCommands::Init { output, rpc, keypair_path, storage_path, force } => {
-                    commands::config::init(output, rpc, keypair_path, storage_path, force)
+                    let path = output.map(Ok).unwrap_or_else(commands::default_config_path)?;
+                    commands::config::init(path, rpc, keypair_path, storage_path, force)
                 }
                 NodeConfigCommands::Validate { config } => commands::config::validate(config),
             },
@@ -804,7 +805,8 @@ async fn main() -> Result<()> {
                     )
                 }
                 NodeConfigCommands::Init { output, rpc, keypair_path, storage_path, force } => {
-                    commands::config::init(output, rpc, keypair_path, storage_path, force)
+                    let path = output.map(Ok).unwrap_or_else(commands::default_config_path)?;
+                    commands::config::init(path, rpc, keypair_path, storage_path, force)
                 }
                 NodeConfigCommands::Validate { config } => commands::config::validate(config),
             }
