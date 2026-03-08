@@ -32,6 +32,9 @@ solana-nonce = { workspace = true }
 anchor-lang = { workspace = true, features = ["init-if-needed"] }
 chrono = { workspace = true }
 
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(target_os, values("solana"))'] }
+
 [dev-dependencies]
 litesvm = { git = "https://github.com/wuwei-labs/litesvm.git", branch = "fix/durable-nonce-slot-warp" }
 litesvm-token = { git = "https://github.com/wuwei-labs/litesvm.git", branch = "fix/durable-nonce-slot-warp" }
