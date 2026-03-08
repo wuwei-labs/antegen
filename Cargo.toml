@@ -1,6 +1,5 @@
 [package]
 name = "antegen"
-version.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
@@ -26,7 +25,6 @@ members = ["crates/*", "plugin/geyser", "programs/thread"]
 default-members = ["crates/cli"]
 
 [workspace.package]
-version = "4.8.2"
 authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
 repository = "https://github.com/wuwei-labs/antegen"
 homepage = "https://antegen.xyz/"

@@ -263,6 +263,86 @@ enum NodeCommands {
 
 #[derive(Subcommand)]
 enum NodeConfigCommands {
+    /// Display the current executor node configuration
+    Get {
+        /// Path to config file (defaults to ~/.config/antegen/antegen.toml)
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+    },
+
+    /// Update configuration values
+    #[command(after_long_help = "\
+EXAMPLES:
+    antegen node config set --max-threads 20
+    antegen node config set --commitment finalized --tpu-enabled false
+    antegen node config set --keypair-path ~/.antegen/my-keypair.json
+    antegen node config set --grace-period 15 --eviction-buffer 30
+")]
+    Set {
+        /// Path to config file (defaults to ~/.config/antegen/antegen.toml)
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+
+        // -- executor --
+        /// Path to executor keypair file
+        #[arg(long)]
+        keypair_path: Option<String>,
+
+        /// Skip taking executor commission fee
+        #[arg(long)]
+        forgo_commission: Option<bool>,
+
+        // -- datasources --
+        /// Commitment level (processed, confirmed, finalized)
+        #[arg(long)]
+        commitment: Option<String>,
+
+        // -- processor --
+        /// Maximum number of concurrent threads to process
+        #[arg(long)]
+        max_threads: Option<usize>,
+
+        // -- cache --
+        /// Maximum number of accounts to cache
+        #[arg(long)]
+        cache_max_capacity: Option<u64>,
+
+        // -- load_balancer --
+        /// Grace period in seconds for fee decay calculations
+        #[arg(long)]
+        grace_period: Option<u64>,
+
+        /// Eviction buffer in seconds (extra cache TTL after grace period)
+        #[arg(long)]
+        eviction_buffer: Option<u64>,
+
+        /// Delay in seconds before claiming new threads
+        #[arg(long)]
+        thread_process_delay: Option<u64>,
+
+        // -- observability --
+        /// Enable/disable observability agent
+        #[arg(long)]
+        observability_enabled: Option<bool>,
+
+        /// Storage path for observability data
+        #[arg(long)]
+        observability_storage_path: Option<String>,
+
+        // -- tpu --
+        /// Enable/disable TPU client for transaction submission
+        #[arg(long)]
+        tpu_enabled: Option<bool>,
+
+        /// Number of QUIC connections per leader
+        #[arg(long)]
+        tpu_num_connections: Option<usize>,
+
+        /// Number of leaders to fan out transactions to
+        #[arg(long)]
+        tpu_leaders_fanout: Option<usize>,
+    },
+
     /// Generate default config file
     Init {
         /// Output path for config file
@@ -541,6 +621,44 @@ async fn main() -> Result<()> {
                 commands::client::withdraw(config, amount, cli.rpc).await
             }
             NodeCommands::Config(config_cmd) => match config_cmd {
+                NodeConfigCommands::Get { config } => {
+                    let path = config.map(Ok).unwrap_or_else(commands::default_config_path)?;
+                    commands::config::get(path)
+                }
+                NodeConfigCommands::Set {
+                    config,
+                    keypair_path,
+                    forgo_commission,
+                    commitment,
+                    max_threads,
+                    cache_max_capacity,
+                    grace_period,
+                    eviction_buffer,
+                    thread_process_delay,
+                    observability_enabled,
+                    observability_storage_path,
+                    tpu_enabled,
+                    tpu_num_connections,
+                    tpu_leaders_fanout,
+                } => {
+                    let path = config.map(Ok).unwrap_or_else(commands::default_config_path)?;
+                    commands::config::set(
+                        path,
+                        keypair_path,
+                        forgo_commission,
+                        commitment,
+                        max_threads,
+                        cache_max_capacity,
+                        grace_period,
+                        eviction_buffer,
+                        thread_process_delay,
+                        observability_enabled,
+                        observability_storage_path,
+                        tpu_enabled,
+                        tpu_num_connections,
+                        tpu_leaders_fanout,
+                    )
+                }
                 NodeConfigCommands::Init { output, rpc, keypair_path, storage_path, force } => {
                     commands::config::init(output, rpc, keypair_path, storage_path, force)
                 }
@@ -647,6 +765,44 @@ async fn main() -> Result<()> {
         Commands::Config(config_cmd) => {
             deprecation_warning("config", "node config");
             match config_cmd {
+                NodeConfigCommands::Get { config } => {
+                    let path = config.map(Ok).unwrap_or_else(commands::default_config_path)?;
+                    commands::config::get(path)
+                }
+                NodeConfigCommands::Set {
+                    config,
+                    keypair_path,
+                    forgo_commission,
+                    commitment,
+                    max_threads,
+                    cache_max_capacity,
+                    grace_period,
+                    eviction_buffer,
+                    thread_process_delay,
+                    observability_enabled,
+                    observability_storage_path,
+                    tpu_enabled,
+                    tpu_num_connections,
+                    tpu_leaders_fanout,
+                } => {
+                    let path = config.map(Ok).unwrap_or_else(commands::default_config_path)?;
+                    commands::config::set(
+                        path,
+                        keypair_path,
+                        forgo_commission,
+                        commitment,
+                        max_threads,
+                        cache_max_capacity,
+                        grace_period,
+                        eviction_buffer,
+                        thread_process_delay,
+                        observability_enabled,
+                        observability_storage_path,
+                        tpu_enabled,
+                        tpu_num_connections,
+                        tpu_leaders_fanout,
+                    )
+                }
                 NodeConfigCommands::Init { output, rpc, keypair_path, storage_path, force } => {
                     commands::config::init(output, rpc, keypair_path, storage_path, force)
                 }

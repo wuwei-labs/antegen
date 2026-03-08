@@ -1,6 +1,6 @@
 [package]
 name = "antegen-cli"
-version.workspace = true
+version = "4.9.0"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -43,7 +43,9 @@ tar = { workspace = true }
 flate2 = { workspace = true }
 tempfile = { workspace = true }
 service-manager = "0.11"
-self_update = { version = "0.42", default-features = false, features = ["rustls"] }
+self_update = { version = "0.42", default-features = false, features = [
+  "rustls",
+] }
 
 [target.'cfg(unix)'.dependencies]
 file-owner = "0.1"
@@ -53,7 +55,7 @@ libc = "0.2"
 
 [features]
 dev = []
-prod = []  # Production mode - no dev build detection
+prod = [] # Production mode - no dev build detection
 
 [dev-dependencies]
 tempfile = { workspace = true }
