@@ -98,7 +98,7 @@ install_binary() {
     chmod +x "$TMP_DIR/$BINARY"
 
     # Use the binary to install itself (handles symlink, PATH setup)
-    "$TMP_DIR/$BINARY" node install --version "$VERSION"
+    "$TMP_DIR/$BINARY" install --version "$VERSION"
 
     # Add to PATH for this session so verify_installation works
     export PATH="$INSTALL_DIR:$PATH"
@@ -119,7 +119,7 @@ verify_installation() {
 initialize() {
     if [ -n "$RPC_URL" ]; then
         info "Initializing antegen with RPC: $RPC_URL"
-        "$INSTALL_DIR/$BINARY" node init --rpc "$RPC_URL"
+        "$INSTALL_DIR/$BINARY" init --rpc "$RPC_URL"
         return 0
     fi
     return 1
@@ -140,7 +140,9 @@ main() {
         info "Installation complete!"
         echo ""
         echo "  Restart your shell or run: source ~/.bashrc"
-        echo "  Then run: antegen --help"
+        echo ""
+        echo "  Node management:  anm --help"
+        echo "  Developer tools:  antegen --help"
         echo ""
     else
         error "Installation verification failed"

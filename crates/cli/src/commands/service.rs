@@ -140,12 +140,12 @@ async fn install_service(config_path: &PathBuf, version: Option<&str>) -> Result
     let manager = get_service_manager()?;
     let label = get_label()?;
 
-    // Use the binary the user is currently running so the service matches
-    // the CLI they have installed. For explicit version requests, download
-    // the release binary instead.
+    // Always use the versioned binary path (not symlink) in the service definition.
+    // This ensures the service runs a specific version regardless of symlink changes.
     let binary = if version.is_some() {
-        // Explicit version: download from GitHub
-        super::update::ensure_binary_installed(version).await?
+        // Explicit version: download from GitHub, resolve symlink to versioned path
+        let path = super::update::ensure_binary_installed(version).await?;
+        path.canonicalize().unwrap_or(path)
     } else {
         let current = std::env::current_exe()
             .context("Failed to determine current executable path")?;
@@ -154,10 +154,11 @@ async fn install_service(config_path: &PathBuf, version: Option<&str>) -> Result
         if current_str.contains("/target/debug/") || current_str.contains("/target/release/") {
             // Dev build from target/: copy to ~/.local/bin so the service
             // doesn't point at an ephemeral build artifact
-            super::update::ensure_binary_installed(None).await?
+            let path = super::update::ensure_binary_installed(None).await?;
+            path.canonicalize().unwrap_or(path)
         } else {
             // cargo install (~/.cargo/bin) or downloaded (~/.local/bin):
-            // use whatever the user is running right now
+            // current_exe() already resolves symlinks to the versioned binary
             current
         }
     };
@@ -186,7 +187,6 @@ async fn install_service(config_path: &PathBuf, version: Option<&str>) -> Result
             label: label.clone(),
             program: binary.clone(),
             args: vec![
-                OsString::from("node"),
                 OsString::from("run"),
                 OsString::from("-c"),
                 OsString::from(config_path.as_os_str()),
@@ -199,6 +199,13 @@ async fn install_service(config_path: &PathBuf, version: Option<&str>) -> Result
             restart_policy: service_manager::RestartPolicy::OnFailure { delay_secs: Some(5) },
         })
         .context("Failed to install service")?;
+
+    // Track the node version from the binary filename (e.g., antegen-v4.4.0)
+    if let Some(filename) = binary.file_name().and_then(|f| f.to_str()) {
+        if let Some(ver) = filename.strip_prefix("antegen-") {
+            let _ = super::update::write_node_version(ver);
+        }
+    }
 
     Ok(())
 }
@@ -221,7 +228,6 @@ fn generate_launchd_plist(
     <key>ProgramArguments</key>
     <array>
         <string>{}</string>
-        <string>node</string>
         <string>run</string>
         <string>-c</string>
         <string>{}</string>
@@ -275,8 +281,19 @@ pub fn ensure_config() -> Result<PathBuf> {
 }
 
 /// Start the antegen service (init + install + start)
+/// If the service is already installed, stops and uninstalls it first (clean reinstall).
 pub async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
     let config_path = do_init(rpc, false)?;
+
+    // Clean reinstall: stop + uninstall existing service if present
+    if is_installed() {
+        let manager = get_service_manager()?;
+        let label = get_label()?;
+        let _ = manager.stop(ServiceStopCtx {
+            label: label.clone(),
+        });
+        let _ = manager.uninstall(ServiceUninstallCtx { label });
+    }
 
     println!("Installing service...");
     install_service(&config_path, version.as_deref()).await?;
@@ -296,12 +313,12 @@ pub async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
             println!("✓ Service started");
             println!();
             println!("Antegen is now running as a user service.");
-            println!("Use 'antegen node stop' to stop or 'antegen node restart' to restart.");
+            println!("Use `anm stop` to stop or `anm restart` to restart.");
 
             // Check for updates
             if let Some(latest) = check_update_available().await {
                 println!();
-                println!("Update available: {} -> Run `antegen node update`", latest);
+                println!("Update available: {} -> Run `anm update`", latest);
             }
         }
         ServiceStatus::Stopped(reason) => {
@@ -310,7 +327,7 @@ pub async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
                 println!("  Reason: {}", msg);
             }
             println!();
-            println!("Check the configuration and try 'antegen node run' to see error output.");
+            println!("Check the configuration and try `anm run` to see error output.");
         }
         ServiceStatus::NotInstalled => {
             println!("✗ Service failed to install");
@@ -337,7 +354,7 @@ pub fn status() -> Result<()> {
         }
         ServiceStatus::NotInstalled => {
             println!("✗ Service is not installed");
-            println!("  Run 'antegen node start' to install and start the service.");
+            println!("  Run `anm start` to install and start the service.");
             return Ok(());
         }
     }

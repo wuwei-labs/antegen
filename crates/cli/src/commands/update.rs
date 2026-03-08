@@ -51,6 +51,13 @@ pub fn binary_path() -> Result<PathBuf> {
         .context("Could not determine home directory")
 }
 
+/// Get the anm symlink path
+pub fn anm_symlink_path() -> Result<PathBuf> {
+    dirs::home_dir()
+        .map(|p| p.join(".local/bin/anm"))
+        .context("Could not determine home directory")
+}
+
 /// Get the versioned binary path (e.g., ~/.local/bin/antegen-v4.3.1)
 fn versioned_binary_path(version: &str) -> Result<PathBuf> {
     dirs::home_dir()
@@ -63,6 +70,32 @@ fn bin_dir() -> Result<PathBuf> {
     dirs::home_dir()
         .map(|p| p.join(".local/bin"))
         .context("Could not determine home directory")
+}
+
+/// Path to the node version tracking file
+fn node_version_path() -> Result<PathBuf> {
+    dirs::home_dir()
+        .map(|p| p.join(".antegen/node-version"))
+        .context("Could not determine home directory")
+}
+
+/// Write the active node version to the tracking file
+pub fn write_node_version(version: &str) -> Result<()> {
+    let path = node_version_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, version)?;
+    Ok(())
+}
+
+/// Read the active node version from the tracking file
+pub fn read_node_version() -> Option<String> {
+    node_version_path()
+        .ok()
+        .and_then(|p| fs::read_to_string(&p).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Shell script for ~/.antegen/env (rustup-style PATH setup)
@@ -161,6 +194,26 @@ pub async fn fetch_latest_version() -> Result<String> {
     .context("Task failed")?
 }
 
+/// Fetch all available versions from GitHub
+pub async fn fetch_all_versions() -> Result<Vec<String>> {
+    tokio::task::spawn_blocking(|| {
+        let releases = self_update::backends::github::ReleaseList::configure()
+            .repo_owner(REPO_OWNER)
+            .repo_name(REPO_NAME)
+            .build()
+            .context("Failed to build release list")?
+            .fetch()
+            .context("Failed to fetch releases from GitHub")?;
+
+        Ok(releases
+            .iter()
+            .map(|r| normalize_version(&r.version))
+            .collect())
+    })
+    .await
+    .context("Task failed")?
+}
+
 /// Build the download URL for the CLI binary
 pub fn build_download_url(version: &str) -> String {
     let target = get_platform_target();
@@ -225,9 +278,9 @@ fn get_installed_version() -> Option<String> {
     filename.strip_prefix("antegen-").map(|v| v.to_string())
 }
 
-/// Update the CLI binary to latest or a specific version
-/// By default, restarts the service if running. Use --manual-restart to skip.
-pub async fn update(version: Option<String>, manual_restart: bool) -> Result<()> {
+/// Update the CLI binary to latest or a specific version.
+/// Updates both `antegen` and `anm` symlinks. Does not touch the running service.
+pub async fn update(version: Option<String>) -> Result<()> {
     // Get installed version (from symlink), fall back to CLI version
     let installed = get_installed_version().unwrap_or_else(|| current_version().to_string());
     println!("Installed version: {}", installed);
@@ -260,6 +313,7 @@ pub async fn update(version: Option<String>, manual_restart: bool) -> Result<()>
     // Get paths
     let bin_dir = bin_dir()?;
     let symlink_path = binary_path()?;
+    let anm_path = anm_symlink_path()?;
     let new_versioned_path = versioned_binary_path(&latest)?;
     let old_versioned_path = versioned_binary_path(&installed)?;
 
@@ -286,46 +340,30 @@ pub async fn update(version: Option<String>, manual_restart: bool) -> Result<()>
             .context("Failed to migrate existing binary")?;
     }
 
-    // Atomically swap symlink to new version
-    // Remove old symlink first (atomic_symlink not available in std)
+    // Update antegen symlink
     if symlink_path.exists() || symlink_path.is_symlink() {
         fs::remove_file(&symlink_path).context("Failed to remove old symlink")?;
     }
-
     #[cfg(unix)]
-    symlink(&new_versioned_path, &symlink_path).context("Failed to create symlink")?;
+    symlink(&new_versioned_path, &symlink_path).context("Failed to create antegen symlink")?;
 
-    println!("✓ Updated to {}", latest);
+    // Update anm symlink
+    if anm_path.exists() || anm_path.is_symlink() {
+        fs::remove_file(&anm_path).context("Failed to remove old anm symlink")?;
+    }
+    #[cfg(unix)]
+    symlink(&new_versioned_path, &anm_path).context("Failed to create anm symlink")?;
+
+    // Show what happened
+    let node_version = read_node_version();
+    if let Some(nv) = &node_version {
+        println!("✓ Updated to {}. Node still running {}.", latest, nv);
+    } else {
+        println!("✓ Updated to {}", latest);
+    }
 
     // Ensure PATH is configured for the user
     ensure_path_configured();
-
-    // Check if service is running and handle restart
-    if super::service::is_installed() {
-        use service_manager::{ServiceManager, ServiceStatus, ServiceStatusCtx};
-        if let Ok(manager) = <dyn ServiceManager>::native() {
-            if let Ok(label) = "antegen".parse() {
-                if let Ok(ServiceStatus::Running) = manager.status(ServiceStatusCtx { label }) {
-                    if manual_restart {
-                        // User opted out of auto-restart
-                        println!();
-                        println!("Note: Service is still running {}.", installed);
-                        println!("Run `antegen node restart` to update the service to {}.", latest);
-                    } else {
-                        // Auto-restart service with new version
-                        println!();
-                        println!("Restarting service...");
-                        if let Err(e) = super::service::restart() {
-                            println!("✗ Failed to restart service: {}", e);
-                            println!("Run `antegen node restart` manually to update the service.");
-                        } else {
-                            println!("✓ Service restarted with {}", latest);
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     Ok(())
 }
@@ -413,12 +451,20 @@ pub async fn ensure_binary_installed(version: Option<&str>) -> Result<PathBuf> {
                     fs::set_permissions(&versioned_path, fs::Permissions::from_mode(0o755))?;
                 }
 
-                // Update symlink
+                // Update antegen symlink
                 if symlink_path.exists() || symlink_path.is_symlink() {
                     fs::remove_file(&symlink_path)?;
                 }
                 #[cfg(unix)]
                 symlink(&versioned_path, &symlink_path).context("Failed to create symlink")?;
+
+                // Update anm symlink
+                let anm_path = anm_symlink_path()?;
+                if anm_path.exists() || anm_path.is_symlink() {
+                    fs::remove_file(&anm_path)?;
+                }
+                #[cfg(unix)]
+                symlink(&versioned_path, &anm_path).context("Failed to create anm symlink")?;
 
                 println!("✓ Installed dev binary {}", version);
             }
@@ -462,12 +508,20 @@ pub async fn ensure_binary_installed(version: Option<&str>) -> Result<PathBuf> {
         println!("✓ Downloaded {}", version);
     }
 
-    // Update symlink
+    // Update antegen symlink
     if symlink_path.exists() || symlink_path.is_symlink() {
         fs::remove_file(&symlink_path)?;
     }
     #[cfg(unix)]
     symlink(&versioned_path, &symlink_path).context("Failed to create symlink")?;
+
+    // Update anm symlink
+    let anm_path = anm_symlink_path()?;
+    if anm_path.exists() || anm_path.is_symlink() {
+        fs::remove_file(&anm_path)?;
+    }
+    #[cfg(unix)]
+    symlink(&versioned_path, &anm_path).context("Failed to create anm symlink")?;
 
     println!("✓ Switched to {}", version);
 
@@ -475,4 +529,149 @@ pub async fn ensure_binary_installed(version: Option<&str>) -> Result<PathBuf> {
     ensure_path_configured();
 
     Ok(symlink_path)
+}
+
+/// List installed and optionally available remote versions
+pub async fn list(remote: bool) -> Result<()> {
+    let bin_dir = bin_dir()?;
+    let symlink_path = binary_path()?;
+
+    // Find CLI version (what the antegen symlink points to)
+    let cli_version = if symlink_path.is_symlink() {
+        fs::read_link(&symlink_path)
+            .ok()
+            .and_then(|t| {
+                t.file_name()?
+                    .to_str()?
+                    .strip_prefix("antegen-")
+                    .map(String::from)
+            })
+    } else {
+        None
+    };
+
+    // Find active node version
+    let node_version = read_node_version();
+
+    // Scan for installed versions
+    let mut installed: Vec<String> = Vec::new();
+    if let Ok(entries) = fs::read_dir(&bin_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(ver) = name.strip_prefix("antegen-") {
+                if ver.starts_with('v') {
+                    installed.push(ver.to_string());
+                }
+            }
+        }
+    }
+    installed.sort_by(|a, b| match (parse_version(a), parse_version(b)) {
+        (Some(va), Some(vb)) => vb.cmp(&va), // newest first
+        _ => b.cmp(a),
+    });
+
+    if installed.is_empty() {
+        println!("No versions installed.");
+    } else {
+        println!("Installed versions:");
+        for ver in &installed {
+            let mut markers = Vec::new();
+            if cli_version.as_deref() == Some(ver.as_str()) {
+                markers.push("cli");
+            }
+            if node_version.as_deref() == Some(ver.as_str()) {
+                markers.push("node");
+            }
+            if markers.is_empty() {
+                println!("  {}", ver);
+            } else {
+                println!("  {} ({})", ver, markers.join(", "));
+            }
+        }
+    }
+
+    if remote {
+        println!();
+        println!("Available versions:");
+        let versions = fetch_all_versions().await?;
+        let mut has_remote = false;
+        for ver in &versions {
+            if !installed.contains(ver) {
+                println!("  {}", ver);
+                has_remote = true;
+            }
+        }
+        if !has_remote {
+            println!("  (all versions installed)");
+        }
+    }
+
+    Ok(())
+}
+
+/// Switch the node to a specific version (reinstalls service if running)
+pub async fn use_version(version: String) -> Result<()> {
+    let version = normalize_version(&version);
+    let versioned_path = versioned_binary_path(&version)?;
+
+    // Download if not installed
+    if !versioned_path.exists() {
+        println!("Version {} not installed, downloading...", version);
+        let url = build_download_url(&version);
+        let temp_path = download_binary(&url).await?;
+
+        let bin_dir = bin_dir()?;
+        fs::create_dir_all(&bin_dir)?;
+
+        fs::copy(&temp_path, &versioned_path).context("Failed to copy binary")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&versioned_path, fs::Permissions::from_mode(0o755))?;
+        }
+        let _ = fs::remove_file(&temp_path);
+        println!("✓ Downloaded {}", version);
+    }
+
+    // Track node version
+    write_node_version(&version)?;
+
+    // If service is installed, reinstall with new version
+    if super::service::is_installed() {
+        println!("Switching service to {}...", version);
+        super::service::start(None, Some(version.clone())).await?;
+    } else {
+        println!("Node switched to {}", version);
+        println!("Run `anm start` to start the service.");
+    }
+
+    Ok(())
+}
+
+/// Download a specific version without switching
+pub async fn install_version(version: String) -> Result<()> {
+    let version = normalize_version(&version);
+    let versioned_path = versioned_binary_path(&version)?;
+
+    if versioned_path.exists() {
+        println!("{} is already installed.", version);
+        return Ok(());
+    }
+
+    let url = build_download_url(&version);
+    let temp_path = download_binary(&url).await?;
+
+    let bin_dir = bin_dir()?;
+    fs::create_dir_all(&bin_dir)?;
+
+    fs::copy(&temp_path, &versioned_path).context("Failed to copy binary")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&versioned_path, fs::Permissions::from_mode(0o755))?;
+    }
+    let _ = fs::remove_file(&temp_path);
+
+    println!("Downloaded {}. Use `anm use {}` to switch.", version, version);
+    Ok(())
 }

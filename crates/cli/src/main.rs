@@ -1,8 +1,10 @@
 //! Antegen CLI - Unified command-line interface
 //!
-//! Single binary that supports both standalone mode and Geyser plugin initialization.
+//! Single binary that supports two personalities via argv[0]:
+//!   - `antegen` — developer-facing: program, thread, geyser commands
+//!   - `anm` — operator-facing: node version management, service control, config
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
@@ -32,6 +34,10 @@ impl LogLevel {
     }
 }
 
+// =============================================================================
+// Antegen CLI (developer-facing: program, thread, geyser)
+// =============================================================================
+
 #[derive(Parser)]
 #[command(name = "antegen")]
 #[command(about = "Antegen automation client", version)]
@@ -42,6 +48,7 @@ Supports two deployment modes:
   1. Standalone: Run as a separate process using RPC subscriptions
   2. Plugin: Run as a Geyser plugin inside the validator
 
+For node management, use `anm` (Antegen Node Manager).
 For more information, visit: https://antegen.xyz
 ")]
 struct Cli {
@@ -63,10 +70,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Executor node management
-    #[command(subcommand)]
-    Node(NodeCommands),
-
     /// Thread program management
     #[command(subcommand)]
     Program(ProgramCommands),
@@ -80,7 +83,7 @@ enum Commands {
     Geyser(GeyserCommands),
 
     // =========================================================================
-    // Hidden backwards-compatibility aliases (deprecated)
+    // Hidden: executor runtime (service invokes versioned binary with `run`)
     // =========================================================================
 
     /// Run the executor directly (no service, blocking)
@@ -92,8 +95,11 @@ enum Commands {
         version: Option<String>,
     },
 
-    /// Initialize config only (no service)
-    #[command(hide = true)]
+    // =========================================================================
+    // Hidden backwards-compatibility aliases (deprecated — use `anm` instead)
+    // =========================================================================
+
+    /// Initialize antegen — creates anm symlink and config
     Init {
         #[arg(long)]
         rpc: Option<String>,
@@ -138,8 +144,6 @@ enum Commands {
     Update {
         #[arg(long, value_name = "VERSION")]
         version: Option<String>,
-        #[arg(long)]
-        manual_restart: bool,
     },
 
     /// Install antegen binary to ~/.local/bin (used by install script)
@@ -156,20 +160,53 @@ enum Commands {
         json: bool,
     },
 
+    /// Fund the executor with SOL
+    #[command(hide = true)]
+    Fund {
+        amount: Option<f64>,
+    },
+
+    /// Withdraw SOL from executor
+    #[command(hide = true)]
+    Withdraw {
+        amount: Option<f64>,
+    },
+
     /// Config file operations
     #[command(hide = true, subcommand)]
     Config(NodeConfigCommands),
 }
 
 // =============================================================================
-// Node commands
+// ANM CLI (operator-facing: node version management, service control, config)
 // =============================================================================
 
+#[derive(Parser)]
+#[command(name = "anm")]
+#[command(about = "Antegen Node Manager — node version management and service control", version)]
+struct AnmCli {
+    /// Set the logging level (overrides RUST_LOG environment variable)
+    #[arg(long, global = true, value_name = "LEVEL")]
+    log_level: Option<LogLevel>,
+
+    /// RPC endpoint URL (defaults to Solana CLI config)
+    #[arg(long, global = true)]
+    rpc: Option<String>,
+
+    /// Path to keypair file (defaults to Solana CLI config)
+    #[arg(long, global = true)]
+    keypair: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: AnmCommands,
+}
+
 #[derive(Subcommand)]
-enum NodeCommands {
+enum AnmCommands {
     /// Run the executor directly (no service, blocking)
+    #[command(hide = true)]
     Run {
-        /// Path to configuration file (defaults to ~/.config/antegen/antegen.toml, will init if needed)
+        /// Path to configuration file
         #[arg(short, long)]
         config: Option<PathBuf>,
 
@@ -178,7 +215,7 @@ enum NodeCommands {
         version: Option<String>,
     },
 
-    /// Initialize config only (no service)
+    /// Initialize config and keypair
     Init {
         /// RPC endpoint URL (prompts if not provided)
         #[arg(long)]
@@ -189,7 +226,18 @@ enum NodeCommands {
         force: bool,
     },
 
-    /// Install and start the antegen service (init if needed)
+    /// Show info (CLI version, node version, executor, balance)
+    Info {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Config file operations
+    #[command(subcommand)]
+    Config(NodeConfigCommands),
+
+    /// Install and start the antegen service
     Start {
         /// RPC endpoint URL (prompts if not provided and interactive)
         #[arg(long)]
@@ -199,6 +247,12 @@ enum NodeCommands {
         #[arg(long, value_name = "VERSION")]
         version: Option<String>,
     },
+
+    /// Stop the antegen service
+    Stop,
+
+    /// Restart the antegen service
+    Restart,
 
     /// Show service status
     Status,
@@ -210,39 +264,8 @@ enum NodeCommands {
         follow: bool,
     },
 
-    /// Stop the antegen service
-    Stop,
-
-    /// Restart the antegen service
-    Restart,
-
     /// Uninstall the antegen service
     Uninstall,
-
-    /// Update antegen to the latest version
-    Update {
-        /// Update to a specific version (e.g., v4.4.0)
-        #[arg(long, value_name = "VERSION")]
-        version: Option<String>,
-
-        /// Don't automatically restart the service after updating
-        #[arg(long)]
-        manual_restart: bool,
-    },
-
-    /// Install antegen binary to ~/.local/bin (used by install script)
-    Install {
-        /// Install a specific version (e.g., v4.4.0)
-        #[arg(long, value_name = "VERSION")]
-        version: Option<String>,
-    },
-
-    /// Show antegen configuration and status
-    Info {
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
-    },
 
     /// Fund the executor with SOL from your Solana CLI wallet
     Fund {
@@ -256,10 +279,36 @@ enum NodeCommands {
         amount: Option<f64>,
     },
 
-    /// Config file operations
-    #[command(subcommand)]
-    Config(NodeConfigCommands),
+    /// Update CLI to latest version (updates both antegen and anm symlinks)
+    Update {
+        /// Update to a specific version (e.g., v4.4.0)
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+    },
+
+    /// List installed and available versions
+    List {
+        /// Also show available versions from GitHub
+        #[arg(long)]
+        remote: bool,
+    },
+
+    /// Switch node to a specific version (reinstalls service)
+    Use {
+        /// Version to switch to (e.g., v4.1.1)
+        version: String,
+    },
+
+    /// Download a specific version (doesn't switch)
+    Install {
+        /// Version to install (e.g., v4.1.1)
+        version: String,
+    },
 }
+
+// =============================================================================
+// Node config commands (shared between anm and backward-compat aliases)
+// =============================================================================
 
 #[derive(Subcommand)]
 enum NodeConfigCommands {
@@ -273,10 +322,10 @@ enum NodeConfigCommands {
     /// Update configuration values
     #[command(after_long_help = "\
 EXAMPLES:
-    antegen node config set --max-threads 20
-    antegen node config set --commitment finalized --tpu-enabled false
-    antegen node config set --keypair-path ~/.antegen/my-keypair.json
-    antegen node config set --grace-period 15 --eviction-buffer 30
+    anm config set --max-threads 20
+    anm config set --commitment finalized --tpu-enabled false
+    anm config set --keypair-path ~/.antegen/my-keypair.json
+    anm config set --grace-period 15 --eviction-buffer 30
 ")]
     Set {
         /// Path to config file (defaults to ~/.config/antegen/antegen.toml)
@@ -413,7 +462,7 @@ enum ProgramConfigCommands {
 }
 
 // =============================================================================
-// Geyser commands (unchanged)
+// Geyser commands
 // =============================================================================
 
 #[derive(Subcommand)]
@@ -438,7 +487,7 @@ enum GeyserCommands {
 }
 
 // =============================================================================
-// Thread commands (unchanged)
+// Thread commands
 // =============================================================================
 
 #[derive(Subcommand)]
@@ -576,8 +625,75 @@ EXAMPLES:
 // =============================================================================
 
 fn deprecation_warning(old: &str, new: &str) {
-    eprintln!("Warning: `antegen {}` is deprecated. Use `antegen {}` instead.", old, new);
+    eprintln!(
+        "Warning: `antegen {}` is deprecated. Use `anm {}` instead.",
+        old, new
+    );
     eprintln!();
+}
+
+// =============================================================================
+// Config command dispatch (shared between anm and backward-compat aliases)
+// =============================================================================
+
+fn dispatch_config(config_cmd: NodeConfigCommands) -> Result<()> {
+    match config_cmd {
+        NodeConfigCommands::Get { config } => {
+            let path = config
+                .map(Ok)
+                .unwrap_or_else(commands::default_config_path)?;
+            commands::config::get(path)
+        }
+        NodeConfigCommands::Set {
+            config,
+            keypair_path,
+            forgo_commission,
+            commitment,
+            max_threads,
+            cache_max_capacity,
+            grace_period,
+            eviction_buffer,
+            thread_process_delay,
+            observability_enabled,
+            observability_storage_path,
+            tpu_enabled,
+            tpu_num_connections,
+            tpu_leaders_fanout,
+        } => {
+            let path = config
+                .map(Ok)
+                .unwrap_or_else(commands::default_config_path)?;
+            commands::config::set(
+                path,
+                keypair_path,
+                forgo_commission,
+                commitment,
+                max_threads,
+                cache_max_capacity,
+                grace_period,
+                eviction_buffer,
+                thread_process_delay,
+                observability_enabled,
+                observability_storage_path,
+                tpu_enabled,
+                tpu_num_connections,
+                tpu_leaders_fanout,
+            )
+        }
+        NodeConfigCommands::Init {
+            output,
+            rpc,
+            keypair_path,
+            storage_path,
+            force,
+        } => {
+            let path = output
+                .map(Ok)
+                .unwrap_or_else(commands::default_config_path)?;
+            commands::config::init(path, rpc, keypair_path, storage_path, force)
+        }
+        NodeConfigCommands::Validate { config } => commands::config::validate(config),
+    }
 }
 
 // =============================================================================
@@ -586,87 +702,66 @@ fn deprecation_warning(old: &str, new: &str) {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let argv0 = std::env::args().next().unwrap_or_default();
+    let bin_name = std::path::Path::new(&argv0)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("antegen");
+
+    if bin_name == "anm" {
+        run_anm().await
+    } else {
+        run_antegen().await
+    }
+}
+
+// =============================================================================
+// ANM dispatch (operator-facing)
+// =============================================================================
+
+async fn run_anm() -> Result<()> {
+    let cli = AnmCli::parse();
+
+    match cli.command {
+        AnmCommands::Run { config, version } => {
+            let cfg = match config {
+                Some(p) => p,
+                None => commands::service::ensure_config()?,
+            };
+            commands::run::execute(cfg, cli.rpc, cli.log_level, version).await
+        }
+        AnmCommands::Init { rpc, force } => commands::service::init(rpc, force),
+        AnmCommands::Start { rpc, version } => commands::service::start(rpc, version).await,
+        AnmCommands::Stop => commands::service::stop(),
+        AnmCommands::Restart => commands::service::restart(),
+        AnmCommands::Status => commands::service::status(),
+        AnmCommands::Logs { follow } => commands::service::logs(follow),
+        AnmCommands::Uninstall => commands::service::uninstall(),
+        AnmCommands::Info { json } => commands::info::info(json).await,
+        AnmCommands::Fund { amount } => {
+            let config = commands::default_config_path()?;
+            commands::client::fund(config, amount, cli.keypair, cli.rpc).await
+        }
+        AnmCommands::Withdraw { amount } => {
+            let config = commands::default_config_path()?;
+            commands::client::withdraw(config, amount, cli.rpc).await
+        }
+        AnmCommands::Update { version } => commands::update::update(version).await,
+        AnmCommands::List { remote } => commands::update::list(remote).await,
+        AnmCommands::Use { version } => commands::update::use_version(version).await,
+        AnmCommands::Install { version } => commands::update::install_version(version).await,
+        AnmCommands::Config(config_cmd) => dispatch_config(config_cmd),
+    }
+}
+
+// =============================================================================
+// Antegen dispatch (developer-facing)
+// =============================================================================
+
+async fn run_antegen() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        // =================================================================
-        // Node commands
-        // =================================================================
-        Commands::Node(node_cmd) => match node_cmd {
-            NodeCommands::Run { config, version } => {
-                let cfg = match config {
-                    Some(p) => p,
-                    None => commands::service::ensure_config()?,
-                };
-                commands::run::execute(cfg, cli.rpc, cli.log_level, version).await
-            }
-            NodeCommands::Init { rpc, force } => commands::service::init(rpc, force),
-            NodeCommands::Start { rpc, version } => commands::service::start(rpc, version).await,
-            NodeCommands::Status => commands::service::status(),
-            NodeCommands::Logs { follow } => commands::service::logs(follow),
-            NodeCommands::Stop => commands::service::stop(),
-            NodeCommands::Restart => commands::service::restart(),
-            NodeCommands::Uninstall => commands::service::uninstall(),
-            NodeCommands::Update { version, manual_restart } => {
-                commands::update::update(version, manual_restart).await
-            }
-            NodeCommands::Install { version } => commands::update::install(version).await,
-            NodeCommands::Info { json } => commands::info::info(json).await,
-            NodeCommands::Fund { amount } => {
-                let config = commands::default_config_path()?;
-                commands::client::fund(config, amount, cli.keypair, cli.rpc).await
-            }
-            NodeCommands::Withdraw { amount } => {
-                let config = commands::default_config_path()?;
-                commands::client::withdraw(config, amount, cli.rpc).await
-            }
-            NodeCommands::Config(config_cmd) => match config_cmd {
-                NodeConfigCommands::Get { config } => {
-                    let path = config.map(Ok).unwrap_or_else(commands::default_config_path)?;
-                    commands::config::get(path)
-                }
-                NodeConfigCommands::Set {
-                    config,
-                    keypair_path,
-                    forgo_commission,
-                    commitment,
-                    max_threads,
-                    cache_max_capacity,
-                    grace_period,
-                    eviction_buffer,
-                    thread_process_delay,
-                    observability_enabled,
-                    observability_storage_path,
-                    tpu_enabled,
-                    tpu_num_connections,
-                    tpu_leaders_fanout,
-                } => {
-                    let path = config.map(Ok).unwrap_or_else(commands::default_config_path)?;
-                    commands::config::set(
-                        path,
-                        keypair_path,
-                        forgo_commission,
-                        commitment,
-                        max_threads,
-                        cache_max_capacity,
-                        grace_period,
-                        eviction_buffer,
-                        thread_process_delay,
-                        observability_enabled,
-                        observability_storage_path,
-                        tpu_enabled,
-                        tpu_num_connections,
-                        tpu_leaders_fanout,
-                    )
-                }
-                NodeConfigCommands::Init { output, rpc, keypair_path, storage_path, force } => {
-                    let path = output.map(Ok).unwrap_or_else(commands::default_config_path)?;
-                    commands::config::init(path, rpc, keypair_path, storage_path, force)
-                }
-                NodeConfigCommands::Validate { config } => commands::config::validate(config),
-            },
-        },
-
         // =================================================================
         // Program commands
         // =================================================================
@@ -677,7 +772,15 @@ async fn main() -> Result<()> {
                 skip_init,
                 skip_verify,
             } => {
-                commands::program::deploy(program_binary, cli.rpc, cli.keypair, program_id, skip_init, skip_verify).await
+                commands::program::deploy(
+                    program_binary,
+                    cli.rpc,
+                    cli.keypair,
+                    program_id,
+                    skip_init,
+                    skip_verify,
+                )
+                .await
             }
             ProgramCommands::Config(config_cmd) => match config_cmd {
                 ProgramConfigCommands::Init => {
@@ -713,103 +816,86 @@ async fn main() -> Result<()> {
         },
 
         // =================================================================
-        // Hidden backwards-compatibility aliases (deprecated)
+        // Hidden: executor runtime (service entry point, no deprecation warning)
         // =================================================================
         Commands::Run { config, version } => {
-            deprecation_warning("run", "node run");
             let cfg = match config {
                 Some(p) => p,
                 None => commands::service::ensure_config()?,
             };
             commands::run::execute(cfg, cli.rpc, cli.log_level, version).await
         }
+
+        // =================================================================
+        // Hidden backwards-compatibility aliases (deprecated — use `anm`)
+        // =================================================================
         Commands::Init { rpc, force } => {
-            deprecation_warning("init", "node init");
+            // Create anm symlink next to the current binary
+            let current = std::env::current_exe().context("failed to resolve current exe")?;
+            let dir = current
+                .parent()
+                .context("current exe has no parent directory")?;
+            let anm = dir.join("anm");
+            if !(anm.exists() || anm.is_symlink()) {
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&current, &anm)?;
+                println!("Created anm symlink at {}", anm.display());
+            } else {
+                println!("anm already exists at {}", anm.display());
+            }
+
+            // Initialize config
             commands::service::init(rpc, force)
         }
         Commands::Start { rpc, version } => {
-            deprecation_warning("start", "node start");
+            deprecation_warning("start", "start");
             commands::service::start(rpc, version).await
         }
         Commands::Status => {
-            deprecation_warning("status", "node status");
+            deprecation_warning("status", "status");
             commands::service::status()
         }
         Commands::Logs { follow } => {
-            deprecation_warning("logs", "node logs");
+            deprecation_warning("logs", "logs");
             commands::service::logs(follow)
         }
         Commands::Stop => {
-            deprecation_warning("stop", "node stop");
+            deprecation_warning("stop", "stop");
             commands::service::stop()
         }
         Commands::Restart => {
-            deprecation_warning("restart", "node restart");
+            deprecation_warning("restart", "restart");
             commands::service::restart()
         }
         Commands::Uninstall => {
-            deprecation_warning("uninstall", "node uninstall");
+            deprecation_warning("uninstall", "uninstall");
             commands::service::uninstall()
         }
-        Commands::Update { version, manual_restart } => {
-            deprecation_warning("update", "node update");
-            commands::update::update(version, manual_restart).await
+        Commands::Update { version } => {
+            deprecation_warning("update", "update");
+            commands::update::update(version).await
         }
         Commands::Install { version } => {
-            deprecation_warning("install", "node install");
+            // Used by install script — no deprecation warning
             commands::update::install(version).await
         }
         Commands::Info { json } => {
-            deprecation_warning("info", "node info");
+            deprecation_warning("info", "info");
             commands::info::info(json).await
         }
+        Commands::Fund { amount } => {
+            deprecation_warning("fund", "fund");
+            let config = commands::default_config_path()?;
+            commands::client::fund(config, amount, cli.keypair, cli.rpc).await
+        }
+        Commands::Withdraw { amount } => {
+            deprecation_warning("withdraw", "withdraw");
+            let config = commands::default_config_path()?;
+            commands::client::withdraw(config, amount, cli.rpc).await
+        }
         Commands::Config(config_cmd) => {
-            deprecation_warning("config", "node config");
-            match config_cmd {
-                NodeConfigCommands::Get { config } => {
-                    let path = config.map(Ok).unwrap_or_else(commands::default_config_path)?;
-                    commands::config::get(path)
-                }
-                NodeConfigCommands::Set {
-                    config,
-                    keypair_path,
-                    forgo_commission,
-                    commitment,
-                    max_threads,
-                    cache_max_capacity,
-                    grace_period,
-                    eviction_buffer,
-                    thread_process_delay,
-                    observability_enabled,
-                    observability_storage_path,
-                    tpu_enabled,
-                    tpu_num_connections,
-                    tpu_leaders_fanout,
-                } => {
-                    let path = config.map(Ok).unwrap_or_else(commands::default_config_path)?;
-                    commands::config::set(
-                        path,
-                        keypair_path,
-                        forgo_commission,
-                        commitment,
-                        max_threads,
-                        cache_max_capacity,
-                        grace_period,
-                        eviction_buffer,
-                        thread_process_delay,
-                        observability_enabled,
-                        observability_storage_path,
-                        tpu_enabled,
-                        tpu_num_connections,
-                        tpu_leaders_fanout,
-                    )
-                }
-                NodeConfigCommands::Init { output, rpc, keypair_path, storage_path, force } => {
-                    let path = output.map(Ok).unwrap_or_else(commands::default_config_path)?;
-                    commands::config::init(path, rpc, keypair_path, storage_path, force)
-                }
-                NodeConfigCommands::Validate { config } => commands::config::validate(config),
-            }
+            deprecation_warning("config", "config");
+            dispatch_config(config_cmd)
         }
     }
 }
