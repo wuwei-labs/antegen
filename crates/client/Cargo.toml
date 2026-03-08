@@ -67,6 +67,18 @@ solana-tpu-client-next = { workspace = true }
 solana-rpc-client = { workspace = true }
 tokio-util = { workspace = true }
 
+clap = { workspace = true, optional = true }
+dirs = { workspace = true, optional = true }
+env_logger = { workspace = true, optional = true }
+
+[features]
+node = ["dep:clap", "dep:dirs", "dep:env_logger"]
+
+[[bin]]
+name = "antegen-node"
+path = "src/bin/antegen-node.rs"
+required-features = ["node"]
+
 [dev-dependencies]
 tokio-test = { workspace = true }
 tempfile = { workspace = true }

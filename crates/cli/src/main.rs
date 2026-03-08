@@ -4,7 +4,7 @@
 //!   - `antegen` — developer-facing: program, thread, geyser commands
 //!   - `anm` — operator-facing: node version management, service control, config
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
@@ -139,16 +139,29 @@ enum Commands {
     #[command(hide = true)]
     Uninstall,
 
-    /// Update antegen to the latest version
-    #[command(hide = true)]
+    /// Update CLI to the latest version
     Update {
+        /// Update to a specific version (e.g., v5.0.0)
         #[arg(long, value_name = "VERSION")]
         version: Option<String>,
     },
 
-    /// Install antegen binary to ~/.local/bin (used by install script)
-    #[command(hide = true)]
+    /// List installed and available versions
+    List {
+        /// Also show available versions from GitHub
+        #[arg(long)]
+        remote: bool,
+    },
+
+    /// Switch CLI to a specific version
+    Use {
+        /// Version to switch to (e.g., v5.0.0)
+        version: String,
+    },
+
+    /// Download a specific CLI version (doesn't switch)
     Install {
+        /// Version to install (e.g., v5.0.0)
         #[arg(long, value_name = "VERSION")]
         version: Option<String>,
     },
@@ -279,19 +292,15 @@ enum AnmCommands {
         amount: Option<f64>,
     },
 
-    /// Update CLI to latest version (updates both antegen and anm symlinks)
+    /// Update node to latest version
     Update {
-        /// Update to a specific version (e.g., v4.4.0)
+        /// Update to a specific version (e.g., v4.1.1)
         #[arg(long, value_name = "VERSION")]
         version: Option<String>,
     },
 
-    /// List installed and available versions
-    List {
-        /// Also show available versions from GitHub
-        #[arg(long)]
-        remote: bool,
-    },
+    /// List installed and available node versions
+    List,
 
     /// Switch node to a specific version (reinstalls service)
     Use {
@@ -299,7 +308,7 @@ enum AnmCommands {
         version: String,
     },
 
-    /// Download a specific version (doesn't switch)
+    /// Download a specific node version (doesn't switch)
     Install {
         /// Version to install (e.g., v4.1.1)
         version: String,
@@ -746,10 +755,10 @@ async fn run_anm() -> Result<()> {
             let config = commands::default_config_path()?;
             commands::client::withdraw(config, amount, cli.rpc).await
         }
-        AnmCommands::Update { version } => commands::update::update(version).await,
-        AnmCommands::List { remote } => commands::update::list(remote).await,
-        AnmCommands::Use { version } => commands::update::use_version(version).await,
-        AnmCommands::Install { version } => commands::update::install_version(version).await,
+        AnmCommands::Update { version } => commands::update::update_node(version).await,
+        AnmCommands::List => commands::update::list_node().await,
+        AnmCommands::Use { version } => commands::update::use_node_version(version).await,
+        AnmCommands::Install { version } => commands::update::install_node_version(version).await,
         AnmCommands::Config(config_cmd) => dispatch_config(config_cmd),
     }
 }
@@ -830,19 +839,9 @@ async fn run_antegen() -> Result<()> {
         // Hidden backwards-compatibility aliases (deprecated — use `anm`)
         // =================================================================
         Commands::Init { rpc, force } => {
-            // Create anm symlink next to the current binary
-            let current = std::env::current_exe().context("failed to resolve current exe")?;
-            let dir = current
-                .parent()
-                .context("current exe has no parent directory")?;
-            let anm = dir.join("anm");
-            if !(anm.exists() || anm.is_symlink()) {
-                #[cfg(unix)]
-                std::os::unix::fs::symlink(&current, &anm)?;
-                println!("Created anm symlink at {}", anm.display());
-            } else {
-                println!("anm already exists at {}", anm.display());
-            }
+            // Import current binary into the in-band version manager (~/.local/bin/)
+            // This bridges cargo install (out-of-band) so `anm` resolves to the right version
+            commands::update::import_current_binary()?;
 
             // Initialize config
             commands::service::init(rpc, force)
@@ -872,8 +871,13 @@ async fn run_antegen() -> Result<()> {
             commands::service::uninstall()
         }
         Commands::Update { version } => {
-            deprecation_warning("update", "update");
             commands::update::update(version).await
+        }
+        Commands::List { remote } => {
+            commands::update::list_cli(remote).await
+        }
+        Commands::Use { version } => {
+            commands::update::use_cli_version(version).await
         }
         Commands::Install { version } => {
             // Used by install script — no deprecation warning

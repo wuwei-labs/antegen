@@ -23,6 +23,8 @@ jobs:
       client_version: ${{ steps.check.outputs.client_version }}
       cli_changed: ${{ steps.check.outputs.cli_changed }}
       cli_version: ${{ steps.check.outputs.cli_version }}
+      node_changed: ${{ steps.check.outputs.node_changed }}
+      node_version: ${{ steps.check.outputs.node_version }}
       geyser_changed: ${{ steps.check.outputs.geyser_changed }}
       geyser_version: ${{ steps.check.outputs.geyser_version }}
     steps:
@@ -88,6 +90,16 @@ jobs:
           echo "cli_version=${CLI_VERSION}" >> "$GITHUB_OUTPUT"
           echo "cli_changed=${CLI_CHANGED}" >> "$GITHUB_OUTPUT"
 
+          # --- antegen-node (check GitHub release with node- prefix) ---
+          NODE_VERSION=$(get_version crates/client/Cargo.toml)
+          if gh release view "node-v${NODE_VERSION}" &>/dev/null; then
+            NODE_CHANGED=false
+          else
+            NODE_CHANGED=true
+          fi
+          echo "node_version=${NODE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "node_changed=${NODE_CHANGED}" >> "$GITHUB_OUTPUT"
+
           # --- antegen-geyser-plugin (check GitHub release) ---
           GEYSER_VERSION=$(get_version plugin/geyser/Cargo.toml)
           if gh release view "geyser-v${GEYSER_VERSION}" &>/dev/null; then
@@ -106,6 +118,7 @@ jobs:
           echo "| antegen-thread-program | ${THREAD_VERSION} | ${THREAD_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| antegen-client | ${CLIENT_VERSION} | ${CLIENT_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| antegen-cli | ${CLI_VERSION} | ${CLI_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| antegen-node | ${NODE_VERSION} | ${NODE_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| antegen-geyser-plugin | ${GEYSER_VERSION} | ${GEYSER_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
@@ -295,7 +308,118 @@ jobs:
         continue-on-error: true # May already be published
 
   # ---------------------------------------------------------------------------
-  # Job 7: Build Geyser plugin binaries (runs in parallel with library publishing)
+  # Job 7: Build Node binaries (runs in parallel with library publishing)
+  # ---------------------------------------------------------------------------
+  build-node:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.node_changed == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-14
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Build Node
+        run: cargo build -p antegen-client --release --features node --target ${{ matrix.target }}
+
+      - name: Package artifact
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/antegen-node \
+            artifacts/antegen-node-v${{ needs.detect-changes.outputs.node_version }}-${{ matrix.target }}
+          chmod +x artifacts/*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-${{ matrix.target }}
+          path: artifacts/*
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # Job 8: Create Node GitHub release
+  # ---------------------------------------------------------------------------
+  release-node:
+    needs: [detect-changes, build-node, publish-cron, publish-thread-program, publish-client]
+    if: >-
+      always() &&
+      needs.detect-changes.outputs.node_changed == 'true' &&
+      needs.build-node.result == 'success' &&
+      needs.publish-cron.result != 'failure' &&
+      needs.publish-thread-program.result != 'failure' &&
+      needs.publish-client.result != 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Node artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: node-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create git tag
+        run: |
+          git tag "node-v${{ needs.detect-changes.outputs.node_version }}"
+          git push origin "node-v${{ needs.detect-changes.outputs.node_version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: node-v${{ needs.detect-changes.outputs.node_version }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fail_on_unmatched_files: true
+          body: |
+            ## Antegen Node v${{ needs.detect-changes.outputs.node_version }}
+
+            Executor binary for Antegen. Managed by `anm` (Antegen Node Manager).
+
+            ### Installation
+
+            **Via `anm`:**
+            ```bash
+            anm install v${{ needs.detect-changes.outputs.node_version }}
+            anm use v${{ needs.detect-changes.outputs.node_version }}
+            ```
+
+            **Via cargo:**
+            ```bash
+            cargo install antegen-client --features node
+            ```
+
+            ---
+            [Documentation](https://docs.antegen.xyz) | [GitHub](https://github.com/wuwei-labs/antegen)
+          files: |
+            artifacts/*
+
+  # ---------------------------------------------------------------------------
+  # Job 9: Build Geyser plugin binaries (runs in parallel with library publishing)
   # ---------------------------------------------------------------------------
   build-geyser:
     needs: detect-changes
@@ -344,7 +468,7 @@ jobs:
           retention-days: 1
 
   # ---------------------------------------------------------------------------
-  # Job 8: Create Geyser plugin GitHub release
+  # Job 10: Create Geyser plugin GitHub release
   # ---------------------------------------------------------------------------
   release-geyser:
     needs: [detect-changes, build-geyser, publish-cron, publish-thread-program, publish-client]
