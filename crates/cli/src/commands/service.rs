@@ -135,33 +135,37 @@ fn do_init(rpc: Option<String>, force: bool) -> Result<PathBuf> {
     Ok(config_path)
 }
 
-/// Install the service (helper for start command)
+/// Install the service (helper for start command).
+/// Uses the `antegen-node` binary directly instead of the CLI binary.
 async fn install_service(config_path: &PathBuf, version: Option<&str>) -> Result<()> {
     let manager = get_service_manager()?;
     let label = get_label()?;
 
-    // Always use the versioned binary path (not symlink) in the service definition.
-    // This ensures the service runs a specific version regardless of symlink changes.
-    let binary = if version.is_some() {
-        // Explicit version: download from GitHub, resolve symlink to versioned path
-        let path = super::update::ensure_binary_installed(version).await?;
-        path.canonicalize().unwrap_or(path)
-    } else {
-        let current = std::env::current_exe()
-            .context("Failed to determine current executable path")?;
-        let current_str = current.to_string_lossy();
-
-        if current_str.contains("/target/debug/") || current_str.contains("/target/release/") {
-            // Dev build from target/: copy to ~/.local/bin so the service
-            // doesn't point at an ephemeral build artifact
-            let path = super::update::ensure_binary_installed(None).await?;
-            path.canonicalize().unwrap_or(path)
-        } else {
-            // cargo install (~/.cargo/bin) or downloaded (~/.local/bin):
-            // current_exe() already resolves symlinks to the versioned binary
-            current
-        }
+    // Resolve the node binary to use for the service
+    let node_version = match version {
+        Some(v) => v.to_string(),
+        None => match super::update::read_node_version() {
+            Some(v) => v,
+            None => {
+                // No node version tracked — download latest
+                println!("No node binary found. Downloading latest...");
+                match super::update::download_latest_node().await {
+                    Ok(()) => super::update::read_node_version()
+                        .context("Failed to determine node version after download")?,
+                    Err(e) => {
+                        anyhow::bail!(
+                            "No node binary available: {}\n  \
+                             Run `anm install <version>` when a release is available.",
+                            e
+                        );
+                    }
+                }
+            }
+        },
     };
+
+    let binary = super::update::ensure_node_downloaded(&node_version).await?;
+    let binary = binary.canonicalize().unwrap_or(binary);
 
     // Create logs directory
     let log_dir = dirs::data_local_dir()
@@ -169,8 +173,7 @@ async fn install_service(config_path: &PathBuf, version: Option<&str>) -> Result
         .context("Could not determine log directory")?;
     std::fs::create_dir_all(&log_dir)?;
 
-    // Generate platform-specific service config with log paths
-    // Note: Rust logger writes to stderr, so stderr gets the main log file
+    // antegen-node takes --config directly (no "run" subcommand)
     #[cfg(target_os = "macos")]
     let contents = Some(generate_launchd_plist(
         &binary,
@@ -187,8 +190,7 @@ async fn install_service(config_path: &PathBuf, version: Option<&str>) -> Result
             label: label.clone(),
             program: binary.clone(),
             args: vec![
-                OsString::from("run"),
-                OsString::from("-c"),
+                OsString::from("--config"),
                 OsString::from(config_path.as_os_str()),
             ],
             contents,
@@ -200,9 +202,9 @@ async fn install_service(config_path: &PathBuf, version: Option<&str>) -> Result
         })
         .context("Failed to install service")?;
 
-    // Track the node version from the binary filename (e.g., antegen-v4.4.0)
+    // Track the node version from the binary filename (e.g., antegen-node-v4.1.1)
     if let Some(filename) = binary.file_name().and_then(|f| f.to_str()) {
-        if let Some(ver) = filename.strip_prefix("antegen-") {
+        if let Some(ver) = filename.strip_prefix("antegen-node-") {
             let _ = super::update::write_node_version(ver);
         }
     }
@@ -228,8 +230,7 @@ fn generate_launchd_plist(
     <key>ProgramArguments</key>
     <array>
         <string>{}</string>
-        <string>run</string>
-        <string>-c</string>
+        <string>--config</string>
         <string>{}</string>
     </array>
     <key>StandardOutPath</key>

@@ -1,172 +1,118 @@
-//! Run command - Start the client in standalone mode
+//! Run command — delegates to the `antegen-node` binary
+//!
+//! This preserves backward compatibility: `antegen run` and service plists
+//! using `antegen run` still work by exec'ing into `antegen-node`.
 
-use anyhow::{Context, Result};
-use antegen_client::rpc::websocket::WsClient;
-use antegen_client::rpc::RpcPool;
-use antegen_client::ClientConfig;
-use solana_sdk::native_token::LAMPORTS_PER_SOL;
-use solana_sdk::signature::{read_keypair_file, Signer};
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use anyhow::Result;
+use std::path::PathBuf;
 
-use super::MIN_BALANCE_LAMPORTS;
-
-/// Execute the run command (standalone mode)
+/// Execute the run command by delegating to `antegen-node`
 pub async fn execute(
     config_path: PathBuf,
     rpc_override: Option<String>,
     log_level: Option<crate::LogLevel>,
-    version: Option<String>,
+    _version: Option<String>,
 ) -> Result<()> {
-    // If version specified, ensure that version is installed and symlinked
-    if version.is_some() {
-        super::update::ensure_binary_installed(version.as_deref()).await?;
-    }
-
-    // Initialize logging
-    let mut builder = env_logger::Builder::new();
-
-    // If --log-level is provided, use it and ignore RUST_LOG
-    // Otherwise, read from RUST_LOG with fallback to "info"
-    if let Some(level) = log_level {
-        builder.filter_level(level.to_level_filter());
-    } else {
-        builder.parse_env(env_logger::Env::default().default_filter_or("info"));
-    }
-
-    // Suppress noisy ractor internal logs (they log at info for every actor lifecycle event)
-    builder.filter_module("ractor", log::LevelFilter::Warn);
-
-    // Suppress noisy TPU connection timeout warnings (expected behavior - RPC fallback works)
-    builder.filter_module("solana_tpu_client_next::connection_worker", log::LevelFilter::Error);
-
-    // Suppress pws WebSocket logs (auto-reconnect handles disconnects gracefully)
-    builder.filter_module("pws", log::LevelFilter::Off);
-
-    builder.format_timestamp_millis().init();
-
-    log::info!("Antegen CLI - Standalone Mode");
-
-    // Auto-generate default config if it doesn't exist
-    if !config_path.exists() {
-        log::warn!("Config file not found: {}", config_path.display());
-        log::info!("Generating default configuration...");
-
-        ClientConfig::default().save(&config_path)?;
-
-        // Get absolute path for logging
-        let abs_config_path = config_path.canonicalize()
-            .unwrap_or_else(|_| std::env::current_dir()
-                .map(|p| p.join(&config_path))
-                .unwrap_or(config_path.clone()));
-
-        log::info!("✓ Generated default config at: {}", abs_config_path.display());
-        log::warn!("⚠️  IMPORTANT: Review and edit {} before running in production!", abs_config_path.display());
-        log::warn!("   - Configure RPC endpoints");
-        log::warn!("   - Adjust thread program ID if needed");
-        log::info!("");
-        log::info!("Starting with default configuration...");
-    } else {
-        log::info!("Loading configuration from: {}", config_path.display());
-    }
-
-    // Load configuration
-    let mut config = ClientConfig::load(&config_path)?;
-
-    // Override RPC if provided via CLI
-    if let Some(rpc_url) = rpc_override {
-        log::info!("Using RPC override: {}", rpc_url);
-        use antegen_client::config::{EndpointRole, RpcEndpoint};
-        config.rpc.endpoints = vec![RpcEndpoint {
-            url: rpc_url,
-            ws_url: None,
-            role: EndpointRole::Both,
-            priority: 1,
-        }];
-    }
-
-    // Ensure keypair exists (generate if needed)
-    let keypair_path = super::expand_tilde(&config.executor.keypair_path)?;
-    let pubkey = super::ensure_keypair_exists(&keypair_path)?;
-    log::info!("Executor pubkey: {}", pubkey);
-
-    // Check balance and wait if necessary
-    let rpc_endpoint = config
-        .rpc
-        .endpoints
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("No RPC endpoints configured"))?;
-
-    check_balance_or_wait(
-        &rpc_endpoint.url,
-        &rpc_endpoint.get_ws_url(),
-        &keypair_path,
-    )
-    .await?;
-
-    // Run the client
-    antegen_client::run_standalone(config).await
-}
-
-/// Check if executor has sufficient balance, wait for funding if not
-async fn check_balance_or_wait(rpc_url: &str, ws_url: &str, keypair_path: &Path) -> Result<()> {
-    let keypair = read_keypair_file(keypair_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read keypair: {}", e))?;
-    let pubkey = keypair.pubkey();
-
-    let client = RpcPool::with_url(rpc_url)
-        .with_context(|| format!("Failed to create RPC client for {}", rpc_url))?;
-
-    // Check initial balance via RPC
-    let balance = client
-        .get_balance(&pubkey)
-        .await
-        .with_context(|| format!("Failed to get balance from {}", rpc_url))?;
-
-    if balance >= MIN_BALANCE_LAMPORTS {
-        let sol = balance as f64 / LAMPORTS_PER_SOL as f64;
-        log::info!("Executor balance: {:.4} SOL", sol);
-        return Ok(());
-    }
-
-    // Insufficient balance - wait for funding
-    let min_sol = MIN_BALANCE_LAMPORTS as f64 / LAMPORTS_PER_SOL as f64;
-    log::warn!("Insufficient balance: {} lamports", balance);
-    log::warn!(
-        "Minimum required: {:.4} SOL ({} lamports)",
-        min_sol,
-        MIN_BALANCE_LAMPORTS
-    );
-    log::info!("Fund address: {}", pubkey);
-    log::info!("Waiting for deposit...");
-
-    // Race: WebSocket subscription vs polling (every 10s)
-    // This ensures funding is detected even if WebSocket fails to connect
-    let ws_future =
-        WsClient::wait_until(ws_url, &pubkey, |acc| acc.lamports >= MIN_BALANCE_LAMPORTS);
-
-    let poll_future = async {
-        loop {
-            tokio::time::sleep(Duration::from_secs(10)).await;
-            if let Ok(bal) = client.get_balance(&pubkey).await {
-                if bal >= MIN_BALANCE_LAMPORTS {
-                    return bal;
+    let node_binary = match find_node_binary() {
+        Ok(path) => path,
+        Err(_) => {
+            println!("No node binary found. Downloading latest...");
+            match super::update::download_latest_node().await {
+                Ok(()) => find_node_binary()?,
+                Err(e) => {
+                    anyhow::bail!(
+                        "No node binary available: {}\n  \
+                         Run `anm install <version>` when a release is available.",
+                        e
+                    );
                 }
             }
         }
     };
 
-    tokio::select! {
-        ws_result = ws_future => {
-            let account = ws_result?;
-            let sol = account.lamports as f64 / LAMPORTS_PER_SOL as f64;
-            log::info!("Funded! Executor balance: {:.4} SOL", sol);
+    let mut cmd = std::process::Command::new(&node_binary);
+    cmd.arg("--config").arg(&config_path);
+
+    if let Some(rpc) = rpc_override {
+        cmd.arg("--rpc").arg(rpc);
+    }
+
+    if let Some(level) = log_level {
+        let level_str = match level {
+            crate::LogLevel::Trace => "trace",
+            crate::LogLevel::Debug => "debug",
+            crate::LogLevel::Info => "info",
+            crate::LogLevel::Warn => "warn",
+            crate::LogLevel::Error => "error",
+            crate::LogLevel::Off => "off",
+        };
+        cmd.arg("--log-level").arg(level_str);
+    }
+
+    // On Unix, exec replaces the current process
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = cmd.exec();
+        // exec() only returns on error
+        anyhow::bail!("Failed to exec antegen-node: {}", err);
+    }
+
+    // On non-Unix, spawn and wait
+    #[cfg(not(unix))]
+    {
+        let status = cmd.status().context("Failed to run antegen-node")?;
+        if !status.success() {
+            std::process::exit(status.code().unwrap_or(1));
         }
-        balance = poll_future => {
-            let sol = balance as f64 / LAMPORTS_PER_SOL as f64;
-            log::info!("Funded! Executor balance: {:.4} SOL", sol);
+        Ok(())
+    }
+}
+
+/// Find the `antegen-node` binary.
+/// Searches:
+/// 1. Same directory as the current executable
+/// 2. ~/.local/bin/
+/// 3. PATH
+fn find_node_binary() -> Result<PathBuf> {
+    // Check same directory as current exe
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(dir) = current_exe.parent() {
+            let candidate = dir.join("antegen-node");
+            if candidate.exists() {
+                return Ok(candidate);
+            }
         }
     }
 
-    Ok(())
+    // Check ~/.local/bin/
+    if let Some(home) = dirs::home_dir() {
+        let candidate = home.join(".local/bin/antegen-node");
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    // Check cargo target directories (dev mode)
+    #[cfg(not(feature = "prod"))]
+    if let Ok(current_exe) = std::env::current_exe() {
+        let path_str = current_exe.to_string_lossy();
+        if path_str.contains("/target/debug/") {
+            let candidate = current_exe.with_file_name("antegen-node");
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        } else if path_str.contains("/target/release/") {
+            let candidate = current_exe.with_file_name("antegen-node");
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "antegen-node binary not found.\n\
+         Install it with: anm install <version>\n\
+         Or build it with: cargo build -p antegen-client --features node"
+    )
 }
