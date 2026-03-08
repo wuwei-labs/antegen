@@ -76,7 +76,7 @@ node = ["dep:clap", "dep:dirs", "dep:env_logger"]
 
 [[bin]]
 name = "antegen-node"
-path = "src/bin/antegen-node.rs"
+path = "src/node/main.rs"
 required-features = ["node"]
 
 [dev-dependencies]
