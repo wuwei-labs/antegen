@@ -122,6 +122,7 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Publish antegen-cron
         run: cargo publish -p antegen-cron --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true # May already be published
 
   # ---------------------------------------------------------------------------
   # Job 3: Publish antegen-thread-program to crates.io
@@ -144,6 +145,7 @@ jobs:
         run: sleep 30
       - name: Publish antegen-thread-program
         run: cargo publish -p antegen-thread-program --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true # May already be published
 
   # ---------------------------------------------------------------------------
   # Job 4: Publish antegen-client to crates.io
@@ -167,6 +169,7 @@ jobs:
         run: sleep 30
       - name: Publish antegen-client
         run: cargo publish -p antegen-client --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true # May already be published
 
   # ---------------------------------------------------------------------------
   # Job 5: Build CLI binaries (runs in parallel with library publishing)
@@ -288,6 +291,7 @@ jobs:
 
       - name: Publish antegen-cli
         run: cargo publish -p antegen-cli --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true # May already be published
 
   # ---------------------------------------------------------------------------
   # Job 7: Build Geyser plugin binaries (runs in parallel with library publishing)
