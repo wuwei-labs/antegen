@@ -2,59 +2,234 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-macos:
-    runs-on: macos-14
-    strategy:
-      fail-fast: true
-      matrix:
-        target: [x86_64-apple-darwin, aarch64-apple-darwin]
+  # ---------------------------------------------------------------------------
+  # Job 1: Detect which crates have unpublished version bumps
+  # ---------------------------------------------------------------------------
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      cron_changed: ${{ steps.check.outputs.cron_changed }}
+      cron_version: ${{ steps.check.outputs.cron_version }}
+      thread_changed: ${{ steps.check.outputs.thread_changed }}
+      thread_version: ${{ steps.check.outputs.thread_version }}
+      client_changed: ${{ steps.check.outputs.client_changed }}
+      client_version: ${{ steps.check.outputs.client_version }}
+      cli_changed: ${{ steps.check.outputs.cli_changed }}
+      cli_version: ${{ steps.check.outputs.cli_version }}
+      geyser_changed: ${{ steps.check.outputs.geyser_changed }}
+      geyser_version: ${{ steps.check.outputs.geyser_version }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get version
-        id: version
-        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      - name: Detect version changes
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Extract version from a Cargo.toml
+          get_version() {
+            grep '^version' "$1" | head -1 | sed 's/.*"\(.*\)".*/\1/'
+          }
+
+          # Check if a version is already published on crates.io
+          crate_published() {
+            local name=$1 version=$2
+            local status
+            status=$(curl -s -o /dev/null -w "%{http_code}" \
+              "https://crates.io/api/v1/crates/${name}/${version}")
+            [ "$status" = "200" ]
+          }
+
+          # --- antegen-cron ---
+          CRON_VERSION=$(get_version crates/cron/Cargo.toml)
+          if crate_published antegen-cron "$CRON_VERSION"; then
+            CRON_CHANGED=false
+          else
+            CRON_CHANGED=true
+          fi
+          echo "cron_version=${CRON_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "cron_changed=${CRON_CHANGED}" >> "$GITHUB_OUTPUT"
+
+          # --- antegen-thread-program ---
+          THREAD_VERSION=$(get_version programs/thread/Cargo.toml)
+          if crate_published antegen-thread-program "$THREAD_VERSION"; then
+            THREAD_CHANGED=false
+          else
+            THREAD_CHANGED=true
+          fi
+          echo "thread_version=${THREAD_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "thread_changed=${THREAD_CHANGED}" >> "$GITHUB_OUTPUT"
+
+          # --- antegen-client ---
+          CLIENT_VERSION=$(get_version crates/client/Cargo.toml)
+          if crate_published antegen-client "$CLIENT_VERSION"; then
+            CLIENT_CHANGED=false
+          else
+            CLIENT_CHANGED=true
+          fi
+          echo "client_version=${CLIENT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "client_changed=${CLIENT_CHANGED}" >> "$GITHUB_OUTPUT"
+
+          # --- antegen-cli (check GitHub release, not crates.io) ---
+          CLI_VERSION=$(get_version crates/cli/Cargo.toml)
+          if gh release view "v${CLI_VERSION}" &>/dev/null; then
+            CLI_CHANGED=false
+          else
+            CLI_CHANGED=true
+          fi
+          echo "cli_version=${CLI_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "cli_changed=${CLI_CHANGED}" >> "$GITHUB_OUTPUT"
+
+          # --- antegen-geyser-plugin (check GitHub release) ---
+          GEYSER_VERSION=$(get_version plugin/geyser/Cargo.toml)
+          if gh release view "geyser-v${GEYSER_VERSION}" &>/dev/null; then
+            GEYSER_CHANGED=false
+          else
+            GEYSER_CHANGED=true
+          fi
+          echo "geyser_version=${GEYSER_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "geyser_changed=${GEYSER_CHANGED}" >> "$GITHUB_OUTPUT"
+
+          # --- Summary ---
+          echo "### Release Detection" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Crate | Version | Needs Release |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|---------|---------------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| antegen-cron | ${CRON_VERSION} | ${CRON_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| antegen-thread-program | ${THREAD_VERSION} | ${THREAD_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| antegen-client | ${CLIENT_VERSION} | ${CLIENT_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| antegen-cli | ${CLI_VERSION} | ${CLI_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| antegen-geyser-plugin | ${GEYSER_VERSION} | ${GEYSER_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Publish antegen-cron to crates.io
+  # ---------------------------------------------------------------------------
+  publish-cron:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.cron_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Publish antegen-cron
+        run: cargo publish -p antegen-cron --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Publish antegen-thread-program to crates.io
+  # ---------------------------------------------------------------------------
+  publish-thread-program:
+    needs: [detect-changes, publish-cron]
+    if: >-
+      always() &&
+      needs.detect-changes.outputs.thread_changed == 'true' &&
+      needs.publish-cron.result != 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Wait for crates.io indexing
+        if: needs.publish-cron.result == 'success'
+        run: sleep 30
+      - name: Publish antegen-thread-program
+        run: cargo publish -p antegen-thread-program --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Publish antegen-client to crates.io
+  # ---------------------------------------------------------------------------
+  publish-client:
+    needs: [detect-changes, publish-cron, publish-thread-program]
+    if: >-
+      always() &&
+      needs.detect-changes.outputs.client_changed == 'true' &&
+      needs.publish-cron.result != 'failure' &&
+      needs.publish-thread-program.result != 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Wait for crates.io indexing
+        if: needs.publish-thread-program.result == 'success'
+        run: sleep 30
+      - name: Publish antegen-client
+        run: cargo publish -p antegen-client --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Job 5: Build CLI binaries (runs in parallel with library publishing)
+  # ---------------------------------------------------------------------------
+  build-cli:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.cli_changed == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-14
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
 
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           target: ${{ matrix.target }}
 
-      - name: Build workspace
-        run: cargo build --workspace --release --target ${{ matrix.target }}
-
-      - name: Build CLI with prod feature
+      - name: Build CLI
         run: cargo build -p antegen-cli --release --features prod --target ${{ matrix.target }}
 
-      - name: Package artifacts
+      - name: Package artifact
         run: |
           mkdir -p artifacts
-          cp target/${{ matrix.target }}/release/antegen artifacts/antegen-${{ steps.version.outputs.version }}-${{ matrix.target }}
-          cp target/${{ matrix.target }}/release/libantegen_geyser_plugin.dylib artifacts/antegen-geyser-${{ steps.version.outputs.version }}-${{ matrix.target }}.dylib
+          cp target/${{ matrix.target }}/release/antegen \
+            artifacts/antegen-v${{ needs.detect-changes.outputs.cli_version }}-${{ matrix.target }}
           chmod +x artifacts/*
 
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-${{ matrix.target }}
+          name: cli-${{ matrix.target }}
           path: artifacts/*
           retention-days: 1
 
-  build-linux:
-    runs-on: ubuntu-22.04
+  # ---------------------------------------------------------------------------
+  # Job 6: Create CLI GitHub release + publish to crates.io
+  # ---------------------------------------------------------------------------
+  release-cli:
+    needs: [detect-changes, build-cli, publish-cron, publish-thread-program, publish-client]
+    if: >-
+      always() &&
+      needs.detect-changes.outputs.cli_changed == 'true' &&
+      needs.build-cli.result == 'success' &&
+      needs.publish-cron.result != 'failure' &&
+      needs.publish-thread-program.result != 'failure' &&
+      needs.publish-client.result != 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Get version
-        id: version
-        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
@@ -62,49 +237,11 @@ jobs:
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Build workspace
-        run: cargo build --workspace --release
-
-      - name: Build CLI with prod feature
-        run: cargo build -p antegen-cli --release --features prod
-
-      - name: Package artifacts
-        run: |
-          mkdir -p artifacts
-          cp target/release/antegen artifacts/antegen-${{ steps.version.outputs.version }}-x86_64-unknown-linux-gnu
-          cp target/release/libantegen_geyser_plugin.so artifacts/antegen-geyser-${{ steps.version.outputs.version }}-x86_64-unknown-linux-gnu.so
-          chmod +x artifacts/*
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-x86_64-unknown-linux-gnu
-          path: artifacts/*
-          retention-days: 1
-
-  release:
-    needs: [build-macos, build-linux]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install yq
-        run: sudo snap install yq
-
-      - name: Get version information
-        id: versions
-        run: |
-          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          echo "solana_version=$(yq -oy '.toolchain.solana_version' Anchor.toml)" >> $GITHUB_OUTPUT
-          echo "anchor_version=$(yq -oy '.toolchain.anchor_version' Anchor.toml)" >> $GITHUB_OUTPUT
-          echo "rust_version=$(yq -oy '.toolchain.channel' rust-toolchain.toml)" >> $GITHUB_OUTPUT
-
-      - name: Download all artifacts
+      - name: Download CLI artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: cli-*
           merge-multiple: true
 
       - name: Generate checksums
@@ -113,23 +250,19 @@ jobs:
           sha256sum * > checksums.txt
           cat checksums.txt
 
-      - name: Create Release
+      - name: Create git tag
+        run: |
+          git tag "v${{ needs.detect-changes.outputs.cli_version }}"
+          git push origin "v${{ needs.detect-changes.outputs.cli_version }}"
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ needs.detect-changes.outputs.cli_version }}
           token: ${{ secrets.GITHUB_TOKEN }}
           fail_on_unmatched_files: true
-          prerelease: false
           body: |
-            ## Antegen ${{ steps.versions.outputs.version }}
-
-            ### Binaries
-            - `antegen` - CLI tool
-            - `antegen-geyser` - Geyser plugin
-
-            ### Runtime Versions
-            - Solana `${{ steps.versions.outputs.solana_version }}`
-            - Rust `${{ steps.versions.outputs.rust_version }}`
-            - Anchor `${{ steps.versions.outputs.anchor_version }}`
+            ## Antegen CLI v${{ needs.detect-changes.outputs.cli_version }}
 
             ### Installation
 
@@ -148,40 +281,108 @@ jobs:
           files: |
             artifacts/*
 
-  publish-crates:
-    needs: [release]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
-
-      - name: Install Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      # Publish in dependency order with delays for crates.io indexing
-      - name: Publish antegen-cron
-        run: cargo publish -p antegen-cron --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        continue-on-error: true  # May already be published
-
       - name: Wait for crates.io indexing
-        run: sleep 30
-
-      - name: Publish antegen-thread-program
-        run: cargo publish -p antegen-thread-program --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        continue-on-error: true
-
-      - name: Wait for crates.io indexing
-        run: sleep 30
-
-      - name: Publish antegen-client
-        run: cargo publish -p antegen-client --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        continue-on-error: true
-
-      - name: Wait for crates.io indexing
+        if: needs.publish-client.result == 'success'
         run: sleep 30
 
       - name: Publish antegen-cli
         run: cargo publish -p antegen-cli --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        continue-on-error: true
+
+  # ---------------------------------------------------------------------------
+  # Job 7: Build Geyser plugin binaries (runs in parallel with library publishing)
+  # ---------------------------------------------------------------------------
+  build-geyser:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.geyser_changed == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-14
+            target: x86_64-apple-darwin
+            ext: dylib
+          - os: macos-14
+            target: aarch64-apple-darwin
+            ext: dylib
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            ext: so
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Build Geyser plugin
+        run: cargo build -p antegen-geyser-plugin --release --target ${{ matrix.target }}
+
+      - name: Package artifact
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/libantegen_geyser_plugin.${{ matrix.ext }} \
+            artifacts/antegen-geyser-v${{ needs.detect-changes.outputs.geyser_version }}-${{ matrix.target }}.${{ matrix.ext }}
+          chmod +x artifacts/*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: geyser-${{ matrix.target }}
+          path: artifacts/*
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # Job 8: Create Geyser plugin GitHub release
+  # ---------------------------------------------------------------------------
+  release-geyser:
+    needs: [detect-changes, build-geyser, publish-cron, publish-thread-program, publish-client]
+    if: >-
+      always() &&
+      needs.detect-changes.outputs.geyser_changed == 'true' &&
+      needs.build-geyser.result == 'success' &&
+      needs.publish-cron.result != 'failure' &&
+      needs.publish-thread-program.result != 'failure' &&
+      needs.publish-client.result != 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Geyser artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: geyser-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create git tag
+        run: |
+          git tag "geyser-v${{ needs.detect-changes.outputs.geyser_version }}"
+          git push origin "geyser-v${{ needs.detect-changes.outputs.geyser_version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: geyser-v${{ needs.detect-changes.outputs.geyser_version }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fail_on_unmatched_files: true
+          body: |
+            ## Antegen Geyser Plugin v${{ needs.detect-changes.outputs.geyser_version }}
+
+            ---
+            [Documentation](https://docs.antegen.xyz) | [GitHub](https://github.com/wuwei-labs/antegen)
+          files: |
+            artifacts/*
