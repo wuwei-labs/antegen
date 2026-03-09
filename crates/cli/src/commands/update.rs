@@ -572,7 +572,30 @@ pub async fn ensure_binary_installed(version: Option<&str>) -> Result<PathBuf> {
 }
 
 /// Switch CLI to a specific version (for `antegen use <version>`)
+/// Pass `"cargo"` to switch to the cargo-installed binary.
 pub async fn use_cli_version(version: String) -> Result<()> {
+    if version == "cargo" {
+        let cargo_bin = dirs::home_dir()
+            .map(|p| p.join(".cargo/bin/antegen"))
+            .context("Could not determine home directory")?;
+        anyhow::ensure!(
+            cargo_bin.exists(),
+            "No cargo-installed binary found at {}",
+            cargo_bin.display()
+        );
+
+        #[cfg(unix)]
+        {
+            let symlink_path = binary_path()?;
+            let anm_path = anm_symlink_path()?;
+            update_symlink(&symlink_path, &cargo_bin)?;
+            update_symlink(&anm_path, &cargo_bin)?;
+        }
+
+        println!("Switched to cargo-installed version");
+        return Ok(());
+    }
+
     let version = normalize_version(&version);
     let versioned_path = versioned_binary_path(&version)?;
 
@@ -853,8 +876,48 @@ pub async fn install_node_version(version: String) -> Result<()> {
 /// List installed CLI versions (for `antegen list`)
 pub async fn list_cli(remote: bool) -> Result<()> {
     let bin_dir = bin_dir()?;
-    let active_cli = current_version().to_string();
 
+    // Detect cargo-installed version
+    let cargo_bin = dirs::home_dir().map(|p| p.join(".cargo/bin/antegen"));
+    let cargo_version: Option<String> = cargo_bin
+        .as_ref()
+        .filter(|p| p.exists())
+        .and_then(|p| {
+            std::process::Command::new(p)
+                .arg("--version")
+                .output()
+                .ok()
+                .and_then(|o| {
+                    let out = String::from_utf8_lossy(&o.stdout);
+                    // Parse "antegen 5.0.1" → "v5.0.1"
+                    out.split_whitespace()
+                        .nth(1)
+                        .map(|v| format!("v{}", v))
+                })
+        });
+
+    // Determine active version from symlink target
+    let symlink_path = binary_path()?;
+    let symlink_target = if symlink_path.is_symlink() {
+        fs::read_link(&symlink_path).ok()
+    } else {
+        None
+    };
+
+    // If symlink → ~/.cargo/bin/antegen, cargo is active
+    // If symlink → ~/.local/bin/antegen-v5.0.0, that managed version is active
+    let cargo_is_active = symlink_target
+        .as_ref()
+        .map_or(false, |t| t.to_string_lossy().contains(".cargo/bin/"));
+    let managed_active = if !cargo_is_active {
+        symlink_target
+            .as_ref()
+            .and_then(|t| t.file_name()?.to_str()?.strip_prefix("antegen-").map(String::from))
+    } else {
+        None
+    };
+
+    // Collect locally installed managed versions
     let mut cli_versions: Vec<String> = Vec::new();
     if let Ok(entries) = fs::read_dir(&bin_dir) {
         for entry in entries.flatten() {
@@ -871,8 +934,11 @@ pub async fn list_cli(remote: bool) -> Result<()> {
         }
     }
 
-    if !cli_versions.contains(&active_cli) {
-        cli_versions.push(active_cli.clone());
+    // Add cargo version to the list if present and not already there
+    if let Some(ref cv) = cargo_version {
+        if !cli_versions.contains(cv) {
+            cli_versions.push(cv.clone());
+        }
     }
 
     cli_versions.sort_by(|a, b| match (parse_version(a), parse_version(b)) {
@@ -882,11 +948,15 @@ pub async fn list_cli(remote: bool) -> Result<()> {
 
     println!("Installed versions:");
     for ver in &cli_versions {
-        if *ver == active_cli {
-            println!("  {} (active)", ver);
+        let is_cargo = cargo_version.as_deref() == Some(ver.as_str());
+        let is_active = if is_cargo {
+            cargo_is_active
         } else {
-            println!("  {}", ver);
-        }
+            managed_active.as_deref() == Some(ver.as_str())
+        };
+        let prefix = if is_active { " *" } else { "  " };
+        let suffix = if is_cargo { " (cargo)" } else { "" };
+        println!("{}{}{}", prefix, ver, suffix);
     }
 
     if remote {
