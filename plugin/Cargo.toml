@@ -49,7 +49,6 @@ solana-logger = { workspace = true }
 solana-program = { workspace = true }
 solana-quic-client = { workspace = true }
 solana-sdk = { workspace = true }
-solana-transaction-status = { workspace = true }
 static-pubkey = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

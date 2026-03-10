@@ -197,6 +197,10 @@ impl GeyserPlugin for AntegenPlugin {
     fn transaction_notifications_enabled(&self) -> bool {
         false
     }
+
+    fn account_data_snapshot_notifications_enabled(&self) -> bool {
+        true
+    }
 }
 
 impl AntegenPlugin {

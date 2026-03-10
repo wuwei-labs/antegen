@@ -61,7 +61,7 @@ anchor-spl = { features = ["mint", "token"], git = "https://github.com/coral-xyz
 
 actix-cors = { version = "0.6.4" }
 actix-web = { version = "4.3.1" }
-agave-geyser-plugin-interface = { version = "=2.1.11" }
+agave-geyser-plugin-interface = { version = "=3.1.9" }
 anyhow = { version = "1.0.94" }
 async_once = { version = "0.2.6" }
 async-trait = { version = "0.1.83" }
@@ -97,7 +97,6 @@ solana-logger = { version = "=2.1.11" }
 solana-program = { version = "=2.1.11" }
 solana-quic-client = { version = "=2.1.11" }
 solana-sdk = { version = "=2.1.11" }
-solana-transaction-status = { version = "=2.1.11" }
 solana-zk-token-sdk = { version = "=2.1.11" }
 spl-associated-token-account = { version = "6.0.0" }
 spl-memo = { version = "6.0.0" }
