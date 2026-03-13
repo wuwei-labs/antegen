@@ -38,7 +38,9 @@ pub enum CliCommand {
         size: u64,
     },
     PoolRotate {
-        id: u64,
+        pool_id: u64,
+        worker_id: u64,
+        signatory: Keypair,
     },
     // TODO Rename to Version. Use flags to filter by program.
     //      Default to listing all deployed program versions on the user's configured cluster.
@@ -304,12 +306,30 @@ pub fn app() -> Command {
                         .about("Rotate worker into pool if space is available")
                         .arg_required_else_help(true)
                         .arg(
-                            Arg::new("id")
+                            Arg::new("pool_id")
                                 .index(1)
-                                .value_name("ID")
+                                .value_name("POOL_ID")
                                 .num_args(1)
-                                .required(false)
+                                .required(true)
+                                .help("The ID of the pool to rotate into"),
+                        )
+                        .arg(
+                            Arg::new("worker")
+                                .long("worker")
+                                .short('w')
+                                .value_name("WORKER_ID")
+                                .num_args(1)
+                                .required(true)
                                 .help("The ID of the worker to rotate in"),
+                        )
+                        .arg(
+                            Arg::new("signatory")
+                                .long("signatory")
+                                .short('s')
+                                .value_name("SIGNATORY_KEYPAIR")
+                                .num_args(1)
+                                .required(true)
+                                .help("Filepath to the worker's signatory keypair"),
                         )
                 ),
         )

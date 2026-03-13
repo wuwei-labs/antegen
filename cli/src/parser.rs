@@ -137,7 +137,9 @@ fn parse_pool_command(matches: &ArgMatches) -> Result<CliCommand, CliError> {
             size: parse_u64("size", matches)?,
         }),
         Some(("rotate", matches)) => Ok(CliCommand::PoolRotate {
-            id: parse_u64("id", matches)?,
+            pool_id: parse_u64("pool_id", matches)?,
+            worker_id: parse_u64("worker", matches)?,
+            signatory: parse_keypair_file("signatory", matches)?,
         }),
         Some(("list", _)) => Ok(CliCommand::PoolList {}),
         _ => Err(CliError::CommandNotRecognized(

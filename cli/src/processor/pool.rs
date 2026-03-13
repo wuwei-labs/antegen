@@ -6,6 +6,8 @@ use {
         ToAccountMetas,
     },
     antegen_network_program::state::{Config, Pool, PoolSettings, Registry, Worker},
+    solana_sdk::signature::Keypair,
+    solana_sdk::signer::Signer,
 };
 
 pub fn get(client: &Client, id: u64) -> Result<(), CliError> {
@@ -52,22 +54,22 @@ pub fn update(client: &Client, id: u64, size: u64) -> Result<(), CliError> {
     Ok(())
 }
 
-pub fn rotate(client: &Client, id: u64) -> Result<(), CliError> {
-    // Get required accounts
-    let pool_pubkey = Pool::pubkey(id);
-    let worker_pubkey = Worker::pubkey(id);
+pub fn rotate(client: &Client, pool_id: u64, worker_id: u64, signatory: Keypair) -> Result<(), CliError> {
+    let pool_pubkey = Pool::pubkey(pool_id);
+    let worker_pubkey = Worker::pubkey(worker_id);
     let ix = Instruction {
         program_id: antegen_network_program::ID,
         accounts: antegen_network_program::accounts::PoolRotate {
             config: Config::pubkey(),
             pool: pool_pubkey,
-            signatory: client.payer_pubkey(),
+            signatory: signatory.pubkey(),
             worker: worker_pubkey,
         }.to_account_metas(Some(false)),
         data: antegen_network_program::instruction::PoolRotate {}.data(),
     };
-    
-    client.send_and_confirm(&[ix], &[client.payer()]).unwrap();
-    get(client, id)?;
+
+    client.send_and_confirm(&[ix], &[client.payer(), &signatory])
+        .map_err(|err| CliError::FailedTransaction(err.to_string()))?;
+    get(client, pool_id)?;
     Ok(())
 }

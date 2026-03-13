@@ -38,7 +38,6 @@ Then, setup the plugin config file in a folder where your validator startup scri
 {
   "libpath": "/home/sol/antegen-geyser-plugin-release/lib/libantegen_plugin.so",
   "keypath": "/home/sol/antegen-worker-keypair.json",
-  "rpc_url": "http://127.0.0.1:8899",
   "transaction_timeout_threshold": 150,
   "thread_count": 10,
   "worker_id": 👈 Set this to your worker ID!

@@ -75,7 +75,7 @@ pub fn process(matches: &ArgMatches) -> Result<(), CliError> {
         CliCommand::PoolGet { id } => pool::get(&client, id),
         CliCommand::PoolList {} => pool::list(&client),
         CliCommand::PoolUpdate { id, size } => pool::update(&client, id, size),
-        CliCommand::PoolRotate { id} => pool::rotate(&client, id),
+        CliCommand::PoolRotate { pool_id, worker_id, signatory } => pool::rotate(&client, pool_id, worker_id, signatory),
         CliCommand::ThreadCrateInfo {} => thread::crate_info(&client),
         CliCommand::ThreadCreate {
             id,
