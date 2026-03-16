@@ -75,7 +75,6 @@ fn add_external_fiber(
     let serializable = make_serializable_instruction(&memo_ix);
     let ix = build_create_fiber(
         &authority.pubkey(),
-        &payer.pubkey(),
         thread,
         &fiber_pubkey,
         index,

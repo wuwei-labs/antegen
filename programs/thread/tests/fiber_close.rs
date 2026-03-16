@@ -69,7 +69,6 @@ fn setup_thread_external(
     let serializable = make_serializable_instruction(&memo_ix);
     let ix = build_create_fiber(
         &authority.pubkey(),
-        &payer.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
         0,
@@ -308,7 +307,6 @@ fn test_fiber_close_middle_of_sequence() {
         let serializable = make_serializable_instruction(&memo_ix);
         let ix = build_create_fiber(
             &authority.pubkey(),
-            &payer.pubkey(),
             &thread_pubkey,
             &fiber_pubkey,
             i,
@@ -383,7 +381,6 @@ fn test_fiber_close_advances_cursor() {
         let serializable = make_serializable_instruction(&memo_ix);
         let ix = build_create_fiber(
             &authority.pubkey(),
-            &payer.pubkey(),
             &thread_pubkey,
             &fiber_pubkey,
             i,
