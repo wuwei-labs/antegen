@@ -17,6 +17,8 @@ pub struct FiberState {
     pub thread: Pubkey,
     /// The index of this fiber in the thread's execution sequence
     pub fiber_index: u8,
+    /// Who paid rent for this fiber (receives rent back on close)
+    pub payer: Pubkey,
     /// The compiled instruction data
     #[max_len(1024)]
     pub compiled_instruction: Vec<u8>,

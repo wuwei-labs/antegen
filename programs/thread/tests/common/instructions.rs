@@ -165,6 +165,7 @@ pub fn build_delete_thread(
 
 pub fn build_create_fiber(
     authority: &Pubkey,
+    payer: &Pubkey,
     thread: &Pubkey,
     fiber: &Pubkey,
     fiber_index: u8,
@@ -176,6 +177,7 @@ pub fn build_create_fiber(
         program_id: PROGRAM_ID,
         accounts: antegen_thread_program::accounts::FiberCreate {
             authority: *authority,
+            payer: *payer,
             thread: *thread,
             fiber: *fiber,
             system_program: solana_system_interface::program::ID,
@@ -214,6 +216,7 @@ pub fn build_close_fiber(
 
 pub fn build_update_fiber(
     authority: &Pubkey,
+    payer: &Pubkey,
     thread: &Pubkey,
     fiber: &Pubkey,
     fiber_index: u8,
@@ -225,6 +228,7 @@ pub fn build_update_fiber(
         program_id: PROGRAM_ID,
         accounts: antegen_thread_program::accounts::FiberUpdate {
             authority: *authority,
+            payer: *payer,
             thread: *thread,
             fiber: *fiber,
             system_program: solana_system_interface::program::ID,

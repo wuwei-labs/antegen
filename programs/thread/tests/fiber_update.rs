@@ -37,6 +37,7 @@ fn setup_thread_with_fiber_account(
     let serializable = make_serializable_instruction(&memo_ix);
     let ix = build_create_fiber(
         &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
         0,
@@ -103,6 +104,7 @@ fn test_fiber_update_success() {
     let serializable = make_serializable_instruction(&new_memo);
     let ix = build_update_fiber(
         &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
         0,
@@ -137,6 +139,7 @@ fn test_fiber_update_resets_stats() {
     let serializable = make_serializable_instruction(&new_memo);
     let ix = build_update_fiber(
         &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
         0,
@@ -174,6 +177,7 @@ fn test_fiber_update_authority_check() {
     let serializable = make_serializable_instruction(&new_memo);
     let ix = build_update_fiber(
         &bad_authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
         0,
@@ -209,6 +213,7 @@ fn test_fiber_update_wrong_thread() {
     let serializable = make_serializable_instruction(&new_memo);
     let ix = build_update_fiber(
         &authority.pubkey(),
+        &payer.pubkey(),
         &thread2,
         &fiber1_pda,
         0,
@@ -241,6 +246,7 @@ fn test_fiber_update_prevents_delete_thread() {
     let serializable = make_serializable_instruction(&delete_ix);
     let ix = build_update_fiber(
         &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
         0,
@@ -281,6 +287,7 @@ fn test_fiber_update_lazy_init() {
     let serializable = make_serializable_instruction(&memo_ix);
     let ix = build_update_fiber(
         &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
         0,
@@ -326,6 +333,7 @@ fn test_fiber_update_lazy_init_sequential() {
     let serializable = make_serializable_instruction(&memo_ix);
     let ix = build_update_fiber(
         &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         &fiber1_pubkey,
         1,
@@ -349,6 +357,7 @@ fn test_fiber_update_lazy_init_sequential() {
     let serializable = make_serializable_instruction(&memo_ix);
     let ix = build_update_fiber(
         &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         &fiber0_pubkey,
         0,
@@ -370,6 +379,7 @@ fn test_fiber_update_lazy_init_sequential() {
     let serializable = make_serializable_instruction(&memo_ix);
     let ix = build_update_fiber(
         &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         &fiber1_pubkey,
         1,
@@ -405,6 +415,7 @@ fn test_fiber_update_lazy_init_then_update() {
     let serializable = make_serializable_instruction(&memo_ix);
     let ix = build_update_fiber(
         &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
         0,
@@ -430,6 +441,7 @@ fn test_fiber_update_lazy_init_then_update() {
     let serializable = make_serializable_instruction(&new_memo);
     let ix = build_update_fiber(
         &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
         0,

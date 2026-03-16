@@ -69,6 +69,7 @@ fn setup_thread_external(
     let serializable = make_serializable_instruction(&memo_ix);
     let ix = build_create_fiber(
         &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
         0,
@@ -99,7 +100,7 @@ fn test_fiber_close_external_fiber() {
 
     let ix = build_close_fiber(
         &authority.pubkey(),
-        &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         Some(&fiber_pubkey),
         0,
@@ -163,7 +164,7 @@ fn test_fiber_close_authority_check() {
 
     let ix = build_close_fiber(
         &bad_authority.pubkey(),
-        &bad_authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         Some(&fiber_pubkey),
         0,
@@ -185,17 +186,15 @@ fn test_fiber_close_rent_returned() {
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let close_to = Keypair::new();
-    svm.airdrop(&close_to.pubkey(), 1_000_000).unwrap();
-
     let (thread_pubkey, fiber_pubkey) =
         setup_thread_external(&mut svm, &authority, &payer, "fclose-rent");
 
-    let close_to_before = get_balance(&svm, &close_to.pubkey());
+    // payer is both tx fee payer and the original fiber rent payer (fiber.payer)
+    let payer_before = get_balance(&svm, &payer.pubkey());
 
     let ix = build_close_fiber(
         &authority.pubkey(),
-        &close_to.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         Some(&fiber_pubkey),
         0,
@@ -209,8 +208,9 @@ fn test_fiber_close_rent_returned() {
     );
     svm.send_transaction(tx).unwrap();
 
-    let close_to_after = get_balance(&svm, &close_to.pubkey());
-    assert!(close_to_after > close_to_before);
+    // Payer receives fiber rent back (minus tx fee), net should be positive
+    let payer_after = get_balance(&svm, &payer.pubkey());
+    assert!(payer_after > payer_before);
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn test_fiber_close_last_fiber_resets_cursor() {
 
     let ix = build_close_fiber(
         &authority.pubkey(),
-        &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         Some(&fiber_pubkey),
         0,
@@ -255,7 +255,7 @@ fn test_fiber_close_requires_account() {
     // Try to close account-based fiber without providing the account
     let ix = build_close_fiber(
         &authority.pubkey(),
-        &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         None, // Missing fiber account!
         0,
@@ -307,6 +307,7 @@ fn test_fiber_close_middle_of_sequence() {
         let serializable = make_serializable_instruction(&memo_ix);
         let ix = build_create_fiber(
             &authority.pubkey(),
+            &payer.pubkey(),
             &thread_pubkey,
             &fiber_pubkey,
             i,
@@ -328,7 +329,7 @@ fn test_fiber_close_middle_of_sequence() {
     // Close fiber at index 1 (middle)
     let ix = build_close_fiber(
         &authority.pubkey(),
-        &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         Some(&fiber_pubkeys[1]),
         1,
@@ -381,6 +382,7 @@ fn test_fiber_close_advances_cursor() {
         let serializable = make_serializable_instruction(&memo_ix);
         let ix = build_create_fiber(
             &authority.pubkey(),
+            &payer.pubkey(),
             &thread_pubkey,
             &fiber_pubkey,
             i,
@@ -402,7 +404,7 @@ fn test_fiber_close_advances_cursor() {
     let (fiber0_pubkey, _) = fiber_pda(&thread_pubkey, 0);
     let ix = build_close_fiber(
         &authority.pubkey(),
-        &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         Some(&fiber0_pubkey),
         0,

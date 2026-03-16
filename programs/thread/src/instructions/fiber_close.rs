@@ -11,9 +11,12 @@ pub struct FiberClose<'info> {
     )]
     pub authority: Signer<'info>,
 
-    /// The address to return the data rent lamports to
-    #[account(mut)]
-    pub close_to: SystemAccount<'info>,
+    /// CHECK: Validated against fiber.payer — receives rent on close
+    #[account(
+        mut,
+        constraint = fiber.as_ref().map_or(true, |f| close_to.key().eq(&f.payer))
+    )]
+    pub close_to: UncheckedAccount<'info>,
 
     /// The thread to remove the fiber from
     #[account(

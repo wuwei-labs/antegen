@@ -80,6 +80,7 @@ fn send_create_fiber(
 
     let ix = build_create_fiber(
         &authority.pubkey(),
+        &payer.pubkey(),
         thread,
         &fiber_pubkey,
         fiber_index,
@@ -192,6 +193,7 @@ fn test_fiber_create_prevents_delete_thread() {
     let (fiber_pubkey, _) = fiber_pda(&thread_pubkey, 0);
     let ix = build_create_fiber(
         &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
         0,

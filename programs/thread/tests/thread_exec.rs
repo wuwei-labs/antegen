@@ -660,6 +660,7 @@ fn test_exec_thread_fiber_cursor_advance() {
     let serializable = make_serializable_instruction(&memo_ix);
     let ix = build_create_fiber(
         &authority.pubkey(),
+        &payer.pubkey(),
         &thread_pubkey,
         &fiber1_pubkey,
         1,

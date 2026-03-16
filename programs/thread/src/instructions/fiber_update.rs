@@ -5,12 +5,15 @@ use anchor_lang::{prelude::*, solana_program::instruction::Instruction};
 #[derive(Accounts)]
 #[instruction(fiber_index: u8, instruction: SerializableInstruction)]
 pub struct FiberUpdate<'info> {
-    /// The authority of the thread or the thread itself (also pays rent for init_if_needed)
+    /// The authority of the thread or the thread itself
     #[account(
-        mut,
         constraint = authority.key().eq(&thread.authority) || authority.key().eq(&thread.key())
     )]
     pub authority: Signer<'info>,
+
+    /// The account paying rent for the fiber (used on init_if_needed)
+    #[account(mut)]
+    pub payer: Signer<'info>,
 
     /// The thread the fiber belongs to
     #[account(
@@ -25,7 +28,7 @@ pub struct FiberUpdate<'info> {
         init_if_needed,
         seeds = [SEED_THREAD_FIBER, thread.key().as_ref(), &[fiber_index]],
         bump,
-        payer = authority,
+        payer = payer,
         space = 8 + FiberState::INIT_SPACE,
     )]
     pub fiber: Account<'info, FiberState>,
@@ -65,6 +68,7 @@ pub fn fiber_update(
         // Initialize fiber identity
         fiber.thread = thread.key();
         fiber.fiber_index = fiber_index;
+        fiber.payer = ctx.accounts.payer.key();
         fiber.priority_fee = priority_fee.unwrap_or(0);
 
         // Update thread's fiber tracking
