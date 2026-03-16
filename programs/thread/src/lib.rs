@@ -104,12 +104,16 @@ pub mod thread_program {
     }
 
     /// Updates a fiber's instruction and resets execution stats.
+    /// If the fiber doesn't exist yet, creates it (lazy initialization).
     pub fn update_fiber(
         ctx: Context<FiberUpdate>,
+        fiber_index: u8,
         instruction: SerializableInstruction,
+        signer_seeds: Option<Vec<Vec<Vec<u8>>>>,
+        priority_fee: Option<u64>,
     ) -> Result<()> {
         let instruction: Instruction = instruction.into();
-        fiber_update(ctx, instruction)
+        fiber_update(ctx, fiber_index, instruction, signer_seeds, priority_fee)
     }
 
     /// Creates a new transaction thread.

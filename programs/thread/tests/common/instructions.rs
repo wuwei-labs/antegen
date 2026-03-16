@@ -216,19 +216,31 @@ pub fn build_close_fiber(
 
 pub fn build_update_fiber(
     authority: &Pubkey,
+    payer: &Pubkey,
     thread: &Pubkey,
     fiber: &Pubkey,
+    fiber_index: u8,
     instruction: SerializableInstruction,
+    signer_seeds: Option<Vec<Vec<Vec<u8>>>>,
+    priority_fee: Option<u64>,
 ) -> Instruction {
     Instruction {
         program_id: PROGRAM_ID,
         accounts: antegen_thread_program::accounts::FiberUpdate {
             authority: *authority,
+            payer: *payer,
             thread: *thread,
             fiber: *fiber,
+            system_program: solana_system_interface::program::ID,
         }
         .to_account_metas(None),
-        data: antegen_thread_program::instruction::UpdateFiber { instruction }.data(),
+        data: antegen_thread_program::instruction::UpdateFiber {
+            fiber_index,
+            instruction,
+            signer_seeds,
+            priority_fee,
+        }
+        .data(),
     }
 }
 
