@@ -125,8 +125,9 @@ pub mod thread_program {
         trigger: Trigger,
         initial_instruction: Option<SerializableInstruction>,
         priority_fee: Option<u64>,
+        paused: Option<bool>,
     ) -> Result<()> {
-        thread_create(ctx, amount, id, trigger, initial_instruction, priority_fee)
+        thread_create(ctx, amount, id, trigger, initial_instruction, priority_fee, paused)
     }
 
     /// Closes an existing thread account and returns the lamports to the owner.

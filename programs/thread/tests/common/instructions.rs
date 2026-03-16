@@ -78,6 +78,7 @@ pub fn build_create_thread(
             trigger,
             initial_instruction,
             priority_fee,
+            paused: None,
         }
         .data(),
     }

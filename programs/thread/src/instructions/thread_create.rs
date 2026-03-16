@@ -16,7 +16,7 @@ use solana_nonce::state::State;
 /// For simple thread creation (no durable nonce), only authority, payer, thread, and system_program are needed.
 /// For durable nonce threads, also provide nonce_account, recent_blockhashes, and rent.
 #[derive(Accounts)]
-#[instruction(amount: u64, id: ThreadId, trigger: Trigger, initial_instruction: Option<SerializableInstruction>, priority_fee: Option<u64>)]
+#[instruction(amount: u64, id: ThreadId, trigger: Trigger, initial_instruction: Option<SerializableInstruction>, priority_fee: Option<u64>, paused: Option<bool>)]
 pub struct ThreadCreate<'info> {
     /// CHECK: the authority (owner) of the thread. Allows for program ownership
     #[account()]
@@ -61,6 +61,7 @@ pub fn thread_create(
     trigger: Trigger,
     initial_instruction: Option<SerializableInstruction>,
     priority_fee: Option<u64>,
+    paused: Option<bool>,
 ) -> Result<()> {
     let authority: &Signer = &ctx.accounts.authority;
     let payer: &Signer = &ctx.accounts.payer;
@@ -112,7 +113,7 @@ pub fn thread_create(
     thread.created_at = current_timestamp;
     thread.name = id.to_name();
     thread.id = id.into();
-    thread.paused = false;
+    thread.paused = paused.unwrap_or(false);
     thread.trigger = trigger.clone();
 
     // Initialize schedule based on trigger type
