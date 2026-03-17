@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark">
-    <meta name="turbo-cache-control" content="no-cache" data-turbo-track="reload" data-track-token="4.2.0.827005636877">
+    <meta name="turbo-cache-control" content="no-cache" data-turbo-track="reload" data-track-token="4.3.0.827075274732">
 
     <!-- See retype.com -->
-    <meta name="generator" content="Retype 4.2.0">
+    <meta name="generator" content="Retype 4.3.0">
 
     <!-- Primary Meta Tags -->
     <title>Antegen: From Protocol Platform to Production-Ready Executor</title>
@@ -25,13 +25,19 @@
     <meta property="og:site_name" content="<span class=\"docs-emoji\">&#x1F9A0;</span> Antegen">
     <meta property="og:locale" content="en_US">
 
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:url" content="https://docs.antegen.xyz/update_announcement/">
+    <meta name="twitter:title" content="Antegen: From Protocol Platform to Production-Ready Executor">
+    <meta name="twitter:description" content="A lot has changed since v2.2.9. Here's a high-level look at where Antegen is today.">
+
     <script data-cfasync="false">(function(){var cl=document.documentElement.classList,ls=localStorage.getItem("retype_scheme"),hd=cl.contains("dark"),hl=cl.contains("light"),wm=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;if(ls==="dark"||(!ls&&wm&&!hd&&!hl)){cl.remove("light");cl.add("dark")}else if(ls==="light"||(!ls&&!wm&&!hd&&!hl)){cl.remove("dark");cl.add("light")}})();</script>
 
-    <link href="../resources/css/retype.css?v=4.2.0.827005636877" rel="stylesheet">
+    <link href="../resources/css/retype.css?v=4.3.0.827075274732" rel="stylesheet">
 
-    <script data-cfasync="false" src="../resources/js/config.js?v=4.2.0.827005636877" data-turbo-eval="false" defer></script>
-    <script data-cfasync="false" src="../resources/js/retype.js?v=4.2.0" data-turbo-eval="false" defer></script>
-    <script id="lunr-js" data-cfasync="false" src="../resources/js/lunr.js?v=4.2.0.827005636877" data-turbo-eval="false" defer></script>
+    <script data-cfasync="false" src="../resources/js/config.js?v=4.3.0.827075274732" data-turbo-eval="false" defer></script>
+    <script data-cfasync="false" src="../resources/js/retype.js?v=4.3.0" data-turbo-eval="false" defer></script>
+    <script id="lunr-js" data-cfasync="false" src="../resources/js/lunr.js?v=4.3.0.827075274732" data-turbo-eval="false" defer></script>
 </head>
 <body>
     <div id="retype-app" class="relative text-base antialiased text-base-text bg-base-bg font-body">
@@ -46,7 +52,7 @@
             <!-- Logo -->
             <div class="flex items-center justify-between h-full py-2 md:w-75">
                 <div class="flex items-center px-2 md:px-6">
-                    <a id="retype-branding-logo" href="../" class="flex items-center leading-snug text-xl">
+                    <a id="retype-branding-logo" href="https://docs.antegen.xyz/" class="flex items-center leading-snug text-xl">
                         <span class="dark:text-white font-bold line-clamp-1 md:line-clamp-2"><span class="docs-emoji">&#x1F9A0;</span> Antegen</span>
                     </a><span id="retype-branding-label" class="inline-flex mt-1 px-2 py-1 ml-4 text-xs font-medium leading-none items-center rounded-md bg-branding-label-bg text-branding-label-text ring-1 ring-branding-label-border ring-inset md:inline-block">Docs</span>
                 </div>
@@ -135,27 +141,12 @@
                 <!-- Rendered if sidebar right is enabled -->
                 <div id="retype-sidebar-right-toggle"></div>
                 <!-- Page content  -->
-<doc-anchor-target id="antegen-from-protocol-platform-to-production-ready-executor" class="break-words">
-    <h1>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#antegen-from-protocol-platform-to-production-ready-executor">#</doc-anchor-trigger>
-        <span>Antegen: From Protocol Platform to Production-Ready Executor</span>
-    </h1>
-</doc-anchor-target>
+<h1 id="antegen-from-protocol-platform-to-production-ready-executor">Antegen: From Protocol Platform to Production-Ready Executor</h1>
 <p>A lot has changed since v2.2.9. Here&#x27;s a high-level look at where Antegen is today.</p>
-<doc-anchor-target id="a-new-foundation">
-    <h2>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#a-new-foundation">#</doc-anchor-trigger>
-        <span>A New Foundation</span>
-    </h2>
-</doc-anchor-target>
+<h2 id="a-new-foundation">A New Foundation</h2>
 <p>Antegen started as a hard fork of Clockwork. Since then, the project has been completely restructured — new crate layout, new on-chain program architecture, and a modern dependency stack built on <strong>Solana v3</strong> and <strong>Anchor 1.0</strong>.</p>
 <p>The old multi-program design (thread, network, webhook) has been replaced with a single, focused <strong>Thread program</strong> for scheduled transaction execution. Fewer moving parts, simpler mental model, easier to audit.</p>
-<doc-anchor-target id="one-binary-fully-self-managed">
-    <h2>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#one-binary-fully-self-managed">#</doc-anchor-trigger>
-        <span>One Binary, Fully Self-Managed</span>
-    </h2>
-</doc-anchor-target>
+<h2 id="one-binary-fully-self-managed">One Binary, Fully Self-Managed</h2>
 <p>The CLI is now a single <code translate="no" v-pre>antegen</code> binary that handles everything:</p>
 <ul>
 <li><strong>Install &amp; update itself</strong> — <code translate="no" v-pre>antegen node update</code> pulls the latest release, swaps the binary atomically, and restarts the service.</li>
@@ -163,12 +154,7 @@
 <li><strong>Fund &amp; withdraw</strong> — <code translate="no" v-pre>antegen node fund</code> tops up your executor to the minimum balance. <code translate="no" v-pre>antegen node withdraw</code> pulls out everything above it.</li>
 <li><strong>Observe</strong> — <code translate="no" v-pre>antegen node info</code> shows executor address, balance, service status, and version at a glance. <code translate="no" v-pre>antegen node logs</code> streams live output.</li>
 </ul>
-<doc-anchor-target id="on-chain-simplified-thread-program">
-    <h2>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#on-chain-simplified-thread-program">#</doc-anchor-trigger>
-        <span>On-Chain: Simplified Thread Program</span>
-    </h2>
-</doc-anchor-target>
+<h2 id="on-chain-simplified-thread-program">On-Chain: Simplified Thread Program</h2>
 <p>The thread program has been redesigned around <strong>fibers</strong> — individual instructions within a thread&#x27;s execution sequence. Key changes:</p>
 <ul>
 <li>New instruction set: <code translate="no" v-pre>fiber_create</code>, <code translate="no" v-pre>fiber_delete</code>, <code translate="no" v-pre>fiber_update</code> replace the old <code translate="no" v-pre>thread_instruction_add/remove</code> pattern
@@ -180,24 +166,14 @@
 <li>Fairer fee model — execution fees decay over time, so threads that run late don&#x27;t pay full price (can be 0 if too late)</li>
 <li>Durable nonces for transaction reliability across all threads (not enabled for default threads)</li>
 </ul>
-<doc-anchor-target id="under-the-hood">
-    <h2>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#under-the-hood">#</doc-anchor-trigger>
-        <span>Under the Hood</span>
-    </h2>
-</doc-anchor-target>
+<h2 id="under-the-hood">Under the Hood</h2>
 <ul>
 <li><strong>Actor-based execution</strong> via Ractor for concurrent thread processing</li>
 <li><strong>TPU direct submission</strong> bypasses RPC for lower-latency transactions</li>
 <li><strong>RPC load balancing</strong> with race condition handling and automatic requeueing</li>
 <li><strong>Workspace claims</strong> via loa-core integration for the agent builder ecosystem</li>
 </ul>
-<doc-anchor-target id="modern-stack">
-    <h2>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#modern-stack">#</doc-anchor-trigger>
-        <span>Modern Stack</span>
-    </h2>
-</doc-anchor-target>
+<h2 id="modern-stack">Modern Stack</h2>
 <div class="table-wrapper scrollbar overflow-hidden">
 <table class="comfortable">
 <thead>
