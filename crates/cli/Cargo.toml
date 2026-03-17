@@ -17,10 +17,9 @@ name = "antegen"
 path = "src/main.rs"
 
 [dependencies]
-antegen-client = { version = "4.1.1", path = "../client" }
-antegen-thread-program = { version = "4.1.1", path = "../../programs/thread", features = [
-  "cpi",
-] }
+antegen-client = { workspace = true }
+antegen-thread-program = { workspace = true }
+antegen-fiber-program = { workspace = true }
 anchor-lang = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

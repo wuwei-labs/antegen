@@ -11,10 +11,12 @@
 use crate::resources::SharedResources;
 use crate::rpc::response::decode_account_data;
 use anchor_lang::{AccountDeserialize, AnchorDeserialize, InstructionData, ToAccountMetas};
+use antegen_fiber_program::state::{CompiledInstructionV0, FiberState};
+use antegen_fiber_program::PAYER_PUBKEY;
 use antegen_thread_program::{
     accounts::ThreadExec,
     instruction::ExecThread,
-    state::{CompiledInstructionV0, FiberState, Signal, Thread, ThreadConfig, PAYER_PUBKEY},
+    state::{Signal, Thread, ThreadConfig},
 };
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
@@ -159,7 +161,7 @@ impl ExecutorLogic {
                     break;
                 }
                 _ => {
-                    // No batching needed for None, Repeat, Next, UpdateTrigger
+                    // No batching needed for None, Repeat, Next, Update
                     debug!("No batching needed for signal: {:?}", signal);
                     break;
                 }
@@ -195,7 +197,6 @@ impl ExecutorLogic {
         debug!("Building execute transaction for thread: {}", thread_pubkey);
         debug!("  fiber_cursor: {}", thread.fiber_cursor);
         debug!("  fiber_ids: {:?}", thread.fiber_ids);
-        debug!("  has_default_fiber: {}", thread.default_fiber.is_some());
         debug!("  fiber_signal: {:?}", thread.fiber_signal);
         debug!("  trigger: {:?}", thread.trigger);
         debug!("  schedule: {:?}", thread.schedule);
@@ -219,9 +220,7 @@ impl ExecutorLogic {
 
     /// Build thread_exec instruction for a specific fiber
     ///
-    /// Determines which fiber to execute based on fiber_cursor:
-    /// - If fiber_cursor == 0 and default_fiber exists: use inline default fiber
-    /// - Otherwise: fetch external fiber account
+    /// Fetches the external fiber account to get compiled instruction and priority fee.
     async fn build_thread_exec(
         &self,
         priority_fee: &mut u64,
@@ -230,41 +229,27 @@ impl ExecutorLogic {
         thread: &Thread,
         fiber_cursor: u8,
     ) -> Result<()> {
-        // Check if using default fiber (fiber_cursor 0 with default_fiber)
-        let is_default_fiber = fiber_cursor == 0 && thread.default_fiber.is_some();
-
         debug!(
-            "build_thread_exec: fiber_cursor={}, is_default_fiber={}",
-            fiber_cursor, is_default_fiber
+            "build_thread_exec: fiber_cursor={}",
+            fiber_cursor
         );
 
-        // Get priority fee and fiber state
-        let (fiber_priority_fee, fiber_state_opt) = if is_default_fiber {
-            // Default fiber: priority fee from thread, no fiber account needed
-            debug!(
-                "Using default fiber (inline), priority_fee={}",
-                thread.default_fiber_priority_fee
-            );
-            (thread.default_fiber_priority_fee, None)
-        } else {
-            // Account-based fiber: fetch fiber state
-            let fiber_pubkey = thread.fiber_at_index(thread_pubkey, fiber_cursor);
+        // Fetch the fiber account
+        let fiber_pubkey = thread.fiber_at_index(thread_pubkey, fiber_cursor);
 
-            debug!(
-                "Fetching external fiber account: {} (fiber_cursor={})",
-                fiber_pubkey, fiber_cursor
-            );
+        debug!(
+            "Fetching fiber account: {} (fiber_cursor={})",
+            fiber_pubkey, fiber_cursor
+        );
 
-            let account = self.fetch_account(&fiber_pubkey).await?;
-            let fiber_state = FiberState::try_deserialize(&mut account.data.as_slice())
-                .map_err(|e| anyhow!("Failed to deserialize fiber {}: {}", fiber_pubkey, e))?;
+        let account = self.fetch_account(&fiber_pubkey).await?;
+        let fiber_state = FiberState::try_deserialize(&mut account.data.as_slice())
+            .map_err(|e| anyhow!("Failed to deserialize fiber {}: {}", fiber_pubkey, e))?;
 
-            debug!(
-                "External fiber fetched, priority_fee={}",
-                fiber_state.priority_fee
-            );
-            (fiber_state.priority_fee, Some(fiber_state))
-        };
+        debug!(
+            "Fiber fetched, priority_fee={}",
+            fiber_state.priority_fee
+        );
 
         // Build execute instruction
         let ix = self
@@ -272,11 +257,11 @@ impl ExecutorLogic {
                 thread_pubkey,
                 thread,
                 fiber_cursor,
-                fiber_state_opt.as_ref(),
+                &fiber_state,
             )
             .await?;
 
-        *priority_fee = (*priority_fee).max(fiber_priority_fee);
+        *priority_fee = (*priority_fee).max(fiber_state.priority_fee);
         ixs.push(ix);
 
         Ok(())
@@ -287,14 +272,14 @@ impl ExecutorLogic {
         &self,
         thread_pubkey: &Pubkey,
         thread: &Thread,
-        fiber_pubkey: Option<Pubkey>,
+        fiber_pubkey: Pubkey,
     ) -> Result<(Vec<AccountMeta>, ThreadConfig)> {
         let config_pubkey = ThreadConfig::pubkey();
         let config = self.fetch_thread_config(&config_pubkey).await?;
         let has_nonce = thread.has_nonce_account();
 
         debug!(
-            "Building ThreadExec accounts: executor={}, thread={}, fiber={:?}, has_nonce={}",
+            "Building ThreadExec accounts: executor={}, thread={}, fiber={}, has_nonce={}",
             self.keypair.pubkey(),
             thread_pubkey,
             fiber_pubkey,
@@ -371,45 +356,28 @@ impl ExecutorLogic {
         thread_pubkey: &Pubkey,
         thread: &Thread,
         fiber_cursor: u8,
-        fiber: Option<&FiberState>,
+        fiber: &FiberState,
     ) -> Result<Instruction> {
         debug!(
-            "Building exec_thread instruction: thread={}, fiber_cursor={}, has_fiber_arg={}",
+            "Building exec_thread instruction: thread={}, fiber_cursor={}",
             thread_pubkey,
             fiber_cursor,
-            fiber.is_some()
         );
 
-        // Get compiled instruction from either inline fiber or fiber account
-        let (compiled, fiber_pubkey_opt) = if let Some(fiber_state) = fiber {
-            // Account-based fiber
-            let fiber_pubkey = thread.fiber_at_index(thread_pubkey, fiber_cursor);
-            let compiled = CompiledInstructionV0::deserialize(
-                &mut fiber_state.compiled_instruction.as_slice(),
-            )?;
-            debug!(
-                "Using account-based fiber: pubkey={}, compiled_accounts={}",
-                fiber_pubkey,
-                compiled.accounts.len()
-            );
-            (compiled, Some(fiber_pubkey))
-        } else {
-            // Default fiber
-            let default_fiber = thread
-                .default_fiber
-                .as_ref()
-                .ok_or_else(|| anyhow!("Thread has no default fiber"))?;
-            let compiled = CompiledInstructionV0::deserialize(&mut default_fiber.as_slice())?;
-            debug!(
-                "Using default fiber (inline), compiled_accounts={}",
-                compiled.accounts.len()
-            );
-            (compiled, None)
-        };
+        // Get compiled instruction from fiber account
+        let fiber_pubkey = thread.fiber_at_index(thread_pubkey, fiber_cursor);
+        let compiled = CompiledInstructionV0::deserialize(
+            &mut fiber.compiled_instruction.as_slice(),
+        )?;
+        debug!(
+            "Using fiber: pubkey={}, compiled_accounts={}",
+            fiber_pubkey,
+            compiled.accounts.len()
+        );
 
         // Build base accounts
         let (mut accounts, _config) = self
-            .build_thread_exec_base_accounts(thread_pubkey, thread, fiber_pubkey_opt)
+            .build_thread_exec_base_accounts(thread_pubkey, thread, fiber_pubkey)
             .await?;
 
         // Add compiled instruction accounts as remaining accounts
@@ -451,17 +419,17 @@ impl ExecutorLogic {
             thread_pubkey, thread.fiber_ids
         );
 
-        // Build base accounts - no fiber account needed since we use close_fiber (inline)
+        // Use the first fiber for the fiber account field
+        let first_fiber_index = thread.fiber_ids.first().copied().unwrap_or(0);
+        let first_fiber_pubkey = thread.fiber_at_index(thread_pubkey, first_fiber_index);
+
+        // Build base accounts
         let (mut accounts, _config) = self
-            .build_thread_exec_base_accounts(thread_pubkey, thread, None)
+            .build_thread_exec_base_accounts(thread_pubkey, thread, first_fiber_pubkey)
             .await?;
 
         // Add external fiber accounts as remaining_accounts for thread_delete to close
-        // Skip fiber index 0 if it's the inline default fiber
         for &fiber_index in &thread.fiber_ids {
-            if fiber_index == 0 && thread.default_fiber.is_some() {
-                continue; // Skip inline fiber - thread_delete handles it via thread account
-            }
             let fiber_pda = thread.fiber_at_index(thread_pubkey, fiber_index);
             debug!("Adding fiber account for deletion: {} (index={})", fiber_pda, fiber_index);
             accounts.push(AccountMeta {
@@ -506,7 +474,7 @@ impl ExecutorLogic {
         debug!(
             "Close thread_exec built: {} accounts, {} external fibers",
             accounts.len(),
-            thread.fiber_ids.iter().filter(|&&i| !(i == 0 && thread.default_fiber.is_some())).count()
+            thread.fiber_ids.len()
         );
 
         Ok(Instruction {

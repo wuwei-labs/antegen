@@ -1,19 +1,16 @@
-use crate::{errors::*, state::compile_instruction, *};
-use anchor_lang::{prelude::*, solana_program::instruction::Instruction};
+use crate::{errors::*, *};
+use anchor_lang::prelude::*;
+use antegen_fiber_program::state::SerializableInstruction;
 
 /// Accounts required by the `fiber_update` instruction.
+/// Validates authority, CPIs to Fiber Program to update the fiber.
 #[derive(Accounts)]
-#[instruction(fiber_index: u8, instruction: SerializableInstruction)]
 pub struct FiberUpdate<'info> {
     /// The authority of the thread or the thread itself
     #[account(
         constraint = authority.key().eq(&thread.authority) || authority.key().eq(&thread.key())
     )]
     pub authority: Signer<'info>,
-
-    /// The account paying rent for the fiber (used on init_if_needed)
-    #[account(mut)]
-    pub payer: Signer<'info>,
 
     /// The thread the fiber belongs to
     #[account(
@@ -23,25 +20,17 @@ pub struct FiberUpdate<'info> {
     )]
     pub thread: Account<'info, Thread>,
 
-    /// The fiber account — created on first call, updated on subsequent calls
-    #[account(
-        init_if_needed,
-        seeds = [SEED_THREAD_FIBER, thread.key().as_ref(), &[fiber_index]],
-        bump,
-        payer = payer,
-        space = 8 + FiberState::INIT_SPACE,
-    )]
-    pub fiber: Account<'info, FiberState>,
+    /// The fiber account to update (must exist, owned by Fiber Program)
+    #[account(mut)]
+    pub fiber: Account<'info, antegen_fiber_program::state::FiberState>,
 
-    #[account(address = anchor_lang::system_program::ID)]
-    pub system_program: Program<'info, System>,
+    /// The Fiber Program for CPI
+    pub fiber_program: Program<'info, antegen_fiber_program::program::FiberProgram>,
 }
 
 pub fn fiber_update(
     ctx: Context<FiberUpdate>,
-    fiber_index: u8,
-    instruction: Instruction,
-    signer_seeds: Option<Vec<Vec<Vec<u8>>>>,
+    instruction: SerializableInstruction,
     priority_fee: Option<u64>,
 ) -> Result<()> {
     // Prevent thread_delete instructions in fibers
@@ -52,60 +41,23 @@ pub fn fiber_update(
         return Err(AntegenThreadError::InvalidInstruction.into());
     }
 
-    let fiber = &mut ctx.accounts.fiber;
-    let thread = &mut ctx.accounts.thread;
+    let thread = &ctx.accounts.thread;
 
-    // Detect first init: fiber.thread will be Pubkey::default() for a freshly created account
-    let is_first_init = fiber.thread == Pubkey::default();
-
-    if is_first_init {
-        // Enforce sequential creation
-        require!(
-            fiber_index == thread.fiber_next_id,
-            AntegenThreadError::InvalidFiberIndex
-        );
-
-        // Initialize fiber identity
-        fiber.thread = thread.key();
-        fiber.fiber_index = fiber_index;
-        fiber.payer = ctx.accounts.payer.key();
-        fiber.priority_fee = priority_fee.unwrap_or(0);
-
-        // Update thread's fiber tracking
-        if !thread.fiber_ids.contains(&fiber_index) {
-            thread.fiber_ids.push(fiber_index);
-            thread.fiber_ids.sort();
-        }
-        thread.fiber_next_id = thread.fiber_next_id.saturating_add(1);
-
-        // Use provided signer_seeds or default to thread PDA seeds
-        let seeds = signer_seeds.unwrap_or_else(|| {
-            vec![vec![
-                SEED_THREAD.to_vec(),
-                thread.authority.to_bytes().to_vec(),
-                thread.id.clone(),
-            ]]
-        });
-
-        let compiled = compile_instruction(instruction, seeds)?;
-        let compiled_bytes = borsh::to_vec(&compiled)?;
-        fiber.compiled_instruction = compiled_bytes;
-    } else {
-        // Update path: use thread PDA seeds (existing behavior)
-        let seeds = vec![vec![
-            SEED_THREAD.to_vec(),
-            thread.authority.to_bytes().to_vec(),
-            thread.id.clone(),
-        ]];
-
-        let compiled = compile_instruction(instruction, seeds)?;
-        let compiled_bytes = borsh::to_vec(&compiled)?;
-        fiber.compiled_instruction = compiled_bytes;
-    }
-
-    // Common: reset execution stats
-    fiber.last_executed = 0;
-    fiber.exec_count = 0;
+    // CPI to Fiber Program's update_fiber
+    thread.sign(|signer| {
+        antegen_fiber_program::cpi::update_fiber(
+            CpiContext::new_with_signer(
+                ctx.accounts.fiber_program.key(),
+                antegen_fiber_program::cpi::accounts::FiberUpdate {
+                    thread: thread.to_account_info(),
+                    fiber: ctx.accounts.fiber.to_account_info(),
+                },
+                &[signer],
+            ),
+            instruction,
+            priority_fee,
+        )
+    })?;
 
     Ok(())
 }

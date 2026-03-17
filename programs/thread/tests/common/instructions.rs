@@ -4,13 +4,13 @@ use solana_sdk::{
     pubkey::Pubkey,
 };
 
-use super::setup::PROGRAM_ID;
+use super::setup::{FIBER_PROGRAM_ID, PROGRAM_ID};
 
 // Re-export program types used by tests
 pub use antegen_thread_program::instructions::config_update::ConfigUpdateParams;
 pub use antegen_thread_program::instructions::thread_update::ThreadUpdateParams;
+use antegen_thread_program::state::{SerializableAccountMeta, SerializableInstruction};
 pub use antegen_thread_program::state::{Signal, Trigger};
-pub use antegen_thread_program::state::{SerializableAccountMeta, SerializableInstruction};
 pub use antegen_thread_program::ThreadId;
 
 // ============================================================================
@@ -57,9 +57,12 @@ pub fn build_create_thread(
     amount: u64,
     id: ThreadId,
     trigger: Trigger,
-    initial_instruction: Option<SerializableInstruction>,
+    instruction: Option<SerializableInstruction>,
     priority_fee: Option<u64>,
+    fiber: Option<Pubkey>,
 ) -> Instruction {
+    let fiber_program = fiber.map(|_| FIBER_PROGRAM_ID);
+
     Instruction {
         program_id: PROGRAM_ID,
         accounts: antegen_thread_program::accounts::ThreadCreate {
@@ -70,15 +73,17 @@ pub fn build_create_thread(
             recent_blockhashes: None,
             rent: None,
             system_program: solana_system_interface::program::ID,
+            fiber,
+            fiber_program,
         }
         .to_account_metas(None),
         data: antegen_thread_program::instruction::CreateThread {
             amount,
             id,
             trigger,
-            initial_instruction,
-            priority_fee,
             paused: None,
+            instruction,
+            priority_fee,
         }
         .data(),
     }
@@ -124,10 +129,17 @@ pub fn build_close_thread(
     thread: &Pubkey,
     fiber_accounts: &[Pubkey],
 ) -> Instruction {
+    let fiber_program = if fiber_accounts.is_empty() {
+        None
+    } else {
+        Some(FIBER_PROGRAM_ID)
+    };
+
     let mut accounts = antegen_thread_program::accounts::ThreadClose {
         authority: *authority,
         close_to: *close_to,
         thread: *thread,
+        fiber_program,
     }
     .to_account_metas(None);
 
@@ -143,11 +155,7 @@ pub fn build_close_thread(
     }
 }
 
-pub fn build_delete_thread(
-    admin: &Pubkey,
-    config: &Pubkey,
-    thread: &Pubkey,
-) -> Instruction {
+pub fn build_delete_thread(admin: &Pubkey, config: &Pubkey, thread: &Pubkey) -> Instruction {
     Instruction {
         program_id: PROGRAM_ID,
         accounts: antegen_thread_program::accounts::ThreadDelete {
@@ -161,33 +169,30 @@ pub fn build_delete_thread(
 }
 
 // ============================================================================
-// Fiber Instructions
+// Fiber Instructions (CPI wrappers on Thread Program)
 // ============================================================================
 
 pub fn build_create_fiber(
     authority: &Pubkey,
-    payer: &Pubkey,
     thread: &Pubkey,
     fiber: &Pubkey,
     fiber_index: u8,
     instruction: SerializableInstruction,
-    signer_seeds: Vec<Vec<Vec<u8>>>,
     priority_fee: u64,
 ) -> Instruction {
     Instruction {
         program_id: PROGRAM_ID,
         accounts: antegen_thread_program::accounts::FiberCreate {
             authority: *authority,
-            payer: *payer,
             thread: *thread,
             fiber: *fiber,
+            fiber_program: FIBER_PROGRAM_ID,
             system_program: solana_system_interface::program::ID,
         }
         .to_account_metas(None),
         data: antegen_thread_program::instruction::CreateFiber {
             fiber_index,
             instruction,
-            signer_seeds,
             priority_fee,
         }
         .data(),
@@ -196,19 +201,17 @@ pub fn build_create_fiber(
 
 pub fn build_close_fiber(
     authority: &Pubkey,
-    close_to: &Pubkey,
     thread: &Pubkey,
-    fiber: Option<&Pubkey>,
+    fiber: &Pubkey,
     fiber_index: u8,
 ) -> Instruction {
-    let fiber_key = fiber.copied();
     Instruction {
         program_id: PROGRAM_ID,
         accounts: antegen_thread_program::accounts::FiberClose {
             authority: *authority,
-            close_to: *close_to,
             thread: *thread,
-            fiber: fiber_key,
+            fiber: *fiber,
+            fiber_program: FIBER_PROGRAM_ID,
         }
         .to_account_metas(None),
         data: antegen_thread_program::instruction::CloseFiber { fiber_index }.data(),
@@ -217,31 +220,46 @@ pub fn build_close_fiber(
 
 pub fn build_update_fiber(
     authority: &Pubkey,
-    payer: &Pubkey,
     thread: &Pubkey,
     fiber: &Pubkey,
-    fiber_index: u8,
     instruction: SerializableInstruction,
-    signer_seeds: Option<Vec<Vec<Vec<u8>>>>,
     priority_fee: Option<u64>,
 ) -> Instruction {
     Instruction {
         program_id: PROGRAM_ID,
         accounts: antegen_thread_program::accounts::FiberUpdate {
             authority: *authority,
-            payer: *payer,
             thread: *thread,
             fiber: *fiber,
-            system_program: solana_system_interface::program::ID,
+            fiber_program: FIBER_PROGRAM_ID,
         }
         .to_account_metas(None),
         data: antegen_thread_program::instruction::UpdateFiber {
-            fiber_index,
             instruction,
-            signer_seeds,
             priority_fee,
         }
         .data(),
+    }
+}
+
+pub fn build_swap_fiber(
+    authority: &Pubkey,
+    thread: &Pubkey,
+    target: &Pubkey,
+    source: &Pubkey,
+    source_fiber_index: u8,
+) -> Instruction {
+    Instruction {
+        program_id: PROGRAM_ID,
+        accounts: antegen_thread_program::accounts::FiberSwap {
+            authority: *authority,
+            thread: *thread,
+            target: *target,
+            source: *source,
+            fiber_program: FIBER_PROGRAM_ID,
+        }
+        .to_account_metas(None),
+        data: antegen_thread_program::instruction::SwapFiber { source_fiber_index }.data(),
     }
 }
 
@@ -252,18 +270,17 @@ pub fn build_update_fiber(
 pub fn build_exec_thread(
     executor: &Pubkey,
     thread: &Pubkey,
-    fiber: Option<&Pubkey>,
+    fiber: &Pubkey,
     config: &Pubkey,
     admin: &Pubkey,
     forgo_commission: bool,
     fiber_cursor: u8,
     remaining_accounts: &[AccountMeta],
 ) -> Instruction {
-    let fiber_key = fiber.copied();
     let mut accounts = antegen_thread_program::accounts::ThreadExec {
         executor: *executor,
         thread: *thread,
-        fiber: fiber_key,
+        fiber: *fiber,
         config: *config,
         admin: *admin,
         nonce_account: None,
@@ -317,17 +334,11 @@ pub fn build_error_thread(
     }
 }
 
-pub fn build_thread_memo(
-    signer: &Pubkey,
-    memo: &str,
-    signal: Option<Signal>,
-) -> Instruction {
+pub fn build_thread_memo(signer: &Pubkey, memo: &str, signal: Option<Signal>) -> Instruction {
     Instruction {
         program_id: PROGRAM_ID,
-        accounts: antegen_thread_program::accounts::ThreadMemo {
-            signer: *signer,
-        }
-        .to_account_metas(None),
+        accounts: antegen_thread_program::accounts::ThreadMemo { signer: *signer }
+            .to_account_metas(None),
         data: antegen_thread_program::instruction::ThreadMemo {
             memo: memo.to_string(),
             signal,
@@ -362,13 +373,4 @@ pub fn make_serializable_instruction(ix: &Instruction) -> SerializableInstructio
 pub fn make_memo_instruction(memo: &str, signal: Option<Signal>) -> Instruction {
     let payer_pubkey = solana_sdk::pubkey!("AntegenPayer1111111111111111111111111111111");
     build_thread_memo(&payer_pubkey, memo, signal)
-}
-
-/// Build a memo instruction that uses the thread as signer (for inline fiber).
-pub fn make_thread_memo_instruction(
-    thread: &Pubkey,
-    memo: &str,
-    signal: Option<Signal>,
-) -> Instruction {
-    build_thread_memo(thread, memo, signal)
 }

@@ -1,23 +1,23 @@
-use crate::{errors::*, state::compile_instruction, *};
-use anchor_lang::{prelude::*, solana_program::instruction::Instruction};
+use crate::{errors::*, *};
+use anchor_lang::prelude::*;
+use antegen_fiber_program::state::SerializableInstruction;
 
 /// Accounts required by the `fiber_create` instruction.
+/// Validates authority, CPIs to Fiber Program to create, updates thread fiber tracking.
 #[derive(Accounts)]
 #[instruction(fiber_index: u8)]
 pub struct FiberCreate<'info> {
     /// The authority of the thread or the thread itself
     #[account(
+        mut,
         constraint = authority.key().eq(&thread.authority) || authority.key().eq(&thread.key())
     )]
     pub authority: Signer<'info>,
 
-    /// The account paying rent for the fiber
-    #[account(mut)]
-    pub payer: Signer<'info>,
-
     /// The thread to add the fiber to
     #[account(
         mut,
+        constraint = thread.fiber_next_id.eq(&fiber_index) @ AntegenThreadError::InvalidFiberIndex,
         seeds = [
             SEED_THREAD,
             thread.authority.as_ref(),
@@ -27,19 +27,12 @@ pub struct FiberCreate<'info> {
     )]
     pub thread: Account<'info, Thread>,
 
-    /// The fiber account to create
-    #[account(
-        init,
-        seeds = [
-            SEED_THREAD_FIBER,
-            thread.key().as_ref(),
-            &[fiber_index],
-        ],
-        bump,
-        payer = payer,
-        space = 8 + FiberState::INIT_SPACE
-    )]
-    pub fiber: Account<'info, FiberState>,
+    /// CHECK: Initialized by Fiber Program via CPI
+    #[account(mut)]
+    pub fiber: UncheckedAccount<'info>,
+
+    /// The Fiber Program for CPI
+    pub fiber_program: Program<'info, antegen_fiber_program::program::FiberProgram>,
 
     #[account(address = anchor_lang::system_program::ID)]
     pub system_program: Program<'info, System>,
@@ -48,16 +41,10 @@ pub struct FiberCreate<'info> {
 pub fn fiber_create(
     ctx: Context<FiberCreate>,
     fiber_index: u8,
-    instruction: Instruction,
-    signer_seeds: Vec<Vec<Vec<u8>>>,
+    instruction: SerializableInstruction,
     priority_fee: u64,
 ) -> Result<()> {
-    // Validate fiber_index matches fiber_next_id (enforces sequential creation)
     let thread = &mut ctx.accounts.thread;
-    require!(
-        fiber_index == thread.fiber_next_id,
-        AntegenThreadError::InvalidFiberIndex
-    );
 
     // Prevent thread_delete instructions in fibers
     if instruction.program_id.eq(&crate::ID)
@@ -67,20 +54,23 @@ pub fn fiber_create(
         return Err(AntegenThreadError::InvalidInstruction.into());
     }
 
-    let fiber = &mut ctx.accounts.fiber;
-
-    // Compile the instruction
-    let compiled = compile_instruction(instruction, signer_seeds)?;
-    let compiled_bytes = borsh::to_vec(&compiled)?;
-
-    // Initialize the fiber
-    fiber.thread = thread.key();
-    fiber.fiber_index = fiber_index;
-    fiber.payer = ctx.accounts.payer.key();
-    fiber.compiled_instruction = compiled_bytes;
-    fiber.priority_fee = priority_fee;
-    fiber.last_executed = 0;
-    fiber.exec_count = 0;
+    thread.sign(|seeds| {
+        antegen_fiber_program::cpi::create_fiber(
+            CpiContext::new_with_signer(
+                ctx.accounts.fiber_program.key(),
+                antegen_fiber_program::cpi::accounts::FiberCreate {
+                    thread: thread.to_account_info(),
+                    payer: ctx.accounts.authority.to_account_info(),
+                    fiber: ctx.accounts.fiber.to_account_info(),
+                    system_program: ctx.accounts.system_program.to_account_info(),
+                },
+                &[seeds],
+            ),
+            fiber_index,
+            instruction,
+            priority_fee,
+        )
+    })?;
 
     // Update thread's fiber_ids and increment fiber_next_id
     if !thread.fiber_ids.contains(&fiber_index) {

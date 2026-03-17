@@ -1,69 +1,16 @@
 use crate::{errors::AntegenThreadError, *};
-use anchor_lang::{
-    prelude::*,
-    solana_program::instruction::{AccountMeta, Instruction},
-    AnchorDeserialize, AnchorSerialize,
+use anchor_lang::{prelude::*, AnchorDeserialize, AnchorSerialize};
+use std::{collections::hash_map::DefaultHasher, hash::Hasher};
+
+// Re-export types from Fiber Program
+pub use antegen_fiber_program::state::{
+    compile_instruction, decompile_instruction, CompiledInstructionData, CompiledInstructionV0,
+    SerializableAccountMeta, SerializableInstruction,
 };
-use std::{collections::hash_map::DefaultHasher, collections::HashMap, hash::Hasher};
+pub use antegen_fiber_program::{PAYER_PUBKEY, SEED_THREAD_FIBER};
 
 /// Current version of the Thread structure.
 pub const CURRENT_THREAD_VERSION: u8 = 1;
-
-/// Static pubkey for the payer placeholder - this is a placeholder address
-/// "AntegenPayer1111111111111111111111111111111" in base58  
-pub const PAYER_PUBKEY: Pubkey = pubkey!("AntegenPayer1111111111111111111111111111111");
-
-/// Serializable version of Solana's Instruction for easier handling
-#[derive(AnchorDeserialize, AnchorSerialize, Clone, Debug)]
-pub struct SerializableInstruction {
-    pub program_id: Pubkey,
-    pub accounts: Vec<SerializableAccountMeta>,
-    pub data: Vec<u8>,
-}
-
-/// Serializable version of AccountMeta
-#[derive(AnchorDeserialize, AnchorSerialize, Clone, Debug)]
-pub struct SerializableAccountMeta {
-    pub pubkey: Pubkey,
-    pub is_signer: bool,
-    pub is_writable: bool,
-}
-
-impl From<Instruction> for SerializableInstruction {
-    fn from(ix: Instruction) -> Self {
-        SerializableInstruction {
-            program_id: ix.program_id,
-            accounts: ix
-                .accounts
-                .into_iter()
-                .map(|acc| SerializableAccountMeta {
-                    pubkey: acc.pubkey,
-                    is_signer: acc.is_signer,
-                    is_writable: acc.is_writable,
-                })
-                .collect(),
-            data: ix.data,
-        }
-    }
-}
-
-impl From<SerializableInstruction> for Instruction {
-    fn from(ix: SerializableInstruction) -> Self {
-        Instruction {
-            program_id: ix.program_id,
-            accounts: ix
-                .accounts
-                .into_iter()
-                .map(|acc| AccountMeta {
-                    pubkey: acc.pubkey,
-                    is_signer: acc.is_signer,
-                    is_writable: acc.is_writable,
-                })
-                .collect(),
-            data: ix.data,
-        }
-    }
-}
 
 /// The triggering conditions of a thread.
 #[derive(AnchorDeserialize, AnchorSerialize, Clone, InitSpace, PartialEq, Debug)]
@@ -148,28 +95,10 @@ pub enum Signal {
     Next {
         index: u8, // Set specific fiber to execute on next trigger
     },
-    UpdateTrigger {
-        trigger: Trigger, // Update the thread's trigger
+    Update {
+        paused: Option<bool>,
+        trigger: Option<Trigger>,
     },
-}
-
-/// Compiled instruction data for space-efficient storage
-#[derive(AnchorDeserialize, AnchorSerialize, Clone, Debug)]
-pub struct CompiledInstructionData {
-    pub program_id_index: u8,
-    pub accounts: Vec<u8>,
-    pub data: Vec<u8>,
-}
-
-/// Compiled instruction containing deduplicated accounts
-#[derive(AnchorDeserialize, AnchorSerialize, Clone, Debug)]
-pub struct CompiledInstructionV0 {
-    pub num_ro_signers: u8,
-    pub num_rw_signers: u8,
-    pub num_rw: u8,
-    pub instructions: Vec<CompiledInstructionData>,
-    pub signer_seeds: Vec<Vec<Vec<u8>>>,
-    pub accounts: Vec<Pubkey>,
 }
 
 /// Tracks the current state of a transaction thread on Solana.
@@ -190,12 +119,7 @@ pub struct Thread {
     pub trigger: Trigger,
     pub schedule: Schedule,
 
-    // Default fiber (index 0, stored inline)
-    #[max_len(1024)]
-    pub default_fiber: Option<Vec<u8>>,
-    pub default_fiber_priority_fee: u64,
-
-    // Fibers
+    // Fibers (all managed by Fiber Program as external FiberState accounts)
     #[max_len(50)]
     pub fiber_ids: Vec<u8>,
     pub fiber_cursor: u8,
@@ -275,8 +199,8 @@ impl Thread {
     /// Get the fiber PDA for a specific fiber_index
     pub fn fiber_at_index(&self, thread_pubkey: &Pubkey, fiber_index: u8) -> Pubkey {
         Pubkey::find_program_address(
-            &[b"thread_fiber", thread_pubkey.as_ref(), &[fiber_index]],
-            &crate::ID,
+            &[SEED_THREAD_FIBER, thread_pubkey.as_ref(), &[fiber_index]],
+            &antegen_fiber_program::ID,
         )
         .0
     }
@@ -328,20 +252,11 @@ impl Thread {
             crate::errors::AntegenThreadError::ThreadHasNoFibersToExecute
         );
 
-        // Check that fiber_cursor is valid
-        if self.fiber_cursor == 0 {
-            // For index 0, either default fiber must exist OR it must be in fiber_ids vec
-            require!(
-                self.default_fiber.is_some() || self.fiber_ids.contains(&0),
-                crate::errors::AntegenThreadError::InvalidExecIndex
-            );
-        } else {
-            // For other indices, must exist in fiber_ids vector
-            require!(
-                self.fiber_ids.contains(&self.fiber_cursor),
-                crate::errors::AntegenThreadError::InvalidExecIndex
-            );
-        }
+        // Check that fiber_cursor is valid (must exist in fiber_ids)
+        require!(
+            self.fiber_ids.contains(&self.fiber_cursor),
+            crate::errors::AntegenThreadError::InvalidExecIndex
+        );
 
         Ok(())
     }
@@ -353,139 +268,6 @@ impl TryFrom<Vec<u8>> for Thread {
     fn try_from(data: Vec<u8>) -> std::result::Result<Self, Self::Error> {
         Thread::try_deserialize(&mut data.as_slice())
     }
-}
-
-/// Compile an instruction into a space-efficient format
-pub fn compile_instruction(
-    instruction: Instruction,
-    signer_seeds: Vec<Vec<Vec<u8>>>,
-) -> Result<CompiledInstructionV0> {
-    let mut pubkeys_to_metadata: HashMap<Pubkey, AccountMeta> = HashMap::new();
-
-    // Add program ID
-    pubkeys_to_metadata.insert(
-        instruction.program_id,
-        AccountMeta {
-            pubkey: instruction.program_id,
-            is_signer: false,
-            is_writable: false,
-        },
-    );
-
-    // Process accounts
-    for acc in &instruction.accounts {
-        let entry = pubkeys_to_metadata
-            .entry(acc.pubkey)
-            .or_insert(AccountMeta {
-                pubkey: acc.pubkey,
-                is_signer: false,
-                is_writable: false,
-            });
-        entry.is_signer |= acc.is_signer;
-        entry.is_writable |= acc.is_writable;
-    }
-
-    // Sort accounts by priority
-    let mut sorted_accounts: Vec<Pubkey> = pubkeys_to_metadata.keys().cloned().collect();
-    sorted_accounts.sort_by(|a, b| {
-        let a_meta = &pubkeys_to_metadata[a];
-        let b_meta = &pubkeys_to_metadata[b];
-
-        fn get_priority(meta: &AccountMeta) -> u8 {
-            match (meta.is_signer, meta.is_writable) {
-                (true, true) => 0,
-                (true, false) => 1,
-                (false, true) => 2,
-                (false, false) => 3,
-            }
-        }
-
-        get_priority(a_meta).cmp(&get_priority(b_meta))
-    });
-
-    // Count account types
-    let mut num_rw_signers = 0u8;
-    let mut num_ro_signers = 0u8;
-    let mut num_rw = 0u8;
-
-    for pubkey in &sorted_accounts {
-        let meta = &pubkeys_to_metadata[pubkey];
-        if meta.is_signer && meta.is_writable {
-            num_rw_signers += 1;
-        } else if meta.is_signer && !meta.is_writable {
-            num_ro_signers += 1;
-        } else if meta.is_writable {
-            num_rw += 1;
-        }
-    }
-
-    // Create index mapping
-    let accounts_to_index: HashMap<Pubkey, u8> = sorted_accounts
-        .iter()
-        .enumerate()
-        .map(|(i, k)| (*k, i as u8))
-        .collect();
-
-    // Create compiled instruction
-    let compiled_instruction = CompiledInstructionData {
-        program_id_index: *accounts_to_index.get(&instruction.program_id).unwrap(),
-        accounts: instruction
-            .accounts
-            .iter()
-            .map(|acc| *accounts_to_index.get(&acc.pubkey).unwrap())
-            .collect(),
-        data: instruction.data,
-    };
-
-    Ok(CompiledInstructionV0 {
-        num_ro_signers,
-        num_rw_signers,
-        num_rw,
-        instructions: vec![compiled_instruction],
-        signer_seeds,
-        accounts: sorted_accounts,
-    })
-}
-
-/// Decompile a compiled instruction back to a regular instruction
-pub fn decompile_instruction(compiled: &CompiledInstructionV0) -> Result<Instruction> {
-    if compiled.instructions.is_empty() {
-        return Err(ProgramError::InvalidInstructionData.into());
-    }
-
-    let ix = &compiled.instructions[0];
-    let program_id = compiled.accounts[ix.program_id_index as usize];
-
-    let accounts: Vec<AccountMeta> = ix
-        .accounts
-        .iter()
-        .enumerate()
-        .map(|(_i, &idx)| {
-            let pubkey = compiled.accounts[idx as usize];
-            let is_writable = if idx < compiled.num_rw_signers {
-                true
-            } else if idx < compiled.num_rw_signers + compiled.num_ro_signers {
-                false
-            } else if idx < compiled.num_rw_signers + compiled.num_ro_signers + compiled.num_rw {
-                true
-            } else {
-                false
-            };
-            let is_signer = idx < compiled.num_rw_signers + compiled.num_ro_signers;
-
-            AccountMeta {
-                pubkey,
-                is_signer,
-                is_writable,
-            }
-        })
-        .collect();
-
-    Ok(Instruction {
-        program_id,
-        accounts,
-        data: ix.data.clone(),
-    })
 }
 
 /// Trait for processing trigger validation and schedule updates
@@ -507,7 +289,7 @@ pub trait TriggerProcessor {
     fn get_last_started_at(&self) -> i64;
 }
 
-/// Trait for getting thread seeds for signing  
+/// Trait for getting thread seeds for signing
 pub trait ThreadSeeds {
     fn get_seed_bytes(&self) -> Vec<Vec<u8>>;
 

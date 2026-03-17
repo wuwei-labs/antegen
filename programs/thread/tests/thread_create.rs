@@ -11,8 +11,6 @@ fn create_thread_helper(
     payer: &Keypair,
     id: &str,
     trigger: Trigger,
-    initial_instruction: Option<SerializableInstruction>,
-    priority_fee: Option<u64>,
     amount: u64,
 ) -> (Pubkey, u8) {
     let thread_id = ThreadId::Bytes(id.as_bytes().to_vec());
@@ -24,8 +22,9 @@ fn create_thread_helper(
         amount,
         thread_id,
         trigger,
-        initial_instruction,
-        priority_fee,
+        None,
+        None,
+        None,
     );
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
@@ -51,8 +50,6 @@ fn test_create_thread_immediate_trigger() {
         &payer,
         "imm-test",
         Trigger::Immediate { jitter: 0 },
-        None,
-        None,
         100_000,
     );
 
@@ -82,8 +79,6 @@ fn test_create_thread_timestamp_trigger() {
             unix_ts: target_ts,
             jitter: 0,
         },
-        None,
-        None,
         100_000,
     );
 
@@ -113,8 +108,6 @@ fn test_create_thread_interval_trigger() {
             skippable: false,
             jitter: 0,
         },
-        None,
-        None,
         100_000,
     );
 
@@ -144,8 +137,6 @@ fn test_create_thread_cron_trigger() {
             skippable: false,
             jitter: 0,
         },
-        None,
-        None,
         100_000,
     );
 
@@ -171,8 +162,6 @@ fn test_create_thread_slot_trigger() {
         &payer,
         "slot-test",
         Trigger::Slot { slot: target_slot },
-        None,
-        None,
         100_000,
     );
 
@@ -200,8 +189,6 @@ fn test_create_thread_epoch_trigger() {
         Trigger::Epoch {
             epoch: target_epoch,
         },
-        None,
-        None,
         100_000,
     );
 
@@ -231,8 +218,6 @@ fn test_create_thread_account_trigger() {
             offset: 0,
             size: 32,
         },
-        None,
-        None,
         100_000,
     );
 
@@ -246,33 +231,7 @@ fn test_create_thread_account_trigger() {
 }
 
 #[test]
-fn test_create_thread_with_initial_instruction() {
-    let (mut svm, _admin, payer) = create_test_env();
-    let authority = Keypair::new();
-    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
-
-    let memo_ix = make_memo_instruction("hello", None);
-    let serializable = make_serializable_instruction(&memo_ix);
-
-    let (thread_pubkey, _) = create_thread_helper(
-        &mut svm,
-        &authority,
-        &payer,
-        "ix-test",
-        Trigger::Immediate { jitter: 0 },
-        Some(serializable),
-        None,
-        100_000,
-    );
-
-    let thread = deserialize_thread(&svm, &thread_pubkey);
-    assert!(thread.default_fiber.is_some());
-    assert_eq!(thread.fiber_ids, vec![0]);
-    assert_eq!(thread.fiber_next_id, 1);
-}
-
-#[test]
-fn test_create_thread_without_initial_instruction() {
+fn test_create_thread_no_fibers() {
     let (mut svm, _admin, payer) = create_test_env();
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
@@ -283,39 +242,12 @@ fn test_create_thread_without_initial_instruction() {
         &payer,
         "no-ix",
         Trigger::Immediate { jitter: 0 },
-        None,
-        None,
         100_000,
     );
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
-    assert!(thread.default_fiber.is_none());
     assert!(thread.fiber_ids.is_empty());
     assert_eq!(thread.fiber_next_id, 0);
-}
-
-#[test]
-fn test_create_thread_with_priority_fee() {
-    let (mut svm, _admin, payer) = create_test_env();
-    let authority = Keypair::new();
-    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
-
-    let memo_ix = make_memo_instruction("hello", None);
-    let serializable = make_serializable_instruction(&memo_ix);
-
-    let (thread_pubkey, _) = create_thread_helper(
-        &mut svm,
-        &authority,
-        &payer,
-        "pf-test",
-        Trigger::Immediate { jitter: 0 },
-        Some(serializable),
-        Some(50000),
-        100_000,
-    );
-
-    let thread = deserialize_thread(&svm, &thread_pubkey);
-    assert_eq!(thread.default_fiber_priority_fee, 50000);
 }
 
 #[test]
@@ -333,8 +265,6 @@ fn test_create_thread_sol_transfer() {
         &payer,
         "sol-test",
         Trigger::Immediate { jitter: 0 },
-        None,
-        None,
         amount,
     );
 
@@ -359,8 +289,6 @@ fn test_create_thread_id_bytes() {
         &payer,
         id,
         Trigger::Immediate { jitter: 0 },
-        None,
-        None,
         100_000,
     );
 
@@ -385,6 +313,7 @@ fn test_create_thread_id_pubkey() {
         100_000,
         thread_id,
         Trigger::Immediate { jitter: 0 },
+        None,
         None,
         None,
     );
@@ -414,8 +343,6 @@ fn test_create_thread_pda_derivation() {
         &payer,
         id,
         Trigger::Immediate { jitter: 0 },
-        None,
-        None,
         100_000,
     );
 
@@ -435,8 +362,6 @@ fn test_create_thread_initial_state() {
         &payer,
         "state-test",
         Trigger::Immediate { jitter: 0 },
-        None,
-        None,
         100_000,
     );
 
@@ -464,8 +389,6 @@ fn test_create_thread_without_nonce() {
         &payer,
         "no-nonce",
         Trigger::Immediate { jitter: 0 },
-        None,
-        None,
         100_000,
     );
 
@@ -486,8 +409,6 @@ fn test_create_thread_close_fiber_precompiled() {
         &payer,
         "close-fiber",
         Trigger::Immediate { jitter: 0 },
-        None,
-        None,
         100_000,
     );
 
@@ -516,8 +437,6 @@ fn test_create_thread_interval_with_jitter() {
             skippable: false,
             jitter: 30,
         },
-        None,
-        None,
         100_000,
     );
 
@@ -545,8 +464,6 @@ fn test_create_thread_duplicate_id() {
         &payer,
         "dup-test",
         Trigger::Immediate { jitter: 0 },
-        None,
-        None,
         100_000,
     );
 
@@ -562,6 +479,7 @@ fn test_create_thread_duplicate_id() {
         Trigger::Immediate { jitter: 0 },
         None,
         None,
+        None,
     );
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
@@ -572,4 +490,88 @@ fn test_create_thread_duplicate_id() {
     );
     let result = svm.send_transaction(tx);
     assert!(result.is_err(), "Duplicate thread ID should fail");
+}
+
+#[test]
+fn test_create_thread_with_fiber() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let id = "with-fiber";
+    let thread_id = ThreadId::Bytes(id.as_bytes().to_vec());
+    let (thread_pubkey, _) = thread_pda(&authority.pubkey(), id.as_bytes());
+    let (fiber_pubkey, _) = fiber_pda(&thread_pubkey, 0);
+
+    // Build a memo instruction to use as the fiber's inner instruction
+    let memo_ix = make_memo_instruction("hello-fiber", None);
+    let ser_ix = make_serializable_instruction(&memo_ix);
+
+    let ix = build_create_thread(
+        &authority.pubkey(),
+        &payer.pubkey(),
+        &thread_pubkey,
+        1_000_000,
+        thread_id,
+        Trigger::Immediate { jitter: 0 },
+        Some(ser_ix),
+        Some(100),
+        Some(fiber_pubkey),
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    svm.send_transaction(tx).expect("create_thread with fiber should succeed");
+
+    // Verify thread state
+    let thread = deserialize_thread(&svm, &thread_pubkey);
+    assert_eq!(thread.fiber_ids, vec![0]);
+    assert_eq!(thread.fiber_next_id, 1);
+    assert_eq!(thread.fiber_cursor, 0);
+
+    // Verify fiber PDA exists and has correct data
+    let fiber = deserialize_fiber(&svm, &fiber_pubkey);
+    assert_eq!(fiber.thread, thread_pubkey);
+    assert_eq!(fiber.priority_fee, 100);
+    assert!(!fiber.compiled_instruction.is_empty());
+}
+
+#[test]
+fn test_create_thread_with_fiber_no_accounts_fails() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let id = "fiber-noact";
+    let thread_id = ThreadId::Bytes(id.as_bytes().to_vec());
+    let (thread_pubkey, _) = thread_pda(&authority.pubkey(), id.as_bytes());
+
+    // Build a memo instruction but don't provide fiber/fiber_program accounts
+    let memo_ix = make_memo_instruction("should-fail", None);
+    let ser_ix = make_serializable_instruction(&memo_ix);
+
+    let ix = build_create_thread(
+        &authority.pubkey(),
+        &payer.pubkey(),
+        &thread_pubkey,
+        1_000_000,
+        thread_id,
+        Trigger::Immediate { jitter: 0 },
+        Some(ser_ix),
+        None,
+        None, // No fiber account
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    let result = svm.send_transaction(tx);
+    assert!(result.is_err(), "Should fail when instruction provided but fiber accounts missing");
 }

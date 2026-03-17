@@ -1,7 +1,7 @@
 [package]
 name = "antegen-thread-program"
 description = "Solana program for Antegen - automation and scheduling threads"
-version = "4.1.5"
+version = "5.0.0"
 authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
 repository = "https://github.com/wuwei-labs/antegen"
 homepage = "https://antegen.xyz/"
@@ -27,7 +27,8 @@ custom-heap = []
 custom-panic = []
 
 [dependencies]
-antegen-cron = { version = "4.0.0", path = "../../crates/cron" }
+antegen-cron = { workspace = true }
+antegen-fiber-program = { workspace = true }
 solana-nonce = { workspace = true }
 anchor-lang = { workspace = true, features = ["init-if-needed"] }
 chrono = { workspace = true }

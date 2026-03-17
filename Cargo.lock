@@ -478,6 +478,7 @@ version = "5.0.2"
 dependencies = [
  "anchor-lang",
  "antegen-client",
+ "antegen-fiber-program",
  "antegen-thread-program",
  "anyhow",
  "chrono",
@@ -507,9 +508,10 @@ dependencies = [
 
 [[package]]
 name = "antegen-client"
-version = "4.1.1"
+version = "4.1.2"
 dependencies = [
  "anchor-lang",
+ "antegen-fiber-program",
  "antegen-thread-program",
  "anyhow",
  "base64 0.22.1",
@@ -560,6 +562,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "antegen-fiber-program"
+version = "5.0.0"
+dependencies = [
+ "anchor-lang",
+ "borsh",
+ "solana-sdk",
+]
+
+[[package]]
 name = "antegen-geyser-plugin"
 version = "4.1.1"
 dependencies = [
@@ -574,11 +585,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "antegen-reentrance-test"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "antegen-thread-program",
+ "borsh",
+ "litesvm",
+ "solana-sdk",
+ "solana-system-interface 3.0.0",
+]
+
+[[package]]
 name = "antegen-thread-program"
-version = "4.1.5"
+version = "5.0.0"
 dependencies = [
  "anchor-lang",
  "antegen-cron",
+ "antegen-fiber-program",
  "borsh",
  "chrono",
  "litesvm",

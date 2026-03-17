@@ -1,6 +1,7 @@
 use {
-    crate::{errors::AntegenThreadError, state::FiberState, *},
+    crate::{errors::AntegenThreadError, *},
     anchor_lang::prelude::*,
+    antegen_fiber_program::{cpi::close_fiber, state::FiberState},
 };
 
 /// Accounts required by the `thread_close` instruction.
@@ -31,14 +32,16 @@ pub struct ThreadClose<'info> {
         bump = thread.bump
     )]
     pub thread: Account<'info, Thread>,
+
+    /// The Fiber Program (required when closing fibers via remaining_accounts)
+    pub fiber_program: Option<Program<'info, antegen_fiber_program::program::FiberProgram>>,
 }
 
-pub fn thread_close(ctx: Context<ThreadClose>) -> Result<()> {
+pub fn thread_close<'info>(ctx: Context<'_, '_, 'info, 'info, ThreadClose<'info>>) -> Result<()> {
     let thread = &mut ctx.accounts.thread;
-    let close_to = &ctx.accounts.close_to;
     let thread_key = thread.key();
 
-    // Process each fiber account from remaining_accounts
+    // Process each fiber account from remaining_accounts via CPI to Fiber Program
     for account in ctx.remaining_accounts.iter() {
         // Deserialize to validate it's a FiberState
         let fiber = FiberState::try_deserialize(&mut &account.data.borrow()[..])?;
@@ -49,33 +52,41 @@ pub fn thread_close(ctx: Context<ThreadClose>) -> Result<()> {
             AntegenThreadError::InvalidFiberAccount
         );
 
-        // Remove fiber_index from fiber_ids (fails if not found/duplicate)
+        // Find which fiber_id this account corresponds to by checking PDA derivation
+        let account_key = account.key();
         let pos = thread
             .fiber_ids
             .iter()
-            .position(|&idx| idx == fiber.fiber_index)
+            .position(|&idx| FiberState::pubkey(thread_key, idx) == account_key)
             .ok_or(AntegenThreadError::InvalidFiberAccount)?;
         thread.fiber_ids.remove(pos);
 
-        // Transfer lamports to close_to
-        let lamports = account.lamports();
-        **account.try_borrow_mut_lamports()? = 0;
-        **close_to.to_account_info().try_borrow_mut_lamports()? += lamports;
+        // CPI to Fiber Program's close_fiber (rent returns to thread PDA)
+        let fiber_program = ctx
+            .accounts
+            .fiber_program
+            .as_ref()
+            .ok_or(AntegenThreadError::MissingFiberAccounts)?;
 
-        // Zero account data & reassign owner to system program
-        account.try_borrow_mut_data()?.fill(0);
-        account.assign(&anchor_lang::system_program::ID);
+        thread.sign(|seeds| {
+            close_fiber(CpiContext::new_with_signer(
+                fiber_program.key(),
+                antegen_fiber_program::cpi::accounts::FiberClose {
+                    thread: thread.to_account_info(),
+                    fiber: account.to_account_info(),
+                },
+                &[seeds],
+            ))
+        })?;
     }
 
-    // Validate ALL external fibers were closed
-    // After processing: fiber_ids should only contain inline fiber (0) or be empty
-    let valid_end_state = if thread.default_fiber.is_some() {
-        thread.fiber_ids == vec![0]
-    } else {
-        thread.fiber_ids.is_empty()
-    };
-    require!(valid_end_state, AntegenThreadError::MissingFiberAccounts);
+    // Validate ALL fibers were closed
+    require!(
+        thread.fiber_ids.is_empty(),
+        AntegenThreadError::MissingFiberAccounts
+    );
 
     // Anchor's close = close_to handles the thread account
+    // (fiber rent returned to thread PDA is included in the transfer)
     Ok(())
 }

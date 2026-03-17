@@ -94,18 +94,6 @@ fn print_thread(thread: &Thread) {
     println!("  schedule: {:?}", thread.schedule);
     println!();
 
-    // Default fiber
-    println!("--- Default Fiber ---");
-    println!("  has_default_fiber: {}", thread.default_fiber.is_some());
-    if let Some(ref fiber) = thread.default_fiber {
-        println!("  default_fiber_len: {} bytes", fiber.len());
-    }
-    println!(
-        "  default_fiber_priority_fee: {}",
-        thread.default_fiber_priority_fee
-    );
-    println!();
-
     // Fibers
     println!("--- Fibers ---");
     println!("  fiber_ids: {:?}", thread.fiber_ids);
@@ -566,14 +554,7 @@ mod test_commands {
         signal: Option<Signal>,
     ) -> Instruction {
         // Derive fiber PDA
-        let (fiber_pubkey, _) = Pubkey::find_program_address(
-            &[
-                antegen_thread_program::SEED_THREAD_FIBER,
-                thread_pubkey.as_ref(),
-                &[fiber_index],
-            ],
-            &antegen_thread_program::ID,
-        );
+        let fiber_pubkey = antegen_fiber_program::state::FiberState::pubkey(thread_pubkey, fiber_index);
 
         // Build thread_memo instruction for this fiber
         let memo_ix = build_thread_memo_instruction(
@@ -586,9 +567,9 @@ mod test_commands {
         // Build fiber_create instruction
         let accounts = antegen_thread_program::accounts::FiberCreate {
             authority: authority.pubkey(),
-            payer: payer.pubkey(),
             thread: thread_pubkey,
             fiber: fiber_pubkey,
+            fiber_program: antegen_fiber_program::ID,
             system_program: anchor_lang::system_program::ID,
         }
         .to_account_metas(Some(false));
@@ -596,7 +577,6 @@ mod test_commands {
         let data = antegen_thread_program::instruction::CreateFiber {
             fiber_index,
             instruction: serializable_ix,
-            signer_seeds: vec![],
             priority_fee: 0,
         }
         .data();
@@ -1027,28 +1007,23 @@ mod test_commands {
 
         // Build ThreadClose accounts
         // Close_to receives the lamports - send to payer
+        let fiber_program = if thread.fiber_ids.is_empty() {
+            None
+        } else {
+            Some(antegen_fiber_program::ID)
+        };
+
         let mut accounts = antegen_thread_program::accounts::ThreadClose {
             authority: authority.pubkey(),
             close_to: payer.pubkey(),
             thread: thread_pubkey,
+            fiber_program,
         }
         .to_account_metas(Some(false));
 
         // Add fiber accounts to remaining_accounts so they can be closed
-        // Skip fiber 0 if it's stored inline (default_fiber exists)
         for fiber_id in &thread.fiber_ids {
-            // Fiber 0 with default_fiber is stored inline, not as separate account
-            if *fiber_id == 0 && thread.default_fiber.is_some() {
-                continue;
-            }
-            let (fiber_pubkey, _) = Pubkey::find_program_address(
-                &[
-                    antegen_thread_program::SEED_THREAD_FIBER,
-                    thread_pubkey.as_ref(),
-                    &[*fiber_id],
-                ],
-                &antegen_thread_program::ID,
-            );
+            let fiber_pubkey = antegen_fiber_program::state::FiberState::pubkey(thread_pubkey, *fiber_id);
             accounts.push(AccountMeta::new(fiber_pubkey, false));
         }
 
@@ -1429,26 +1404,10 @@ mod test_commands {
         println!("  fiber_next_id: {}", thread.fiber_next_id);
         println!("  fiber_signal: {:?}", thread.fiber_signal);
         println!();
-        println!(
-            "  default_fiber: {}",
-            if thread.default_fiber.is_some() {
-                "present"
-            } else {
-                "none"
-            }
-        );
-
         // Try to fetch individual fiber accounts
         println!("\nFiber accounts:");
         for &fiber_id in &thread.fiber_ids {
-            let (fiber_pubkey, _) = Pubkey::find_program_address(
-                &[
-                    antegen_thread_program::SEED_THREAD_FIBER,
-                    thread_pubkey.as_ref(),
-                    &[fiber_id],
-                ],
-                &antegen_thread_program::ID,
-            );
+            let fiber_pubkey = antegen_fiber_program::state::FiberState::pubkey(thread_pubkey, fiber_id);
 
             match client.get_account(&fiber_pubkey).await {
                 Ok(Some(fiber_account)) => {
@@ -1493,21 +1452,14 @@ mod test_commands {
         );
 
         // Derive fiber PDA
-        let (fiber_pubkey, _) = Pubkey::find_program_address(
-            &[
-                antegen_thread_program::SEED_THREAD_FIBER,
-                thread_pubkey.as_ref(),
-                &[fiber_index],
-            ],
-            &antegen_thread_program::ID,
-        );
+        let fiber_pubkey = antegen_fiber_program::state::FiberState::pubkey(thread_pubkey, fiber_index);
 
         // Build fiber_close instruction
         let accounts = antegen_thread_program::accounts::FiberClose {
             authority: authority.pubkey(),
-            close_to: payer.pubkey(),
             thread: thread_pubkey,
-            fiber: Some(fiber_pubkey),
+            fiber: fiber_pubkey,
+            fiber_program: antegen_fiber_program::ID,
         }
         .to_account_metas(Some(false));
 

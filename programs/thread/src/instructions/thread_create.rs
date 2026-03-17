@@ -1,5 +1,6 @@
 use crate::{
-    state::{compile_instruction, Schedule, SerializableInstruction, Signal, Trigger},
+    errors::AntegenThreadError,
+    state::{compile_instruction, Schedule, SerializableInstruction, Signal, ThreadSeeds, Trigger},
     utils::next_timestamp,
     *,
 };
@@ -16,7 +17,7 @@ use solana_nonce::state::State;
 /// For simple thread creation (no durable nonce), only authority, payer, thread, and system_program are needed.
 /// For durable nonce threads, also provide nonce_account, recent_blockhashes, and rent.
 #[derive(Accounts)]
-#[instruction(amount: u64, id: ThreadId, trigger: Trigger, initial_instruction: Option<SerializableInstruction>, priority_fee: Option<u64>, paused: Option<bool>)]
+#[instruction(amount: u64, id: ThreadId)]
 pub struct ThreadCreate<'info> {
     /// CHECK: the authority (owner) of the thread. Allows for program ownership
     #[account()]
@@ -52,6 +53,13 @@ pub struct ThreadCreate<'info> {
     pub rent: Option<UncheckedAccount<'info>>,
 
     pub system_program: Program<'info, System>,
+
+    /// CHECK: Fiber account (optional — only when creating with an instruction)
+    #[account(mut)]
+    pub fiber: Option<UncheckedAccount<'info>>,
+
+    /// Fiber Program (optional — only required when fiber is provided)
+    pub fiber_program: Option<Program<'info, antegen_fiber_program::program::FiberProgram>>,
 }
 
 pub fn thread_create(
@@ -59,9 +67,9 @@ pub fn thread_create(
     amount: u64,
     id: ThreadId,
     trigger: Trigger,
-    initial_instruction: Option<SerializableInstruction>,
-    priority_fee: Option<u64>,
     paused: Option<bool>,
+    instruction: Option<SerializableInstruction>,
+    priority_fee: Option<u64>,
 ) -> Result<()> {
     let authority: &Signer = &ctx.accounts.authority;
     let payer: &Signer = &ctx.accounts.payer;
@@ -126,81 +134,99 @@ pub fn thread_create(
         } => {
             let base_next =
                 next_timestamp(current_timestamp, schedule.clone()).unwrap_or(current_timestamp);
-            // Apply jitter to initial trigger time
             let jitter_offset =
                 crate::utils::calculate_jitter_offset(current_timestamp, &thread_pubkey, *jitter);
             let next = base_next.saturating_add(jitter_offset);
             Schedule::Timed {
-                prev: current_timestamp, // Use creation time as initial prev
+                prev: current_timestamp,
                 next,
             }
         }
         Trigger::Immediate { .. } => Schedule::Timed {
-            prev: current_timestamp, // Use creation time as initial prev
+            prev: current_timestamp,
             next: current_timestamp,
         },
         Trigger::Slot { slot } => Schedule::Block {
-            prev: clock.slot, // Use current slot as initial prev
+            prev: clock.slot,
             next: *slot,
         },
         Trigger::Epoch { epoch } => Schedule::Block {
-            prev: clock.epoch, // Use current epoch as initial prev
+            prev: clock.epoch,
             next: *epoch,
         },
         Trigger::Interval {
             seconds, jitter, ..
         } => {
             let base_next = current_timestamp.saturating_add(*seconds);
-            // Apply jitter to initial trigger time
             let jitter_offset =
                 crate::utils::calculate_jitter_offset(current_timestamp, &thread_pubkey, *jitter);
             let next = base_next.saturating_add(jitter_offset);
             Schedule::Timed {
-                prev: current_timestamp, // Use creation time as initial prev
+                prev: current_timestamp,
                 next,
             }
         }
         Trigger::Timestamp { unix_ts, .. } => Schedule::Timed {
-            prev: current_timestamp, // Use creation time as initial prev
+            prev: current_timestamp,
             next: *unix_ts,
         },
     };
 
-    // Use thread's PDA seeds for signer seeds
-    let signer_seeds = vec![vec![
-        SEED_THREAD.to_vec(),
-        thread.authority.to_bytes().to_vec(),
-        thread.id.clone(),
-    ]];
-
-    // Handle optional initial instruction
-    if let Some(instruction) = initial_instruction {
-        // Store default fiber inline in thread account
-        let instruction: Instruction = instruction.into();
-
-        // Compile the instruction
-        let compiled = compile_instruction(instruction, signer_seeds.clone())?;
-        let compiled_bytes = borsh::to_vec(&compiled)?;
-
-        // Store inline in thread
-        thread.default_fiber = Some(compiled_bytes);
-        thread.default_fiber_priority_fee = priority_fee.unwrap_or(0);
-        thread.fiber_next_id = 1; // Next fiber will be at index 1
-        thread.fiber_ids = vec![0]; // Fiber 0 exists (inline)
-    } else {
-        // No initial instruction, create empty thread
-        thread.default_fiber = None;
-        thread.default_fiber_priority_fee = 0;
-        thread.fiber_next_id = 0; // Next fiber will be at index 0
-        thread.fiber_ids = Vec::new();
-    }
-
-    thread.fiber_cursor = 0;
-    thread.exec_count = 0; // Initialize execution counter
-    thread.last_executor = Pubkey::default(); // Initialize with default for load balancing
-
-    // Initialize fiber_signal to None (no pending signal)
+    thread.exec_count = 0;
+    thread.last_executor = Pubkey::default();
     thread.fiber_signal = Signal::None;
+
+    // Optionally create fiber index 0 via CPI to fiber program
+    if let Some(instruction) = instruction {
+        // Prevent thread_delete instructions in fibers (same check as fiber_create)
+        if instruction.program_id.eq(&crate::ID)
+            && instruction.data.len().ge(&8)
+            && instruction.data[..8].eq(crate::instruction::DeleteThread::DISCRIMINATOR)
+        {
+            return Err(AntegenThreadError::InvalidInstruction.into());
+        }
+
+        // Require fiber and fiber_program accounts
+        let fiber = ctx
+            .accounts
+            .fiber
+            .as_ref()
+            .ok_or(AntegenThreadError::MissingFiberAccount)?;
+        let fiber_program = ctx
+            .accounts
+            .fiber_program
+            .as_ref()
+            .ok_or(AntegenThreadError::MissingFiberAccount)?;
+
+        let priority_fee = priority_fee.unwrap_or(0);
+
+        thread.sign(|seeds| {
+            antegen_fiber_program::cpi::create_fiber(
+                CpiContext::new_with_signer(
+                    fiber_program.key(),
+                    antegen_fiber_program::cpi::accounts::FiberCreate {
+                        thread: thread.to_account_info(),
+                        payer: payer.to_account_info(),
+                        fiber: fiber.to_account_info(),
+                        system_program: ctx.accounts.system_program.to_account_info(),
+                    },
+                    &[seeds],
+                ),
+                0, // fiber_index = 0
+                instruction.clone(),
+                priority_fee,
+            )
+        })?;
+
+        thread.fiber_next_id = 1;
+        thread.fiber_ids = vec![0];
+        thread.fiber_cursor = 0;
+    } else {
+        // No default fiber — users add fibers separately via create_fiber
+        thread.fiber_next_id = 0;
+        thread.fiber_ids = Vec::new();
+        thread.fiber_cursor = 0;
+    }
 
     // Build and store pre-compiled thread_close instruction for self-closing
     let close_ix = Instruction {
@@ -209,12 +235,13 @@ pub fn thread_create(
             authority: thread_pubkey,   // thread signs as authority
             close_to: thread.authority, // rent goes to owner
             thread: thread_pubkey,
+            fiber_program: Some(antegen_fiber_program::ID),
         }
         .to_account_metas(None),
         data: crate::instruction::CloseThread {}.data(),
     };
 
-    let compiled = compile_instruction(close_ix, signer_seeds)?;
+    let compiled = compile_instruction(close_ix)?;
     thread.close_fiber = borsh::to_vec(&compiled)?;
 
     // Transfer SOL from payer to the thread.

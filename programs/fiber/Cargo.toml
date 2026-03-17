@@ -1,0 +1,40 @@
+[package]
+name = "antegen-fiber-program"
+description = "Solana program for Antegen - fiber (instruction) account management"
+version = "5.0.0"
+authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
+repository = "https://github.com/wuwei-labs/antegen"
+homepage = "https://antegen.xyz/"
+documentation = "https://docs.antegen.xyz/"
+license = "MIT"
+edition = "2021"
+publish = false
+readme = "../../README.md"
+keywords = ["solana", "automation", "fiber", "blockchain", "anchor"]
+
+[lib]
+name = "antegen_fiber_program"
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = []
+anchor-debug = []
+cpi = ["no-entrypoint"]
+idl-build = ["anchor-lang/idl-build"]
+no-entrypoint = []
+no-log-ix-name = []
+no-idl = []
+custom-heap = []
+custom-panic = []
+
+[dependencies]
+anchor-lang = { workspace = true }
+
+[dev-dependencies]
+solana-sdk = { workspace = true }
+borsh = { workspace = true }
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = [
+  'cfg(target_os, values("solana"))',
+] }

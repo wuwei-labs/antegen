@@ -12,7 +12,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-antegen-client = { version = "4.1.1", path = "../../crates/client" }
+antegen-client = { workspace = true }
 agave-geyser-plugin-interface = { workspace = true }
 solana-logger = { workspace = true }
 solana-program = { workspace = true }

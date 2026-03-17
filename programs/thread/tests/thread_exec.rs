@@ -8,7 +8,7 @@ use solana_sdk::{
 mod common;
 use common::*;
 
-/// Create a thread with an inline memo instruction (default fiber at index 0).
+/// Create a thread with an external fiber (memo instruction at index 0).
 fn setup_exec_thread(
     svm: &mut litesvm::LiteSVM,
     authority: &Keypair,
@@ -18,15 +18,11 @@ fn setup_exec_thread(
     trigger: Trigger,
     memo: &str,
     signal: Option<Signal>,
-) -> Pubkey {
+) -> (Pubkey, Pubkey) {
     let thread_id = ThreadId::Bytes(id.as_bytes().to_vec());
     let (thread_pubkey, _) = thread_pda(&authority.pubkey(), id.as_bytes());
 
-    // Build memo instruction with thread as signer (replaced by PAYER for executor)
-    // For inline default fiber, the signer will be the thread itself
-    let memo_ix = make_thread_memo_instruction(&thread_pubkey, memo, signal);
-    let serializable = make_serializable_instruction(&memo_ix);
-
+    // Create the thread (no fibers)
     let ix = build_create_thread(
         &authority.pubkey(),
         &payer.pubkey(),
@@ -34,7 +30,8 @@ fn setup_exec_thread(
         5_000_000, // enough to pay fees
         thread_id,
         trigger,
-        Some(serializable),
+        None,
+        None,
         None,
     );
     let blockhash = svm.latest_blockhash();
@@ -45,18 +42,39 @@ fn setup_exec_thread(
         blockhash,
     );
     svm.send_transaction(tx)
-        .expect("create_thread with fiber should succeed");
-    thread_pubkey
+        .expect("create_thread should succeed");
+
+    // Create fiber at index 0 with memo instruction
+    let (fiber_pubkey, _) = fiber_pda(&thread_pubkey, 0);
+    let memo_ix = make_memo_instruction(memo, signal);
+    let serializable = make_serializable_instruction(&memo_ix);
+    let ix = build_create_fiber(
+        &authority.pubkey(),
+        &thread_pubkey,
+        &fiber_pubkey,
+        0,
+        serializable,
+        0,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[payer, authority],
+        blockhash,
+    );
+    svm.send_transaction(tx)
+        .expect("create_fiber should succeed");
+
+    (thread_pubkey, fiber_pubkey)
 }
 
 /// Build remaining accounts for exec based on the thread's compiled instruction.
-/// For a memo instruction with the thread as signer, remaining accounts = [thread, program_id].
-fn build_remaining_accounts(thread_pubkey: &Pubkey) -> Vec<AccountMeta> {
-    // The thread_memo instruction needs: signer (thread) as remaining account
-    // plus the program_id for the CPI
+/// For a memo instruction with the payer placeholder as signer, remaining accounts = [program_id, executor].
+fn build_remaining_accounts(executor: &Pubkey) -> Vec<AccountMeta> {
     vec![
-        AccountMeta::new_readonly(PROGRAM_ID, false),  // program account for CPI
-        AccountMeta::new_readonly(*thread_pubkey, false), // thread as signer in remaining
+        AccountMeta::new_readonly(PROGRAM_ID, false), // program account for CPI
+        AccountMeta::new_readonly(*executor, false),   // executor replaces PAYER_PUBKEY
     ]
 }
 
@@ -69,7 +87,7 @@ fn test_exec_thread_immediate_trigger() {
     svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let (config_pubkey, _) = config_pda();
-    let thread_pubkey = setup_exec_thread(
+    let (thread_pubkey, fiber_pubkey) = setup_exec_thread(
         &mut svm,
         &authority,
         &payer,
@@ -80,11 +98,11 @@ fn test_exec_thread_immediate_trigger() {
         None,
     );
 
-    let remaining = build_remaining_accounts(&thread_pubkey);
+    let remaining = build_remaining_accounts(&executor.pubkey());
     let ix = build_exec_thread(
         &executor.pubkey(),
         &thread_pubkey,
-        None,
+        &fiber_pubkey,
         &config_pubkey,
         &admin.pubkey(),
         false,
@@ -114,7 +132,7 @@ fn test_exec_thread_paused_fails() {
     svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let (config_pubkey, _) = config_pda();
-    let thread_pubkey = setup_exec_thread(
+    let (thread_pubkey, fiber_pubkey) = setup_exec_thread(
         &mut svm,
         &authority,
         &payer,
@@ -144,11 +162,11 @@ fn test_exec_thread_paused_fails() {
     svm.send_transaction(tx).unwrap();
 
     // Try to exec
-    let remaining = build_remaining_accounts(&thread_pubkey);
+    let remaining = build_remaining_accounts(&executor.pubkey());
     let ix = build_exec_thread(
         &executor.pubkey(),
         &thread_pubkey,
-        None,
+        &fiber_pubkey,
         &config_pubkey,
         &admin.pubkey(),
         false,
@@ -175,7 +193,7 @@ fn test_exec_thread_global_pause_fails() {
     svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let (config_pubkey, _) = config_pda();
-    let thread_pubkey = setup_exec_thread(
+    let (thread_pubkey, fiber_pubkey) = setup_exec_thread(
         &mut svm,
         &authority,
         &payer,
@@ -205,11 +223,11 @@ fn test_exec_thread_global_pause_fails() {
     svm.send_transaction(tx).unwrap();
 
     // Try to exec
-    let remaining = build_remaining_accounts(&thread_pubkey);
+    let remaining = build_remaining_accounts(&executor.pubkey());
     let ix = build_exec_thread(
         &executor.pubkey(),
         &thread_pubkey,
-        None,
+        &fiber_pubkey,
         &config_pubkey,
         &admin.pubkey(),
         false,
@@ -235,7 +253,7 @@ fn test_exec_thread_no_fibers_fails() {
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
     svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    // Create thread WITHOUT initial instruction (no fibers)
+    // Create thread WITHOUT any fibers
     let thread_id = ThreadId::Bytes(b"exec-nofiber".to_vec());
     let (thread_pubkey, _) = thread_pda(&authority.pubkey(), b"exec-nofiber");
     let ix = build_create_thread(
@@ -245,6 +263,7 @@ fn test_exec_thread_no_fibers_fails() {
         5_000_000,
         thread_id,
         Trigger::Immediate { jitter: 0 },
+        None,
         None,
         None,
     );
@@ -257,13 +276,15 @@ fn test_exec_thread_no_fibers_fails() {
     );
     svm.send_transaction(tx).unwrap();
 
-    // Try to exec
+    // Try to exec - should fail because no fibers (constraint check)
     let (config_pubkey, _) = config_pda();
-    let remaining = build_remaining_accounts(&thread_pubkey);
+    // Use a dummy fiber pubkey (doesn't exist)
+    let (dummy_fiber, _) = fiber_pda(&thread_pubkey, 0);
+    let remaining = build_remaining_accounts(&executor.pubkey());
     let ix = build_exec_thread(
         &executor.pubkey(),
         &thread_pubkey,
-        None,
+        &dummy_fiber,
         &config_pubkey,
         &admin.pubkey(),
         false,
@@ -291,7 +312,7 @@ fn test_exec_thread_timestamp_not_ready() {
 
     let future_ts = get_clock(&svm).unix_timestamp + 3600; // 1 hour from now
     let (config_pubkey, _) = config_pda();
-    let thread_pubkey = setup_exec_thread(
+    let (thread_pubkey, fiber_pubkey) = setup_exec_thread(
         &mut svm,
         &authority,
         &payer,
@@ -305,11 +326,11 @@ fn test_exec_thread_timestamp_not_ready() {
         None,
     );
 
-    let remaining = build_remaining_accounts(&thread_pubkey);
+    let remaining = build_remaining_accounts(&executor.pubkey());
     let ix = build_exec_thread(
         &executor.pubkey(),
         &thread_pubkey,
-        None,
+        &fiber_pubkey,
         &config_pubkey,
         &admin.pubkey(),
         false,
@@ -338,7 +359,7 @@ fn test_exec_thread_timestamp_ready() {
     let clock = get_clock(&svm);
     let target_ts = clock.unix_timestamp + 10;
     let (config_pubkey, _) = config_pda();
-    let thread_pubkey = setup_exec_thread(
+    let (thread_pubkey, fiber_pubkey) = setup_exec_thread(
         &mut svm,
         &authority,
         &payer,
@@ -355,11 +376,11 @@ fn test_exec_thread_timestamp_ready() {
     // Advance clock past the timestamp
     advance_clock(&mut svm, 20);
 
-    let remaining = build_remaining_accounts(&thread_pubkey);
+    let remaining = build_remaining_accounts(&executor.pubkey());
     let ix = build_exec_thread(
         &executor.pubkey(),
         &thread_pubkey,
-        None,
+        &fiber_pubkey,
         &config_pubkey,
         &admin.pubkey(),
         false,
@@ -388,7 +409,7 @@ fn test_exec_thread_interval_trigger() {
     svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let (config_pubkey, _) = config_pda();
-    let thread_pubkey = setup_exec_thread(
+    let (thread_pubkey, fiber_pubkey) = setup_exec_thread(
         &mut svm,
         &authority,
         &payer,
@@ -406,11 +427,11 @@ fn test_exec_thread_interval_trigger() {
     // Advance past interval
     advance_clock(&mut svm, 35);
 
-    let remaining = build_remaining_accounts(&thread_pubkey);
+    let remaining = build_remaining_accounts(&executor.pubkey());
     let ix = build_exec_thread(
         &executor.pubkey(),
         &thread_pubkey,
-        None,
+        &fiber_pubkey,
         &config_pubkey,
         &admin.pubkey(),
         false,
@@ -441,7 +462,7 @@ fn test_exec_thread_slot_trigger() {
     let clock = get_clock(&svm);
     let target_slot = clock.slot + 10;
     let (config_pubkey, _) = config_pda();
-    let thread_pubkey = setup_exec_thread(
+    let (thread_pubkey, fiber_pubkey) = setup_exec_thread(
         &mut svm,
         &authority,
         &payer,
@@ -455,11 +476,11 @@ fn test_exec_thread_slot_trigger() {
     // Warp to target slot
     warp_to_slot(&mut svm, target_slot + 1);
 
-    let remaining = build_remaining_accounts(&thread_pubkey);
+    let remaining = build_remaining_accounts(&executor.pubkey());
     let ix = build_exec_thread(
         &executor.pubkey(),
         &thread_pubkey,
-        None,
+        &fiber_pubkey,
         &config_pubkey,
         &admin.pubkey(),
         false,
@@ -488,7 +509,7 @@ fn test_exec_thread_fee_distribution() {
     svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let (config_pubkey, _) = config_pda();
-    let thread_pubkey = setup_exec_thread(
+    let (thread_pubkey, fiber_pubkey) = setup_exec_thread(
         &mut svm,
         &authority,
         &payer,
@@ -502,11 +523,11 @@ fn test_exec_thread_fee_distribution() {
     let executor_before = get_balance(&svm, &executor.pubkey());
     let admin_before = get_balance(&svm, &admin.pubkey());
 
-    let remaining = build_remaining_accounts(&thread_pubkey);
+    let remaining = build_remaining_accounts(&executor.pubkey());
     let ix = build_exec_thread(
         &executor.pubkey(),
         &thread_pubkey,
-        None,
+        &fiber_pubkey,
         &config_pubkey,
         &admin.pubkey(),
         false,
@@ -527,8 +548,6 @@ fn test_exec_thread_fee_distribution() {
 
     // Admin should receive core team fee
     assert!(admin_after > admin_before);
-    // Executor pays tx fee but receives reimbursement + commission
-    // Net effect depends on exact commission amounts
     let _ = executor_before;
     let _ = executor_after;
 }
@@ -542,7 +561,7 @@ fn test_exec_thread_forgo_commission() {
     svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let (config_pubkey, _) = config_pda();
-    let thread_pubkey = setup_exec_thread(
+    let (thread_pubkey, fiber_pubkey) = setup_exec_thread(
         &mut svm,
         &authority,
         &payer,
@@ -553,11 +572,11 @@ fn test_exec_thread_forgo_commission() {
         None,
     );
 
-    let remaining = build_remaining_accounts(&thread_pubkey);
+    let remaining = build_remaining_accounts(&executor.pubkey());
     let ix = build_exec_thread(
         &executor.pubkey(),
         &thread_pubkey,
-        None,
+        &fiber_pubkey,
         &config_pubkey,
         &admin.pubkey(),
         true, // forgo commission
@@ -588,8 +607,7 @@ fn test_exec_thread_signal_close() {
     let (config_pubkey, _) = config_pda();
 
     // For Immediate trigger, after first exec the fiber_signal is set to Signal::Close
-    // So first exec succeeds, then second exec would trigger close
-    let thread_pubkey = setup_exec_thread(
+    let (thread_pubkey, fiber_pubkey) = setup_exec_thread(
         &mut svm,
         &authority,
         &payer,
@@ -601,11 +619,11 @@ fn test_exec_thread_signal_close() {
     );
 
     // First exec - succeeds, sets fiber_signal to Close (Immediate trigger auto-closes)
-    let remaining = build_remaining_accounts(&thread_pubkey);
+    let remaining = build_remaining_accounts(&executor.pubkey());
     let ix = build_exec_thread(
         &executor.pubkey(),
         &thread_pubkey,
-        None,
+        &fiber_pubkey,
         &config_pubkey,
         &admin.pubkey(),
         false,
@@ -630,7 +648,7 @@ fn test_exec_thread_signal_close() {
 }
 
 #[test]
-fn test_exec_thread_fiber_cursor_advance() {
+fn test_exec_thread_signal_update_pause() {
     let (mut svm, admin, payer) = create_test_env();
     let authority = Keypair::new();
     let executor = Keypair::new();
@@ -638,54 +656,33 @@ fn test_exec_thread_fiber_cursor_advance() {
     svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let (config_pubkey, _) = config_pda();
-    // Use interval trigger so thread stays alive after exec
-    let thread_pubkey = setup_exec_thread(
+    // Use Interval trigger so thread stays alive after exec
+    let (thread_pubkey, fiber_pubkey) = setup_exec_thread(
         &mut svm,
         &authority,
         &payer,
         &admin.pubkey(),
-        "exec-cursor",
+        "exec-sig-pause",
         Trigger::Interval {
             seconds: 10,
             skippable: false,
             jitter: 0,
         },
-        "test",
-        None,
+        "pause-test",
+        Some(Signal::Update {
+            paused: Some(true),
+            trigger: None,
+        }),
     );
-
-    // Add a second fiber (external at index 1)
-    let (fiber1_pubkey, _) = fiber_pda(&thread_pubkey, 1);
-    let memo_ix = make_memo_instruction("fiber-1", None);
-    let serializable = make_serializable_instruction(&memo_ix);
-    let ix = build_create_fiber(
-        &authority.pubkey(),
-        &payer.pubkey(),
-        &thread_pubkey,
-        &fiber1_pubkey,
-        1,
-        serializable,
-        vec![],
-        0,
-    );
-    let blockhash = svm.latest_blockhash();
-    let tx = Transaction::new_signed_with_payer(
-        &[ix],
-        Some(&payer.pubkey()),
-        &[&payer, &authority],
-        blockhash,
-    );
-    svm.send_transaction(tx).unwrap();
 
     // Advance past interval
     advance_clock(&mut svm, 15);
 
-    // Exec fiber 0 (inline default)
-    let remaining = build_remaining_accounts(&thread_pubkey);
+    let remaining = build_remaining_accounts(&executor.pubkey());
     let ix = build_exec_thread(
         &executor.pubkey(),
         &thread_pubkey,
-        None,
+        &fiber_pubkey,
         &config_pubkey,
         &admin.pubkey(),
         false,
@@ -702,12 +699,12 @@ fn test_exec_thread_fiber_cursor_advance() {
     svm.send_transaction(tx).unwrap();
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
-    // After executing fiber 0, cursor should advance to 1
-    assert_eq!(thread.fiber_cursor, 1);
+    assert_eq!(thread.exec_count, 1);
+    assert!(thread.paused, "Thread should be paused after Signal::Update with paused=true");
 }
 
 #[test]
-fn test_exec_thread_wrong_fiber_cursor() {
+fn test_exec_thread_signal_update_trigger() {
     let (mut svm, admin, payer) = create_test_env();
     let authority = Keypair::new();
     let executor = Keypair::new();
@@ -715,30 +712,42 @@ fn test_exec_thread_wrong_fiber_cursor() {
     svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let (config_pubkey, _) = config_pda();
-    let thread_pubkey = setup_exec_thread(
+    let new_trigger = Trigger::Timestamp {
+        unix_ts: 999_999_999,
+        jitter: 0,
+    };
+
+    // Use Interval trigger, fiber will signal to change it to Timestamp
+    let (thread_pubkey, fiber_pubkey) = setup_exec_thread(
         &mut svm,
         &authority,
         &payer,
         &admin.pubkey(),
-        "exec-wrong-cursor",
-        Trigger::Immediate { jitter: 0 },
-        "test",
-        None,
+        "exec-sig-trig",
+        Trigger::Interval {
+            seconds: 10,
+            skippable: false,
+            jitter: 0,
+        },
+        "trigger-test",
+        Some(Signal::Update {
+            paused: None,
+            trigger: Some(new_trigger.clone()),
+        }),
     );
 
-    // Thread has fiber_cursor=0, try exec with cursor=5
-    let remaining = build_remaining_accounts(&thread_pubkey);
+    // Advance past interval
+    advance_clock(&mut svm, 15);
 
-    // Fabricate a fiber PDA for index 5 (doesn't exist)
-    let (fiber5, _) = fiber_pda(&thread_pubkey, 5);
+    let remaining = build_remaining_accounts(&executor.pubkey());
     let ix = build_exec_thread(
         &executor.pubkey(),
         &thread_pubkey,
-        Some(&fiber5),
+        &fiber_pubkey,
         &config_pubkey,
         &admin.pubkey(),
         false,
-        5, // wrong cursor
+        0,
         &remaining,
     );
     let blockhash = svm.latest_blockhash();
@@ -748,6 +757,10 @@ fn test_exec_thread_wrong_fiber_cursor() {
         &[&executor],
         blockhash,
     );
-    let result = svm.send_transaction(tx);
-    assert!(result.is_err());
+    svm.send_transaction(tx).unwrap();
+
+    let thread = deserialize_thread(&svm, &thread_pubkey);
+    assert_eq!(thread.exec_count, 1);
+    assert!(!thread.paused, "Thread should not be paused");
+    assert_eq!(thread.trigger, new_trigger, "Trigger should be updated to Timestamp");
 }

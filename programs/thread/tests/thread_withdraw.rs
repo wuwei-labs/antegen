@@ -21,6 +21,7 @@ fn create_funded_thread(
         Trigger::Immediate { jitter: 0 },
         None,
         None,
+        None,
     );
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(

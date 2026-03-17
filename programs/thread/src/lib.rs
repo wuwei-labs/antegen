@@ -4,15 +4,22 @@ pub mod instructions;
 pub mod state;
 pub mod utils;
 
+/// Fiber program re-exports for direct CPI access.
+/// Use when your program is executed via `thread_exec` and needs to
+/// manage fibers directly (cannot CPI back to thread program due to reentrancy).
+pub mod fiber {
+    pub use antegen_fiber_program::cpi;
+    pub use antegen_fiber_program::ID;
+}
+
 pub use constants::*;
 use instructions::*;
 use state::*;
 
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::instruction::Instruction;
 use state::{SerializableInstruction, Trigger};
 
-declare_id!("AgV3xRAdyTe1wW4gTW2oAnzHiAGofsxC7jBVGGkzUQbY");
+declare_id!("AgYyg261DAfp8eqSfdnfW9a2qYjuyzVwrFErJ61NXThd");
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub enum ThreadId {
@@ -86,54 +93,56 @@ pub mod thread_program {
         config_update(ctx, params)
     }
 
-    /// Creates a fiber (instruction) for a thread.
+    /// Creates a fiber (instruction) for a thread via CPI to Fiber Program.
     pub fn create_fiber(
         ctx: Context<FiberCreate>,
         fiber_index: u8,
         instruction: SerializableInstruction,
-        signer_seeds: Vec<Vec<Vec<u8>>>,
         priority_fee: u64,
     ) -> Result<()> {
-        let instruction: Instruction = instruction.into();
-        fiber_create(ctx, fiber_index, instruction, signer_seeds, priority_fee)
+        fiber_create(ctx, fiber_index, instruction, priority_fee)
     }
 
-    /// Closes a fiber from a thread.
+    /// Closes a fiber from a thread via CPI to Fiber Program.
     pub fn close_fiber(ctx: Context<FiberClose>, fiber_index: u8) -> Result<()> {
         fiber_close(ctx, fiber_index)
     }
 
-    /// Updates a fiber's instruction and resets execution stats.
-    /// If the fiber doesn't exist yet, creates it (lazy initialization).
+    /// Updates a fiber's instruction via CPI to Fiber Program.
     pub fn update_fiber(
         ctx: Context<FiberUpdate>,
-        fiber_index: u8,
         instruction: SerializableInstruction,
-        signer_seeds: Option<Vec<Vec<Vec<u8>>>>,
         priority_fee: Option<u64>,
     ) -> Result<()> {
-        let instruction: Instruction = instruction.into();
-        fiber_update(ctx, fiber_index, instruction, signer_seeds, priority_fee)
+        fiber_update(ctx, instruction, priority_fee)
+    }
+
+    /// Swaps source fiber's instruction into target fiber, closes source.
+    /// Target keeps its PDA/index, source is deleted.
+    pub fn swap_fiber(ctx: Context<FiberSwap>, source_fiber_index: u8) -> Result<()> {
+        instructions::fiber_swap::fiber_swap(ctx, source_fiber_index)
     }
 
     /// Creates a new transaction thread.
-    /// Optionally creates an initial fiber if instruction is provided.
+    /// Optionally creates fiber index 0 if `instruction` is provided.
     pub fn create_thread(
         ctx: Context<ThreadCreate>,
         amount: u64,
         id: ThreadId,
         trigger: Trigger,
-        initial_instruction: Option<SerializableInstruction>,
-        priority_fee: Option<u64>,
         paused: Option<bool>,
+        instruction: Option<SerializableInstruction>,
+        priority_fee: Option<u64>,
     ) -> Result<()> {
-        thread_create(ctx, amount, id, trigger, initial_instruction, priority_fee, paused)
+        thread_create(ctx, amount, id, trigger, paused, instruction, priority_fee)
     }
 
     /// Closes an existing thread account and returns the lamports to the owner.
     /// Requires authority (owner) or thread itself to sign.
     /// External fiber accounts should be passed via remaining_accounts.
-    pub fn close_thread(ctx: Context<ThreadClose>) -> Result<()> {
+    pub fn close_thread<'info>(
+        ctx: Context<'_, '_, 'info, 'info, ThreadClose<'info>>,
+    ) -> Result<()> {
         thread_close(ctx)
     }
 

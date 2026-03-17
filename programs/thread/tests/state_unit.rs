@@ -3,7 +3,7 @@ use antegen_thread_program::{
     state::{
         compile_instruction, decompile_instruction, CommissionCalculator,
         FiberState, PaymentProcessor, Schedule, Signal, Thread, ThreadConfig, Trigger,
-        CURRENT_THREAD_VERSION,
+        CURRENT_THREAD_VERSION, SEED_THREAD_FIBER,
     },
     utils::{calculate_jitter_offset, next_timestamp},
 };
@@ -13,7 +13,7 @@ use solana_sdk::{
 };
 
 mod common;
-use common::setup::PROGRAM_ID;
+use common::setup::{FIBER_PROGRAM_ID, PROGRAM_ID};
 
 // ============================================================================
 // Thread::advance_to_next_fiber tests
@@ -29,8 +29,6 @@ fn make_thread(fiber_ids: Vec<u8>, fiber_cursor: u8) -> Thread {
         created_at: 0,
         trigger: Trigger::Immediate { jitter: 0 },
         schedule: Schedule::Timed { prev: 0, next: 0 },
-        default_fiber: None,
-        default_fiber_priority_fee: 0,
         fiber_ids,
         fiber_cursor,
         fiber_next_id: 0,
@@ -124,9 +122,8 @@ fn test_validate_invalid_cursor() {
 }
 
 #[test]
-fn test_validate_default_fiber_valid() {
-    let mut thread = make_thread(vec![0], 0);
-    thread.default_fiber = Some(vec![1, 2, 3]); // dummy data
+fn test_validate_valid_cursor() {
+    let thread = make_thread(vec![0], 0);
     assert!(thread.validate_for_execution().is_ok());
 }
 
@@ -186,7 +183,7 @@ fn test_compile_decompile_roundtrip() {
         data: vec![1, 2, 3, 4],
     };
 
-    let compiled = compile_instruction(ix.clone(), vec![]).unwrap();
+    let compiled = compile_instruction(ix.clone()).unwrap();
     let decompiled = decompile_instruction(&compiled).unwrap();
 
     assert_eq!(decompiled.program_id, ix.program_id);
@@ -212,7 +209,7 @@ fn test_compiled_account_sorting() {
         data: vec![],
     };
 
-    let compiled = compile_instruction(ix, vec![]).unwrap();
+    let compiled = compile_instruction(ix).unwrap();
 
     // rw_signer should come first in the sorted account list
     assert_eq!(compiled.num_rw_signers, 1);
@@ -354,8 +351,9 @@ fn test_thread_pda_derivation() {
 fn test_fiber_pda_derivation() {
     let thread = Pubkey::new_unique();
     let index = 3u8;
+    // FiberState PDAs use the Fiber Program ID
     let (expected, _bump) =
-        Pubkey::find_program_address(&[SEED_THREAD_FIBER, thread.as_ref(), &[index]], &PROGRAM_ID);
+        Pubkey::find_program_address(&[SEED_THREAD_FIBER, thread.as_ref(), &[index]], &FIBER_PROGRAM_ID);
     let derived = FiberState::pubkey(thread, index);
     assert_eq!(derived, expected);
 }

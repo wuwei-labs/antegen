@@ -21,6 +21,7 @@ fn create_thread_for_update(
         trigger,
         None,
         None,
+        None,
     );
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(

@@ -3,38 +3,6 @@ use solana_sdk::{pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Tran
 mod common;
 use common::*;
 
-/// Setup: create thread with inline default fiber (index 0).
-fn setup_thread_inline(
-    svm: &mut litesvm::LiteSVM,
-    authority: &Keypair,
-    payer: &Keypair,
-    id: &str,
-) -> Pubkey {
-    let thread_id = ThreadId::Bytes(id.as_bytes().to_vec());
-    let (thread_pubkey, _) = thread_pda(&authority.pubkey(), id.as_bytes());
-    let memo_ix = make_memo_instruction("inline", None);
-    let serializable = make_serializable_instruction(&memo_ix);
-    let ix = build_create_thread(
-        &authority.pubkey(),
-        &payer.pubkey(),
-        &thread_pubkey,
-        1_000_000,
-        thread_id,
-        Trigger::Immediate { jitter: 0 },
-        Some(serializable),
-        None,
-    );
-    let blockhash = svm.latest_blockhash();
-    let tx = Transaction::new_signed_with_payer(
-        &[ix],
-        Some(&payer.pubkey()),
-        &[payer, authority],
-        blockhash,
-    );
-    svm.send_transaction(tx).unwrap();
-    thread_pubkey
-}
-
 /// Setup: create thread + account-based fiber.
 fn setup_thread_external(
     svm: &mut litesvm::LiteSVM,
@@ -53,6 +21,7 @@ fn setup_thread_external(
         Trigger::Immediate { jitter: 0 },
         None,
         None,
+        None,
     );
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
@@ -69,12 +38,10 @@ fn setup_thread_external(
     let serializable = make_serializable_instruction(&memo_ix);
     let ix = build_create_fiber(
         &authority.pubkey(),
-        &payer.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
         0,
         serializable,
-        vec![],
         0,
     );
     let blockhash = svm.latest_blockhash();
@@ -100,9 +67,8 @@ fn test_fiber_close_external_fiber() {
 
     let ix = build_close_fiber(
         &authority.pubkey(),
-        &payer.pubkey(),
         &thread_pubkey,
-        Some(&fiber_pubkey),
+        &fiber_pubkey,
         0,
     );
     let blockhash = svm.latest_blockhash();
@@ -121,36 +87,6 @@ fn test_fiber_close_external_fiber() {
 }
 
 #[test]
-fn test_fiber_close_default_fiber() {
-    let (mut svm, _admin, payer) = create_test_env();
-    let authority = Keypair::new();
-    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
-
-    let thread_pubkey = setup_thread_inline(&mut svm, &authority, &payer, "fclose-def");
-
-    // Close inline fiber (no fiber account needed)
-    let ix = build_close_fiber(
-        &authority.pubkey(),
-        &authority.pubkey(),
-        &thread_pubkey,
-        None,
-        0,
-    );
-    let blockhash = svm.latest_blockhash();
-    let tx = Transaction::new_signed_with_payer(
-        &[ix],
-        Some(&payer.pubkey()),
-        &[&payer, &authority],
-        blockhash,
-    );
-    svm.send_transaction(tx).unwrap();
-
-    let thread = deserialize_thread(&svm, &thread_pubkey);
-    assert!(thread.default_fiber.is_none());
-    assert!(thread.fiber_ids.is_empty());
-}
-
-#[test]
 fn test_fiber_close_authority_check() {
     let (mut svm, _admin, payer) = create_test_env();
     let authority = Keypair::new();
@@ -164,9 +100,8 @@ fn test_fiber_close_authority_check() {
 
     let ix = build_close_fiber(
         &bad_authority.pubkey(),
-        &payer.pubkey(),
         &thread_pubkey,
-        Some(&fiber_pubkey),
+        &fiber_pubkey,
         0,
     );
     let blockhash = svm.latest_blockhash();
@@ -189,14 +124,13 @@ fn test_fiber_close_rent_returned() {
     let (thread_pubkey, fiber_pubkey) =
         setup_thread_external(&mut svm, &authority, &payer, "fclose-rent");
 
-    // payer is both tx fee payer and the original fiber rent payer (fiber.payer)
-    let payer_before = get_balance(&svm, &payer.pubkey());
+    // Rent returns to thread PDA (via Fiber Program close = thread)
+    let thread_before = get_balance(&svm, &thread_pubkey);
 
     let ix = build_close_fiber(
         &authority.pubkey(),
-        &payer.pubkey(),
         &thread_pubkey,
-        Some(&fiber_pubkey),
+        &fiber_pubkey,
         0,
     );
     let blockhash = svm.latest_blockhash();
@@ -208,9 +142,9 @@ fn test_fiber_close_rent_returned() {
     );
     svm.send_transaction(tx).unwrap();
 
-    // Payer receives fiber rent back (minus tx fee), net should be positive
-    let payer_after = get_balance(&svm, &payer.pubkey());
-    assert!(payer_after > payer_before);
+    // Thread should receive fiber rent back
+    let thread_after = get_balance(&svm, &thread_pubkey);
+    assert!(thread_after > thread_before);
 }
 
 #[test]
@@ -224,9 +158,8 @@ fn test_fiber_close_last_fiber_resets_cursor() {
 
     let ix = build_close_fiber(
         &authority.pubkey(),
-        &payer.pubkey(),
         &thread_pubkey,
-        Some(&fiber_pubkey),
+        &fiber_pubkey,
         0,
     );
     let blockhash = svm.latest_blockhash();
@@ -241,34 +174,6 @@ fn test_fiber_close_last_fiber_resets_cursor() {
     let thread = deserialize_thread(&svm, &thread_pubkey);
     assert!(thread.fiber_ids.is_empty());
     assert_eq!(thread.fiber_cursor, 0);
-}
-
-#[test]
-fn test_fiber_close_requires_account() {
-    let (mut svm, _admin, payer) = create_test_env();
-    let authority = Keypair::new();
-    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
-
-    let (thread_pubkey, _fiber_pubkey) =
-        setup_thread_external(&mut svm, &authority, &payer, "fclose-req");
-
-    // Try to close account-based fiber without providing the account
-    let ix = build_close_fiber(
-        &authority.pubkey(),
-        &payer.pubkey(),
-        &thread_pubkey,
-        None, // Missing fiber account!
-        0,
-    );
-    let blockhash = svm.latest_blockhash();
-    let tx = Transaction::new_signed_with_payer(
-        &[ix],
-        Some(&payer.pubkey()),
-        &[&payer, &authority],
-        blockhash,
-    );
-    let result = svm.send_transaction(tx);
-    assert!(result.is_err());
 }
 
 #[test]
@@ -289,6 +194,7 @@ fn test_fiber_close_middle_of_sequence() {
         Trigger::Immediate { jitter: 0 },
         None,
         None,
+        None,
     );
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
@@ -307,12 +213,10 @@ fn test_fiber_close_middle_of_sequence() {
         let serializable = make_serializable_instruction(&memo_ix);
         let ix = build_create_fiber(
             &authority.pubkey(),
-            &payer.pubkey(),
             &thread_pubkey,
             &fiber_pubkey,
             i,
             serializable,
-            vec![],
             0,
         );
         let blockhash = svm.latest_blockhash();
@@ -329,9 +233,8 @@ fn test_fiber_close_middle_of_sequence() {
     // Close fiber at index 1 (middle)
     let ix = build_close_fiber(
         &authority.pubkey(),
-        &payer.pubkey(),
         &thread_pubkey,
-        Some(&fiber_pubkeys[1]),
+        &fiber_pubkeys[1],
         1,
     );
     let blockhash = svm.latest_blockhash();
@@ -365,6 +268,7 @@ fn test_fiber_close_advances_cursor() {
         Trigger::Immediate { jitter: 0 },
         None,
         None,
+        None,
     );
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
@@ -382,12 +286,10 @@ fn test_fiber_close_advances_cursor() {
         let serializable = make_serializable_instruction(&memo_ix);
         let ix = build_create_fiber(
             &authority.pubkey(),
-            &payer.pubkey(),
             &thread_pubkey,
             &fiber_pubkey,
             i,
             serializable,
-            vec![],
             0,
         );
         let blockhash = svm.latest_blockhash();
@@ -404,9 +306,8 @@ fn test_fiber_close_advances_cursor() {
     let (fiber0_pubkey, _) = fiber_pda(&thread_pubkey, 0);
     let ix = build_close_fiber(
         &authority.pubkey(),
-        &payer.pubkey(),
         &thread_pubkey,
-        Some(&fiber0_pubkey),
+        &fiber0_pubkey,
         0,
     );
     let blockhash = svm.latest_blockhash();

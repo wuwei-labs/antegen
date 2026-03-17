@@ -20,6 +20,7 @@ fn create_thread(
         Trigger::Immediate { jitter: 0 },
         None,
         None,
+        None,
     );
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
@@ -90,12 +91,10 @@ fn test_thread_delete_skips_fiber_checks() {
     let serializable = make_serializable_instruction(&memo_ix);
     let ix = build_create_fiber(
         &authority.pubkey(),
-        &payer.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
         0,
         serializable,
-        vec![],
         0,
     );
     let blockhash = svm.latest_blockhash();

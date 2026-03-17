@@ -12,8 +12,6 @@ fn setup_error_thread(
 ) -> Pubkey {
     let thread_id = ThreadId::Bytes(id.as_bytes().to_vec());
     let (thread_pubkey, _) = thread_pda(&authority.pubkey(), id.as_bytes());
-    let memo_ix = make_thread_memo_instruction(&thread_pubkey, "error-test", None);
-    let serializable = make_serializable_instruction(&memo_ix);
     let ix = build_create_thread(
         &authority.pubkey(),
         &payer.pubkey(),
@@ -25,7 +23,8 @@ fn setup_error_thread(
             skippable: false,
             jitter: 0,
         },
-        Some(serializable),
+        None,
+        None,
         None,
     );
     let blockhash = svm.latest_blockhash();
@@ -116,16 +115,37 @@ fn test_error_thread_not_last_executor() {
     let (config_pubkey, _) = config_pda();
     let thread_pubkey = setup_error_thread(&mut svm, &authority, &payer, "err-notlast");
 
+    // Create a fiber for the thread so it can be executed
+    let (fiber_pubkey, _) = fiber_pda(&thread_pubkey, 0);
+    let memo_ix = make_memo_instruction("err-test", None);
+    let serializable = make_serializable_instruction(&memo_ix);
+    let create_fiber_ix = build_create_fiber(
+        &authority.pubkey(),
+        &thread_pubkey,
+        &fiber_pubkey,
+        0,
+        serializable,
+        0,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[create_fiber_ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    svm.send_transaction(tx).unwrap();
+
     // Execute once with executor to set last_executor
     advance_clock(&mut svm, 15);
     let remaining = vec![
         solana_sdk::instruction::AccountMeta::new_readonly(PROGRAM_ID, false),
-        solana_sdk::instruction::AccountMeta::new_readonly(thread_pubkey, false),
+        solana_sdk::instruction::AccountMeta::new_readonly(executor.pubkey(), false),
     ];
     let ix = build_exec_thread(
         &executor.pubkey(),
         &thread_pubkey,
-        None,
+        &fiber_pubkey,
         &config_pubkey,
         &admin.pubkey(),
         false,
@@ -278,8 +298,6 @@ fn test_error_thread_reimbursement_capped() {
     // Create thread with minimal funding
     let thread_id = ThreadId::Bytes(b"err-cap".to_vec());
     let (thread_pubkey, _) = thread_pda(&authority.pubkey(), b"err-cap");
-    let memo_ix = make_thread_memo_instruction(&thread_pubkey, "test", None);
-    let serializable = make_serializable_instruction(&memo_ix);
     let ix = build_create_thread(
         &authority.pubkey(),
         &payer.pubkey(),
@@ -291,7 +309,8 @@ fn test_error_thread_reimbursement_capped() {
             skippable: false,
             jitter: 0,
         },
-        Some(serializable),
+        None,
+        None,
         None,
     );
     let blockhash = svm.latest_blockhash();

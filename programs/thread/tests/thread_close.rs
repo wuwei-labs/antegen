@@ -20,36 +20,6 @@ fn create_thread_no_fiber(
         Trigger::Immediate { jitter: 0 },
         None,
         None,
-    );
-    let blockhash = svm.latest_blockhash();
-    let tx = Transaction::new_signed_with_payer(
-        &[ix],
-        Some(&payer.pubkey()),
-        &[payer, authority],
-        blockhash,
-    );
-    svm.send_transaction(tx).unwrap();
-    thread_pubkey
-}
-
-fn create_thread_with_default_fiber(
-    svm: &mut litesvm::LiteSVM,
-    authority: &Keypair,
-    payer: &Keypair,
-    id: &str,
-) -> Pubkey {
-    let thread_id = ThreadId::Bytes(id.as_bytes().to_vec());
-    let (thread_pubkey, _) = thread_pda(&authority.pubkey(), id.as_bytes());
-    let memo_ix = make_memo_instruction("fiber-0", None);
-    let serializable = make_serializable_instruction(&memo_ix);
-    let ix = build_create_thread(
-        &authority.pubkey(),
-        &payer.pubkey(),
-        &thread_pubkey,
-        1_000_000,
-        thread_id,
-        Trigger::Immediate { jitter: 0 },
-        Some(serializable),
         None,
     );
     let blockhash = svm.latest_blockhash();
@@ -75,12 +45,10 @@ fn add_external_fiber(
     let serializable = make_serializable_instruction(&memo_ix);
     let ix = build_create_fiber(
         &authority.pubkey(),
-        &payer.pubkey(),
         thread,
         &fiber_pubkey,
         index,
         serializable,
-        vec![],
         0,
     );
     let blockhash = svm.latest_blockhash();
@@ -116,29 +84,6 @@ fn test_thread_close_no_fibers() {
     assert!(!account_exists(&svm, &thread_pubkey));
     let close_to_after = get_balance(&svm, &authority.pubkey());
     assert!(close_to_after > close_to_before);
-}
-
-#[test]
-fn test_thread_close_with_default_fiber_only() {
-    let (mut svm, _admin, payer) = create_test_env();
-    let authority = Keypair::new();
-    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
-
-    let thread_pubkey =
-        create_thread_with_default_fiber(&mut svm, &authority, &payer, "tc-def");
-
-    // Close with no remaining accounts (inline fiber only)
-    let ix = build_close_thread(&authority.pubkey(), &authority.pubkey(), &thread_pubkey, &[]);
-    let blockhash = svm.latest_blockhash();
-    let tx = Transaction::new_signed_with_payer(
-        &[ix],
-        Some(&payer.pubkey()),
-        &[&payer, &authority],
-        blockhash,
-    );
-    svm.send_transaction(tx).unwrap();
-
-    assert!(!account_exists(&svm, &thread_pubkey));
 }
 
 #[test]

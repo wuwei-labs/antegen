@@ -1,7 +1,8 @@
-use crate::*;
+use crate::{errors::AntegenThreadError, *};
 use anchor_lang::prelude::*;
 
 /// Accounts required by the `fiber_close` instruction.
+/// Validates authority, CPIs to Fiber Program to close, updates thread fiber tracking.
 #[derive(Accounts)]
 #[instruction(fiber_index: u8)]
 pub struct FiberClose<'info> {
@@ -11,16 +12,10 @@ pub struct FiberClose<'info> {
     )]
     pub authority: Signer<'info>,
 
-    /// CHECK: Validated against fiber.payer — receives rent on close
-    #[account(
-        mut,
-        constraint = fiber.as_ref().map_or(true, |f| close_to.key().eq(&f.payer))
-    )]
-    pub close_to: UncheckedAccount<'info>,
-
     /// The thread to remove the fiber from
     #[account(
         mut,
+        constraint = thread.fiber_ids.contains(&fiber_index) @ AntegenThreadError::InvalidFiberIndex,
         seeds = [
             SEED_THREAD,
             thread.authority.as_ref(),
@@ -30,63 +25,40 @@ pub struct FiberClose<'info> {
     )]
     pub thread: Account<'info, Thread>,
 
-    /// The fiber account to close (optional - not needed if closing inline fiber)
+    /// The fiber account to close (owned by Fiber Program)
     #[account(
         mut,
-        seeds = [
-            SEED_THREAD_FIBER,
-            thread.key().as_ref(),
-            &[fiber_index],
-        ],
-        bump,
-        close = close_to,
+        constraint = fiber.thread.eq(&thread.key()) @ AntegenThreadError::InvalidFiberAccount,
     )]
-    pub fiber: Option<Account<'info, FiberState>>,
+    pub fiber: Account<'info, antegen_fiber_program::state::FiberState>,
+
+    /// The Fiber Program for CPI
+    pub fiber_program: Program<'info, antegen_fiber_program::program::FiberProgram>,
 }
 
 pub fn fiber_close(ctx: Context<FiberClose>, fiber_index: u8) -> Result<()> {
     let thread = &mut ctx.accounts.thread;
 
-    // Check if closing default fiber (index 0 with default_fiber present)
-    if fiber_index == 0 && thread.default_fiber.is_some() {
-        // Clear default fiber
-        thread.default_fiber = None;
-        thread.default_fiber_priority_fee = 0;
-
-        // If we're closing the current fiber, advance to next one first
-        if thread.fiber_cursor == 0 && thread.fiber_ids.len() > 1 {
-            thread.advance_to_next_fiber();
-        }
-
-        // Remove from fiber_ids
-        thread.fiber_ids.retain(|&x| x != 0);
-
-        // If this was the last fiber, reset fiber_cursor
-        if thread.fiber_ids.is_empty() {
-            thread.fiber_cursor = 0;
-        }
-    } else {
-        // Closing account-based fiber - ensure account is provided
-        require!(
-            ctx.accounts.fiber.is_some(),
-            crate::errors::AntegenThreadError::FiberAccountRequired
-        );
-
-        // If we're closing the current fiber, advance to next one first
-        if thread.fiber_cursor == fiber_index && thread.fiber_ids.len() > 1 {
-            thread.advance_to_next_fiber();
-        }
-
-        // Remove the fiber index from the thread's fiber_ids
-        thread.fiber_ids.retain(|&x| x != fiber_index);
-
-        // If this was the last fiber, reset fiber_cursor
-        if thread.fiber_ids.is_empty() {
-            thread.fiber_cursor = 0;
-        }
-
-        // Account closure is handled by Anchor's close constraint
+    // If we're closing the current fiber, advance to next one first
+    if thread.fiber_cursor.eq(&fiber_index) && thread.fiber_ids.len().gt(&1) {
+        thread.advance_to_next_fiber();
     }
+
+    thread.fiber_ids.retain(|&x| x != fiber_index);
+    if thread.fiber_ids.is_empty() {
+        thread.fiber_cursor = 0;
+    }
+
+    thread.sign(|seeds| {
+        antegen_fiber_program::cpi::close_fiber(CpiContext::new_with_signer(
+            ctx.accounts.fiber_program.key(),
+            antegen_fiber_program::cpi::accounts::FiberClose {
+                thread: thread.to_account_info(),
+                fiber: ctx.accounts.fiber.to_account_info(),
+            },
+            &[seeds],
+        ))
+    })?;
 
     Ok(())
 }

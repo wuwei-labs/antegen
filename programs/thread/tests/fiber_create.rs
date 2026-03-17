@@ -3,7 +3,7 @@ use solana_sdk::{pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Tran
 mod common;
 use common::*;
 
-/// Helper to create a thread with no initial instruction and return thread_pubkey.
+/// Helper to create a thread with no fibers and return thread_pubkey.
 fn setup_thread(
     svm: &mut litesvm::LiteSVM,
     authority: &Keypair,
@@ -21,37 +21,6 @@ fn setup_thread(
         Trigger::Immediate { jitter: 0 },
         None,
         None,
-    );
-    let blockhash = svm.latest_blockhash();
-    let tx = Transaction::new_signed_with_payer(
-        &[ix],
-        Some(&payer.pubkey()),
-        &[payer, authority],
-        blockhash,
-    );
-    svm.send_transaction(tx).unwrap();
-    thread_pubkey
-}
-
-/// Helper to create a thread WITH initial instruction.
-fn setup_thread_with_fiber(
-    svm: &mut litesvm::LiteSVM,
-    authority: &Keypair,
-    payer: &Keypair,
-    id: &str,
-) -> Pubkey {
-    let thread_id = ThreadId::Bytes(id.as_bytes().to_vec());
-    let (thread_pubkey, _) = thread_pda(&authority.pubkey(), id.as_bytes());
-    let memo_ix = make_memo_instruction("hello", None);
-    let serializable = make_serializable_instruction(&memo_ix);
-    let ix = build_create_thread(
-        &authority.pubkey(),
-        &payer.pubkey(),
-        &thread_pubkey,
-        1_000_000,
-        thread_id,
-        Trigger::Immediate { jitter: 0 },
-        Some(serializable),
         None,
     );
     let blockhash = svm.latest_blockhash();
@@ -80,12 +49,10 @@ fn send_create_fiber(
 
     let ix = build_create_fiber(
         &authority.pubkey(),
-        &payer.pubkey(),
         thread,
         &fiber_pubkey,
         fiber_index,
         serializable,
-        vec![], // no signer seeds needed for memo
         priority_fee,
     );
     let blockhash = svm.latest_blockhash();
@@ -110,7 +77,6 @@ fn test_fiber_create_success() {
 
     let fiber = deserialize_fiber(&svm, &fiber_pubkey);
     assert_eq!(fiber.thread, thread_pubkey);
-    assert_eq!(fiber.fiber_index, 0);
     assert_eq!(fiber.priority_fee, 100);
     assert_eq!(fiber.last_executed, 0);
     assert_eq!(fiber.exec_count, 0);
@@ -193,12 +159,10 @@ fn test_fiber_create_prevents_delete_thread() {
     let (fiber_pubkey, _) = fiber_pda(&thread_pubkey, 0);
     let ix = build_create_fiber(
         &authority.pubkey(),
-        &payer.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
         0,
         serializable,
-        vec![],
         0,
     );
     let blockhash = svm.latest_blockhash();
@@ -236,7 +200,7 @@ fn test_fiber_create_pda_derivation() {
     let fiber_pubkey =
         send_create_fiber(&mut svm, &authority, &payer, &thread_pubkey, 0, 0).unwrap();
 
-    let expected = antegen_thread_program::state::FiberState::pubkey(thread_pubkey, 0);
+    let expected = antegen_fiber_program::state::FiberState::pubkey(thread_pubkey, 0);
     assert_eq!(fiber_pubkey, expected);
 }
 
@@ -270,29 +234,8 @@ fn test_fiber_create_compiled_roundtrip() {
 
     let fiber = deserialize_fiber(&svm, &fiber_pubkey);
     // Compiled bytes should be deserializable
-    let compiled = borsh::from_slice::<antegen_thread_program::state::CompiledInstructionV0>(
+    let compiled = borsh::from_slice::<antegen_fiber_program::state::CompiledInstructionV0>(
         &fiber.compiled_instruction,
     );
     assert!(compiled.is_ok());
-}
-
-#[test]
-fn test_fiber_create_with_initial_instruction_thread() {
-    let (mut svm, _admin, payer) = create_test_env();
-    let authority = Keypair::new();
-    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
-
-    // Thread with initial instruction (fiber_next_id = 1)
-    let thread_pubkey = setup_thread_with_fiber(&mut svm, &authority, &payer, "fc-init");
-
-    // Create fiber at index 1 (next after inline fiber 0)
-    let fiber_pubkey =
-        send_create_fiber(&mut svm, &authority, &payer, &thread_pubkey, 1, 0).unwrap();
-
-    let thread = deserialize_thread(&svm, &thread_pubkey);
-    assert_eq!(thread.fiber_ids, vec![0, 1]);
-    assert_eq!(thread.fiber_next_id, 2);
-
-    let fiber = deserialize_fiber(&svm, &fiber_pubkey);
-    assert_eq!(fiber.fiber_index, 1);
 }

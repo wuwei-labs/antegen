@@ -21,7 +21,13 @@ codegen-units = 1
 
 [workspace]
 resolver = "2"
-members = ["crates/*", "plugin/geyser", "programs/thread"]
+members = [
+    "crates/*",
+    "plugin/geyser",
+    "programs/fiber",
+    "programs/reentrance-test",
+    "programs/thread",
+]
 default-members = ["crates/cli"]
 
 [workspace.package]
@@ -37,7 +43,10 @@ edition = "2021"
 antegen-cron = { version = "4.0.0", path = "crates/cron" }
 antegen-client = { version = "4.1.1", path = "crates/client" }
 antegen-geyser-plugin = { version = "4.1.1", path = "plugin/geyser" }
-antegen-thread-program = { version = "4.1.1", path = "programs/thread", features = [
+antegen-fiber-program = { version = "5.0.0", path = "programs/fiber", features = [
+    "cpi",
+] }
+antegen-thread-program = { version = "5.0.0", path = "programs/thread", features = [
     "cpi",
 ] }
 

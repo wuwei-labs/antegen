@@ -10,11 +10,16 @@ use super::accounts::config_pda;
 use super::instructions::build_init_config;
 
 /// Program ID for antegen_thread_program
-pub const PROGRAM_ID: Pubkey =
-    solana_sdk::pubkey!("AgV3xRAdyTe1wW4gTW2oAnzHiAGofsxC7jBVGGkzUQbY");
+pub const PROGRAM_ID: Pubkey = solana_sdk::pubkey!("AgV3xRAdyTe1wW4gTW2oAnzHiAGofsxC7jBVGGkzUQbY");
+
+/// Program ID for antegen_fiber_program
+pub const FIBER_PROGRAM_ID: Pubkey =
+    solana_sdk::pubkey!("4dWvYEaDaoG1umoLDPbU8venq3HcAwAc1feMAsXa6tyb");
 
 /// Compiled program bytes
 const PROGRAM_BYTES: &[u8] = include_bytes!("../../../../target/deploy/antegen_thread_program.so");
+const FIBER_PROGRAM_BYTES: &[u8] =
+    include_bytes!("../../../../target/deploy/antegen_fiber_program.so");
 
 /// Default airdrop amount (10 SOL)
 pub const DEFAULT_AIRDROP: u64 = 10_000_000_000;
@@ -29,18 +34,22 @@ pub fn create_test_env() -> (LiteSVM, Keypair, Keypair) {
     let ix = build_init_config(&admin.pubkey(), &config_pubkey);
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(&[ix], Some(&admin.pubkey()), &[&admin], blockhash);
-    svm.send_transaction(tx).expect("config_init should succeed");
+    svm.send_transaction(tx)
+        .expect("config_init should succeed");
 
     (svm, admin, payer)
 }
 
 /// Creates a test environment without initializing config.
 /// Returns (svm, admin, payer).
-pub fn create_test_env_no_config() -> (LiteSVM, Keypair, Keypair) {
+fn create_test_env_no_config() -> (LiteSVM, Keypair, Keypair) {
     let mut svm = LiteSVM::new();
 
-    // Load the program
-    svm.add_program(PROGRAM_ID, PROGRAM_BYTES).expect("Failed to load program");
+    // Load all programs
+    svm.add_program(PROGRAM_ID, PROGRAM_BYTES)
+        .expect("Failed to load thread program");
+    svm.add_program(FIBER_PROGRAM_ID, FIBER_PROGRAM_BYTES)
+        .expect("Failed to load fiber program");
 
     // Create and fund admin
     let admin = Keypair::new();
@@ -51,14 +60,6 @@ pub fn create_test_env_no_config() -> (LiteSVM, Keypair, Keypair) {
     svm.airdrop(&payer.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     (svm, admin, payer)
-}
-
-/// Set the clock sysvar to a specific unix timestamp.
-#[allow(dead_code)]
-pub fn set_clock(svm: &mut LiteSVM, unix_timestamp: i64) {
-    let mut clock = svm.get_sysvar::<Clock>();
-    clock.unix_timestamp = unix_timestamp;
-    svm.set_sysvar(&clock);
 }
 
 /// Advance the clock by the given number of seconds.

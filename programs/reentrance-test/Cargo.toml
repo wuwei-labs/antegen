@@ -1,0 +1,32 @@
+[package]
+name = "antegen-reentrance-test"
+description = "Reentrancy test program — CPIs back to Fiber Program during thread_exec"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "antegen_reentrance_test"
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+idl-build = ["anchor-lang/idl-build"]
+no-entrypoint = []
+
+[dependencies]
+anchor-lang = { workspace = true }
+antegen-thread-program = { workspace = true }
+
+[dev-dependencies]
+litesvm = { git = "https://github.com/wuwei-labs/litesvm.git", branch = "fix/durable-nonce-slot-warp" }
+solana-sdk = { workspace = true }
+solana-system-interface = { workspace = true }
+anchor-lang = { workspace = true }
+borsh = { workspace = true }
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = [
+  'cfg(target_os, values("solana"))',
+] }
