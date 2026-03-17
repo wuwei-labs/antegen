@@ -32,7 +32,7 @@ pub struct FiberCreate<'info> {
     pub fiber: UncheckedAccount<'info>,
 
     /// The Fiber Program for CPI
-    pub fiber_program: Program<'info, antegen_fiber_program::program::FiberProgram>,
+    pub fiber_program: Program<'info, antegen_fiber_program::program::AntegenFiber>,
 
     #[account(address = anchor_lang::system_program::ID)]
     pub system_program: Program<'info, System>,

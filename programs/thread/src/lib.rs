@@ -9,17 +9,19 @@ pub mod utils;
 /// manage fibers directly (cannot CPI back to thread program due to reentrancy).
 pub mod fiber {
     pub use antegen_fiber_program::cpi;
+    pub use antegen_fiber_program::program::AntegenFiber;
     pub use antegen_fiber_program::ID;
 }
 
 pub use constants::*;
+pub use crate::program::AntegenThread;
 use instructions::*;
 use state::*;
 
 use anchor_lang::prelude::*;
 use state::{SerializableInstruction, Trigger};
 
-declare_id!("AgYyg261DAfp8eqSfdnfW9a2qYjuyzVwrFErJ61NXThd");
+declare_id!("AgTv5w1UvUb6zeqkThwMrztGu9hpepBu8YLghuR4dpSx");
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub enum ThreadId {
@@ -80,7 +82,7 @@ impl From<ThreadId> for Vec<u8> {
 }
 
 #[program]
-pub mod thread_program {
+pub mod antegen_thread {
     use super::*;
 
     /// Initialize the global thread configuration.

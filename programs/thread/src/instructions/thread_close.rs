@@ -34,7 +34,7 @@ pub struct ThreadClose<'info> {
     pub thread: Account<'info, Thread>,
 
     /// The Fiber Program (required when closing fibers via remaining_accounts)
-    pub fiber_program: Option<Program<'info, antegen_fiber_program::program::FiberProgram>>,
+    pub fiber_program: Option<Program<'info, antegen_fiber_program::program::AntegenFiber>>,
 }
 
 pub fn thread_close<'info>(ctx: Context<'_, '_, 'info, 'info, ThreadClose<'info>>) -> Result<()> {

@@ -41,7 +41,7 @@ pub struct FiberSwap<'info> {
     pub source: Account<'info, antegen_fiber_program::state::FiberState>,
 
     /// The Fiber Program for CPI
-    pub fiber_program: Program<'info, antegen_fiber_program::program::FiberProgram>,
+    pub fiber_program: Program<'info, antegen_fiber_program::program::AntegenFiber>,
 }
 
 pub fn fiber_swap(ctx: Context<FiberSwap>, source_fiber_index: u8) -> Result<()> {

@@ -59,7 +59,7 @@ pub struct ThreadCreate<'info> {
     pub fiber: Option<UncheckedAccount<'info>>,
 
     /// Fiber Program (optional — only required when fiber is provided)
-    pub fiber_program: Option<Program<'info, antegen_fiber_program::program::FiberProgram>>,
+    pub fiber_program: Option<Program<'info, antegen_fiber_program::program::AntegenFiber>>,
 }
 
 pub fn thread_create(

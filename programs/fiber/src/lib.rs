@@ -10,10 +10,10 @@ use state::*;
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::Instruction;
 
-declare_id!("AgYwUcNjF3Levf4G71FzBN51rLSWSwcUos8F8DR6bFbr");
+declare_id!("AgFv5afjW9DmSPkiEvJ1er5bAAmRUqaBeTB6Cr8e1hKx");
 
 #[program]
-pub mod fiber_program {
+pub mod antegen_fiber {
     use super::*;
 
     /// Creates a fiber (instruction account) for a thread.

@@ -25,7 +25,7 @@ pub struct FiberUpdate<'info> {
     pub fiber: Account<'info, antegen_fiber_program::state::FiberState>,
 
     /// The Fiber Program for CPI
-    pub fiber_program: Program<'info, antegen_fiber_program::program::FiberProgram>,
+    pub fiber_program: Program<'info, antegen_fiber_program::program::AntegenFiber>,
 }
 
 pub fn fiber_update(
