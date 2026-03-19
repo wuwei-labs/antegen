@@ -222,8 +222,10 @@ pub fn build_update_fiber(
     authority: &Pubkey,
     thread: &Pubkey,
     fiber: &Pubkey,
+    fiber_index: u8,
     instruction: SerializableInstruction,
     priority_fee: Option<u64>,
+    track: bool,
 ) -> Instruction {
     Instruction {
         program_id: PROGRAM_ID,
@@ -232,11 +234,14 @@ pub fn build_update_fiber(
             thread: *thread,
             fiber: *fiber,
             fiber_program: FIBER_PROGRAM_ID,
+            system_program: solana_system_interface::program::ID,
         }
         .to_account_metas(None),
         data: antegen_thread_program::instruction::UpdateFiber {
+            fiber_index,
             instruction,
             priority_fee,
+            track,
         }
         .data(),
     }

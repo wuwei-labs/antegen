@@ -59,7 +59,7 @@ pub async fn run_standalone(config: ClientConfig) -> Result<()> {
     config.validate()?;
 
     log::debug!("Starting Antegen client in standalone mode");
-    log::debug!("Thread program: {}", config.datasources.program_id());
+    log::debug!("Thread program: {}", config.datasources.program_id);
     log::debug!(
         "Max concurrent threads: {}",
         config.processor.max_concurrent_threads
@@ -115,7 +115,7 @@ impl PluginHandle {
         config.validate()?;
 
         log::debug!("Starting Antegen client in plugin mode");
-        log::debug!("Thread program: {}", config.datasources.program_id());
+        log::debug!("Thread program: {}", config.datasources.program_id);
         log::debug!(
             "Max concurrent threads: {}",
             config.processor.max_concurrent_threads

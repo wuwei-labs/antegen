@@ -40,22 +40,24 @@ impl GeyserPlugin for AntegenPlugin {
 
     fn on_load(&mut self, config_file: &str, _is_reload: bool) -> PluginResult<()> {
         // Setup logging
-        solana_logger::setup_with_default(
-            "info,antegen_client=info,antegen_client_geyser=info"
-        );
+        solana_logger::setup_with_default("info,antegen_client=info,antegen_client_geyser=info");
 
         log::info!("=== Antegen Plugin Loading ===");
         log::info!("Reading configuration from: {}", config_file);
 
         // Load configuration from the path specified by the validator
-        let config = ClientConfig::load(config_file)
-            .map_err(|e| GeyserPluginError::ConfigFileReadError {
+        let config = ClientConfig::load(config_file).map_err(|e| {
+            GeyserPluginError::ConfigFileReadError {
                 msg: format!("Failed to load config file '{}': {}", config_file, e),
-            })?;
+            }
+        })?;
 
-        let program_id = config.datasources.program_id();
+        let program_id = config.datasources.program_id;
         log::info!("Thread program: {}", program_id);
-        log::info!("Max concurrent threads: {}", config.processor.max_concurrent_threads);
+        log::info!(
+            "Max concurrent threads: {}",
+            config.processor.max_concurrent_threads
+        );
 
         // Create tokio runtime
         let runtime = Arc::new(
@@ -66,17 +68,17 @@ impl GeyserPlugin for AntegenPlugin {
                 .build()
                 .map_err(|e| GeyserPluginError::ConfigFileReadError {
                     msg: format!("Failed to create runtime: {}", e),
-                })?
+                })?,
         );
 
         log::info!("Created tokio runtime");
 
         // Spawn client in plugin mode
-        let handle = runtime.block_on(async {
-            PluginHandle::spawn(config).await
-        }).map_err(|e| GeyserPluginError::ConfigFileReadError {
-            msg: format!("Failed to spawn client: {}", e),
-        })?;
+        let handle = runtime
+            .block_on(async { PluginHandle::spawn(config).await })
+            .map_err(|e| GeyserPluginError::ConfigFileReadError {
+                msg: format!("Failed to spawn client: {}", e),
+            })?;
 
         log::info!("Spawned Antegen client in plugin mode");
 
@@ -138,15 +140,17 @@ impl GeyserPlugin for AntegenPlugin {
         };
 
         // Parse pubkeys
-        let pubkey = Pubkey::try_from(account_info.pubkey)
-            .map_err(|e| GeyserPluginError::AccountsUpdateError {
+        let pubkey = Pubkey::try_from(account_info.pubkey).map_err(|e| {
+            GeyserPluginError::AccountsUpdateError {
                 msg: format!("Failed to parse account pubkey: {}", e),
-            })?;
+            }
+        })?;
 
-        let owner = Pubkey::try_from(account_info.owner)
-            .map_err(|e| GeyserPluginError::AccountsUpdateError {
+        let owner = Pubkey::try_from(account_info.owner).map_err(|e| {
+            GeyserPluginError::AccountsUpdateError {
                 msg: format!("Failed to parse owner pubkey: {}", e),
-            })?;
+            }
+        })?;
 
         // Filter: only thread program accounts or clock sysvar
         let is_clock = pubkey == solana_program::sysvar::clock::ID;
@@ -157,11 +161,7 @@ impl GeyserPlugin for AntegenPlugin {
         }
 
         // Create account update
-        let update = AccountUpdate::new(
-            pubkey,
-            account_info.data.to_vec(),
-            slot,
-        );
+        let update = AccountUpdate::new(pubkey, account_info.data.to_vec(), slot);
 
         // Send to client (non-blocking)
         if let Err(e) = inner.handle.try_send_update(update) {
@@ -191,4 +191,3 @@ impl Default for AntegenPlugin {
 pub unsafe extern "C" fn _create_plugin() -> *mut dyn GeyserPlugin {
     Box::into_raw(Box::new(AntegenPlugin::default()))
 }
-

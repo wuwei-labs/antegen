@@ -1,7 +1,7 @@
 [package]
 name = "antegen-reentrance-test"
 description = "Reentrancy test program — CPIs back to Fiber Program during thread_exec"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 publish = false
 

@@ -101,7 +101,7 @@ pub fn get(config_path: PathBuf) -> Result<()> {
     // Datasources
     println!("[datasources]");
     println!("  commitment = {}", config.datasources.commitment);
-    println!("  program_id = {}", config.datasources.program_id());
+    println!("  program_id = {}", config.datasources.program_id);
     println!();
 
     // Processor
@@ -252,7 +252,7 @@ pub fn validate(config_path: PathBuf) -> Result<()> {
     println!();
     println!("Configuration summary:");
     println!("  Executor keypair: {}", config.executor.keypair_path);
-    println!("  Thread program: {}", config.datasources.program_id());
+    println!("  Thread program: {}", config.datasources.program_id);
     println!(
         "  Max concurrent threads: {}",
         config.processor.max_concurrent_threads

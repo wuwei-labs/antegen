@@ -20,23 +20,24 @@ pub mod antegen_fiber {
     /// Thread PDA must be signer and payer.
     pub fn create_fiber(
         ctx: Context<FiberCreate>,
-        _fiber_index: u8,
+        fiber_index: u8,
         instruction: SerializableInstruction,
         priority_fee: u64,
     ) -> Result<()> {
         let instruction: Instruction = instruction.into();
-        instructions::fiber_create::fiber_create(ctx, instruction, priority_fee)
+        instructions::fiber_create::fiber_create(ctx, fiber_index, instruction, priority_fee)
     }
 
-    /// Updates a fiber's instruction content.
-    /// Thread PDA must be signer. Resets execution stats.
+    /// Updates a fiber's instruction content (or initializes if it doesn't exist).
+    /// Thread PDA must be signer and payer. Resets execution stats.
     pub fn update_fiber(
         ctx: Context<FiberUpdate>,
+        fiber_index: u8,
         instruction: SerializableInstruction,
         priority_fee: Option<u64>,
     ) -> Result<()> {
         let instruction: Instruction = instruction.into();
-        instructions::fiber_update::fiber_update(ctx, instruction, priority_fee)
+        instructions::fiber_update::fiber_update(ctx, fiber_index, instruction, priority_fee)
     }
 
     /// Closes a fiber account, returns rent to thread PDA.

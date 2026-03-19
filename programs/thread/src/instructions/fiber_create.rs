@@ -3,13 +3,13 @@ use anchor_lang::prelude::*;
 use antegen_fiber_program::state::SerializableInstruction;
 
 /// Accounts required by the `fiber_create` instruction.
-/// Validates authority, CPIs to Fiber Program to create, updates thread fiber tracking.
+/// Validates authority, pre-funds fiber from thread, CPIs to Fiber Program to create,
+/// updates thread fiber tracking.
 #[derive(Accounts)]
 #[instruction(fiber_index: u8)]
 pub struct FiberCreate<'info> {
     /// The authority of the thread or the thread itself
     #[account(
-        mut,
         constraint = authority.key().eq(&thread.authority) || authority.key().eq(&thread.key())
     )]
     pub authority: Signer<'info>,
@@ -54,13 +54,18 @@ pub fn fiber_create(
         return Err(AntegenThreadError::InvalidInstruction.into());
     }
 
+    // Pre-fund fiber account from thread PDA
+    let space = 8 + antegen_fiber_program::state::FiberState::INIT_SPACE;
+    let rent_lamports = Rent::get()?.minimum_balance(space);
+    **thread.to_account_info().try_borrow_mut_lamports()? -= rent_lamports;
+    **ctx.accounts.fiber.to_account_info().try_borrow_mut_lamports()? += rent_lamports;
+
     thread.sign(|seeds| {
         antegen_fiber_program::cpi::create_fiber(
             CpiContext::new_with_signer(
                 ctx.accounts.fiber_program.key(),
                 antegen_fiber_program::cpi::accounts::FiberCreate {
                     thread: thread.to_account_info(),
-                    payer: ctx.accounts.authority.to_account_info(),
                     fiber: ctx.accounts.fiber.to_account_info(),
                     system_program: ctx.accounts.system_program.to_account_info(),
                 },

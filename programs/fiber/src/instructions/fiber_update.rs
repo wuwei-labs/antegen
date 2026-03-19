@@ -2,38 +2,72 @@ use crate::state::*;
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::Instruction;
 
+use super::fiber_create::initialize_fiber;
+
 /// Accounts required by the `update_fiber` instruction.
-/// Thread PDA must be signer.
+/// Thread PDA must be signer. Fiber must be pre-funded if not yet initialized.
 #[derive(Accounts)]
+#[instruction(fiber_index: u8)]
 pub struct FiberUpdate<'info> {
     /// Thread PDA - must be signer
     pub thread: Signer<'info>,
 
-    /// The fiber to update
-    #[account(mut, has_one = thread)]
-    pub fiber: Account<'info, FiberState>,
+    /// CHECK: The fiber to update (or initialize if it doesn't exist) — validated via PDA or deserialization
+    #[account(mut)]
+    pub fiber: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
 }
 
 pub fn fiber_update(
     ctx: Context<FiberUpdate>,
+    fiber_index: u8,
     instruction: Instruction,
     priority_fee: Option<u64>,
 ) -> Result<()> {
-    let fiber = &mut ctx.accounts.fiber;
+    let thread_key = ctx.accounts.thread.key();
+    let fiber_info = ctx.accounts.fiber.to_account_info();
 
-    // Recompile the instruction
-    let compiled = compile_instruction(instruction)?;
-    let compiled_bytes = borsh::to_vec(&compiled)?;
+    if fiber_info.data_len().eq(&0) {
+        // Not initialized — do full init (same as fiber_create)
+        let fee = priority_fee.unwrap_or(0);
+        initialize_fiber(
+            &ctx.accounts.fiber,
+            &ctx.accounts.system_program,
+            &thread_key,
+            fiber_index,
+            &instruction,
+            fee,
+        )?;
+    } else {
+        // Already initialized — update in place
+        // Deserialize existing account
+        let mut data = fiber_info.try_borrow_mut_data()?;
 
-    fiber.compiled_instruction = compiled_bytes;
+        // Verify discriminator
+        let discriminator = FiberState::DISCRIMINATOR;
+        if data[..8] != discriminator[..] {
+            return Err(anchor_lang::error::ErrorCode::AccountDiscriminatorMismatch.into());
+        }
 
-    if let Some(fee) = priority_fee {
-        fiber.priority_fee = fee;
+        // Recompile the instruction
+        let compiled = compile_instruction(instruction)?;
+        let compiled_bytes = borsh::to_vec(&compiled)?;
+
+        // Build updated state
+        let mut state: FiberState = FiberState::try_deserialize(&mut &data[..])?;
+        state.thread = thread_key;
+        state.compiled_instruction = compiled_bytes;
+        if let Some(fee) = priority_fee {
+            state.priority_fee = fee;
+        }
+        state.last_executed = 0;
+        state.exec_count = 0;
+
+        // Re-serialize
+        let state_bytes = borsh::to_vec(&state)?;
+        data[8..8 + state_bytes.len()].copy_from_slice(&state_bytes);
     }
-
-    // Reset execution stats
-    fiber.last_executed = 0;
-    fiber.exec_count = 0;
 
     Ok(())
 }

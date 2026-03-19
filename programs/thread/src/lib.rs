@@ -111,12 +111,16 @@ pub mod antegen_thread {
     }
 
     /// Updates a fiber's instruction via CPI to Fiber Program.
+    /// Initializes the fiber if it doesn't exist (thread PDA pays rent).
+    /// If `track` is true, adds the fiber_index to thread.fiber_ids.
     pub fn update_fiber(
         ctx: Context<FiberUpdate>,
+        fiber_index: u8,
         instruction: SerializableInstruction,
         priority_fee: Option<u64>,
+        track: bool,
     ) -> Result<()> {
-        fiber_update(ctx, instruction, priority_fee)
+        fiber_update(ctx, fiber_index, instruction, priority_fee, track)
     }
 
     /// Swaps source fiber's instruction into target fiber, closes source.

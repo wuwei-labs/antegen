@@ -15,6 +15,7 @@ use common::*;
 fn make_cpi_update_fiber_instruction(
     thread: &Pubkey,
     target_fiber: &Pubkey,
+    fiber_index: u8,
 ) -> Instruction {
     Instruction {
         program_id: TEST_PROCESSOR_ID,
@@ -22,8 +23,9 @@ fn make_cpi_update_fiber_instruction(
             AccountMeta::new(*thread, true),                    // thread as signer
             AccountMeta::new(*target_fiber, false),              // fiber to update
             AccountMeta::new_readonly(fiber::ID, false),         // fiber program
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false), // system program
         ],
-        data: antegen_reentrance_test::instruction::CpiUpdateFiber {}.data(),
+        data: antegen_reentrance_test::instruction::CpiUpdateFiber { fiber_index }.data(),
     }
 }
 
@@ -140,7 +142,7 @@ fn test_reentrancy_update_fiber_during_exec() {
 
     // 3. Create fiber_0 (source: calls test_processor::cpi_update_fiber targeting fiber_1)
     let (fiber_0_pubkey, _) = fiber_pda(&thread_pubkey, 1);
-    let cpi_ix = make_cpi_update_fiber_instruction(&thread_pubkey, &fiber_1_pubkey);
+    let cpi_ix = make_cpi_update_fiber_instruction(&thread_pubkey, &fiber_1_pubkey, 0);
     let ser_cpi = make_serializable_instruction(&cpi_ix);
     let ix = build_create_fiber(
         &authority.pubkey(),
@@ -172,6 +174,7 @@ fn test_reentrancy_update_fiber_during_exec() {
         AccountMeta::new(thread_pubkey, true),
         AccountMeta::new(fiber_1_pubkey, false),
         AccountMeta::new_readonly(fiber::ID, false),
+        AccountMeta::new_readonly(solana_system_interface::program::ID, false),
     ];
     let remaining = build_test_processor_remaining_accounts(&thread_pubkey, &inner_accounts);
 

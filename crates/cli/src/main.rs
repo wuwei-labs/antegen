@@ -99,7 +99,10 @@ enum Commands {
     // Hidden backwards-compatibility aliases (deprecated — use `anm` instead)
     // =========================================================================
 
-    /// Initialize antegen — creates anm symlink and config
+    /// Register locally-built binaries and verify configuration
+    Verify,
+
+    /// Initialize antegen — creates config
     Init {
         #[arg(long)]
         rpc: Option<String>,
@@ -839,12 +842,19 @@ async fn run_antegen() -> Result<()> {
         // =================================================================
         // Hidden backwards-compatibility aliases (deprecated — use `anm`)
         // =================================================================
-        Commands::Init { rpc, force } => {
-            // Import current binary into the in-band version manager (~/.local/bin/)
-            // This bridges cargo install (out-of-band) so `anm` resolves to the right version
+        Commands::Verify => {
             commands::update::import_current_binary()?;
-
-            // Initialize config
+            commands::update::import_node_binary()?;
+            // Validate config if it exists
+            if let Ok(config_path) = commands::default_config_path() {
+                if config_path.exists() {
+                    println!();
+                    commands::config::validate(config_path)?;
+                }
+            }
+            Ok(())
+        }
+        Commands::Init { rpc, force } => {
             commands::service::init(rpc, force)
         }
         Commands::Start { rpc, version } => {

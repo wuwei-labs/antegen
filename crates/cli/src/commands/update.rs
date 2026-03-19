@@ -243,6 +243,72 @@ pub async fn fetch_all_node_versions() -> Result<Vec<String>> {
     .context("Task failed")?
 }
 
+/// Import a locally-built node binary into the version manager.
+/// Searches next to the current exe (cargo install) and in target/release/ (cargo build).
+/// Silently returns Ok if no node binary is found.
+pub fn import_node_binary() -> Result<()> {
+    let current_exe = std::env::current_exe().context("Failed to resolve current exe")?;
+
+    // Search for antegen-node next to current exe, then in workspace target/release/
+    let candidates = [
+        current_exe.with_file_name("antegen-node"),
+        {
+            // Walk up from current exe to find workspace root target/release/
+            let mut dir = current_exe.parent().map(|p| p.to_path_buf());
+            loop {
+                match dir {
+                    Some(ref d) if d.file_name().map_or(false, |n| n == "target") => {
+                        break d.join("release/antegen-node");
+                    }
+                    Some(ref d) if d.parent().is_some() => {
+                        dir = d.parent().map(|p| p.to_path_buf());
+                    }
+                    _ => break PathBuf::from("/nonexistent"),
+                }
+            }
+        },
+    ];
+
+    let node_binary = match candidates.iter().find(|p| p.exists()) {
+        Some(p) => p,
+        None => return Ok(()), // silently skip — user can `anm install` instead
+    };
+
+    // Run --version to extract version string ("antegen-node 4.1.3" → "v4.1.3")
+    let output = std::process::Command::new(node_binary)
+        .arg("--version")
+        .output()
+        .context("Failed to run antegen-node --version")?;
+    let version_str = String::from_utf8_lossy(&output.stdout);
+    let version = version_str
+        .trim()
+        .split_whitespace()
+        .last()
+        .map(|v| normalize_version(v))
+        .context("Could not parse node version")?;
+
+    let versioned_path = versioned_node_binary_path(&version)?;
+    let bin_dir = bin_dir()?;
+    fs::create_dir_all(&bin_dir)?;
+
+    fs::copy(node_binary, &versioned_path).context("Failed to copy node binary")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&versioned_path, fs::Permissions::from_mode(0o755))?;
+    }
+
+    #[cfg(unix)]
+    {
+        let symlink_path = node_binary_path()?;
+        update_symlink(&symlink_path, &versioned_path)?;
+    }
+
+    write_node_version(&version)?;
+    println!("Registered node {} in version manager", version);
+    Ok(())
+}
+
 /// Import the currently-running binary into the in-band version manager.
 /// Bridges cargo install (out-of-band) into the managed ~/.local/bin/ system.
 pub fn import_current_binary() -> Result<()> {

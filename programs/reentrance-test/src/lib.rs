@@ -10,7 +10,7 @@ pub mod reentrance_test {
     /// Called during thread_exec via invoke_signed.
     /// CPIs to fiber_program::update_fiber to prove reentrancy works.
     /// Thread PDA signer status is propagated from the outer invoke_signed.
-    pub fn cpi_update_fiber(ctx: Context<CpiUpdateFiber>) -> Result<()> {
+    pub fn cpi_update_fiber(ctx: Context<CpiUpdateFiber>, fiber_index: u8) -> Result<()> {
         // Build a simple instruction to update the fiber with
         let simple_ix = antegen_thread_program::state::SerializableInstruction {
             program_id: ctx.accounts.thread.key(),
@@ -24,8 +24,10 @@ pub mod reentrance_test {
                 fiber::cpi::accounts::FiberUpdate {
                     thread: ctx.accounts.thread.to_account_info(),
                     fiber: ctx.accounts.fiber.to_account_info(),
+                    system_program: ctx.accounts.system_program.to_account_info(),
                 },
             ),
+            fiber_index,
             simple_ix,
             Some(42),
         )?;
@@ -85,6 +87,8 @@ pub struct CpiUpdateFiber<'info> {
 
     /// CHECK: Fiber Program
     pub fiber_program: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]

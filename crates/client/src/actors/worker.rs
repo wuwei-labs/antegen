@@ -292,7 +292,7 @@ async fn execute_thread(
     // Build transaction instructions with retry loop for trigger-not-ready errors
     // Error 6004 (TriggerConditionFailed) is transient - retry until trigger time is reached
     let trigger_retry_deadline = Instant::now() + Duration::from_secs(TRIGGER_RETRY_DEADLINE_SECS);
-    let (instructions, priority_fee) = loop {
+    let (instructions, _priority_fee) = loop {
         // Check cancellation
         if cancelled.load(Ordering::Relaxed) {
             return ExecutionResult::failed(
@@ -343,11 +343,10 @@ async fn execute_thread(
         }
     };
 
-    log::debug!(
-        "Built transaction for thread {} with {} instructions, priority_fee={}",
+    log::info!(
+        "{}: built {} instruction(s)",
         thread_pubkey,
         instructions.len(),
-        priority_fee
     );
 
     // Retry loop for submission

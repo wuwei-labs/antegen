@@ -75,8 +75,10 @@ fn test_fiber_update_success() {
         &authority.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
+        0,
         serializable,
         None,
+        false,
     );
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
@@ -107,8 +109,10 @@ fn test_fiber_update_resets_stats() {
         &authority.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
+        0,
         serializable,
         None,
+        false,
     );
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
@@ -142,8 +146,10 @@ fn test_fiber_update_authority_check() {
         &bad_authority.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
+        0,
         serializable,
         None,
+        false,
     );
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
@@ -175,8 +181,10 @@ fn test_fiber_update_wrong_thread() {
         &authority.pubkey(),
         &thread2,
         &fiber1_pda,
+        0,
         serializable,
         None,
+        false,
     );
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
@@ -205,8 +213,10 @@ fn test_fiber_update_prevents_delete_thread() {
         &authority.pubkey(),
         &thread_pubkey,
         &fiber_pubkey,
+        0,
         serializable,
         None,
+        false,
     );
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(

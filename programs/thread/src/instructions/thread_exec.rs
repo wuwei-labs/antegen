@@ -67,22 +67,20 @@ pub fn thread_exec(
     forgo_commission: bool,
     fiber_cursor: u8,
 ) -> Result<()> {
+    // ── Setup ──
     let clock: Clock = Clock::get()?;
     let thread: &mut Box<Account<Thread>> = &mut ctx.accounts.thread;
     let config: &Account<ThreadConfig> = &ctx.accounts.config;
-
     let executor: &mut Signer = &mut ctx.accounts.executor;
     let executor_lamports_start: u64 = executor.lamports();
+    let thread_pubkey = thread.key();
 
-    // Check global pause
     require!(
         !ctx.accounts.config.paused,
         AntegenThreadError::GlobalPauseActive
     );
 
-    let thread_pubkey = thread.key();
-
-    // Handle close_fiber execution when Signal::Close is set
+    // ── Close path (early return) ──
     if thread.fiber_signal == Signal::Close {
         let compiled = CompiledInstructionV0::try_from_slice(&thread.close_fiber)?;
         let instruction = decompile_instruction(&compiled)?;
@@ -94,57 +92,50 @@ pub fn thread_exec(
         return Ok(());
     }
 
-    // Check if this is a chained execution (previous fiber signaled Chain)
-    let is_chained = thread.fiber_signal == Signal::Chain;
+    // ── Chaining detection ──
+    let is_chained = thread.fiber_signal.eq(&Signal::Chain);
 
-    // Sync fiber_cursor for chained executions so advance_to_next_fiber works correctly
+    // Sync fiber_cursor so advance_to_next_fiber works correctly
     if is_chained {
         thread.fiber_cursor = fiber_cursor;
     }
 
-    // Validate thread is ready for execution (has fibers and valid exec_index)
+    // ── Pre-execution checks ──
     thread.validate_for_execution()?;
 
-    // Handle nonce using trait method
     thread.advance_nonce_if_required(
         &thread.to_account_info(),
         &ctx.accounts.nonce_account,
         &ctx.accounts.recent_blockhashes,
     )?;
 
-    // Validate trigger and get elapsed time (skip for chained executions)
     let time_since_ready = if is_chained {
-        msg!(
-            "Chained execution from fiber_signal={:?}",
-            thread.fiber_signal
-        );
+        msg!("Chained execution");
         0
     } else {
         thread.validate_trigger(&clock, ctx.remaining_accounts, &thread_pubkey)?
     };
 
-    // Get instruction from fiber account
+    // ── Execute fiber ──
     let fiber = &ctx.accounts.fiber;
 
-    // Verify we're loading the correct fiber account
     let expected_fiber = thread.fiber_at_index(&thread_pubkey, fiber_cursor);
     require!(
-        fiber.key() == expected_fiber,
+        fiber.key().eq(&expected_fiber),
         AntegenThreadError::WrongFiberIndex
     );
 
     let instruction = fiber.get_instruction(&executor.key())?;
 
-    // Invoke the instruction
     thread.sign(|seeds| invoke_signed(&instruction, ctx.remaining_accounts, &[seeds]))?;
 
-    // Verify the inner instruction did not write data to the executor account
+    // Verify the CPI did not write data to the executor account
     require!(
         executor.data_is_empty(),
         AntegenThreadError::UnauthorizedWrite
     );
 
-    // Parse the signal from return data
+    // ── Parse signal ──
     let signal: Signal = match get_return_data() {
         None => Signal::None,
         Some((program_id, return_data)) => {
@@ -156,8 +147,16 @@ pub fn thread_exec(
         }
     };
 
-    // Calculate and distribute payments when chain ends (signal != Chain)
-    if signal != Signal::Chain {
+    // Downgrade Chain → None if cursor is on last fiber (nowhere to chain to)
+    let last_fiber = thread.fiber_ids.last().copied().unwrap_or(fiber_cursor);
+    let signal = if signal.eq(&Signal::Chain) && last_fiber.eq(&fiber_cursor) {
+        Signal::None
+    } else {
+        signal
+    };
+
+    // ── Payments (when chain ends) ──
+    if signal.ne(&Signal::Chain) {
         let balance_change = executor.lamports() as i64 - executor_lamports_start as i64;
         let payments =
             config.calculate_payments(time_since_ready, balance_change, forgo_commission);
@@ -182,15 +181,14 @@ pub fn thread_exec(
         )?;
     }
 
-    // Store signal for executor to read after simulation
-    thread.fiber_signal = signal.clone();
-
-    // For Immediate triggers: auto-close after fiber completes (unless chaining)
-    if matches!(thread.trigger, Trigger::Immediate { .. }) && signal != Signal::Chain {
-        thread.fiber_signal = Signal::Close;
-    }
-
+    // ── Apply signal to thread state ──
+    // Only persist Chain/Close — the executor needs these between transactions.
+    // All other signals are consumed inline and fiber_signal resets to None.
+    thread.fiber_signal = Signal::None;
     match &signal {
+        Signal::Chain | Signal::Close => {
+            thread.fiber_signal = signal.clone();
+        }
         Signal::Next { index } => {
             thread.fiber_cursor = *index;
         }
@@ -203,19 +201,25 @@ pub fn thread_exec(
             }
             thread.advance_to_next_fiber();
         }
+        Signal::Repeat => {
+            // Keep cursor on current fiber — no advancement
+        }
         Signal::None => {
             thread.advance_to_next_fiber();
         }
-        _ => {}
     }
 
-    // Update schedule for next execution (skip for chained)
+    // Immediate triggers: auto-close after fiber completes (unless chaining)
+    if matches!(thread.trigger, Trigger::Immediate { .. }) && signal != Signal::Chain {
+        thread.fiber_signal = Signal::Close;
+    }
+
+    // ── Finalize ──
     if !is_chained {
         thread.update_schedule(&clock, ctx.remaining_accounts, &thread_pubkey)?;
     }
 
     // Fiber stats not updated — fiber is owned by Fiber Program
-    // Thread tracks exec_count globally
     thread.exec_count += 1;
     thread.last_executor = executor.key();
     thread.last_error_time = None;

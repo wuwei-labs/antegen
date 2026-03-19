@@ -176,6 +176,35 @@ pub fn thread_create(
     thread.last_executor = Pubkey::default();
     thread.fiber_signal = Signal::None;
 
+    // Build and store pre-compiled thread_close instruction for self-closing
+    let close_ix = Instruction {
+        program_id: crate::ID,
+        accounts: crate::accounts::ThreadClose {
+            authority: thread_pubkey,   // thread signs as authority
+            close_to: thread.authority, // rent goes to owner
+            thread: thread_pubkey,
+            fiber_program: Some(antegen_fiber_program::ID),
+        }
+        .to_account_metas(None),
+        data: crate::instruction::CloseThread {}.data(),
+    };
+
+    let compiled = compile_instruction(close_ix)?;
+    thread.close_fiber = borsh::to_vec(&compiled)?;
+
+    // Transfer SOL from payer to the thread BEFORE fiber CPI
+    // (thread PDA needs lamports to pre-fund fiber creation)
+    transfer(
+        CpiContext::new(
+            anchor_lang::system_program::ID,
+            Transfer {
+                from: payer.to_account_info(),
+                to: thread.to_account_info(),
+            },
+        ),
+        amount,
+    )?;
+
     // Optionally create fiber index 0 via CPI to fiber program
     if let Some(instruction) = instruction {
         // Prevent thread_delete instructions in fibers (same check as fiber_create)
@@ -200,13 +229,18 @@ pub fn thread_create(
 
         let priority_fee = priority_fee.unwrap_or(0);
 
+        // Pre-fund fiber account from thread PDA
+        let space = 8 + antegen_fiber_program::state::FiberState::INIT_SPACE;
+        let rent_lamports = Rent::get()?.minimum_balance(space);
+        **thread.to_account_info().try_borrow_mut_lamports()? -= rent_lamports;
+        **fiber.to_account_info().try_borrow_mut_lamports()? += rent_lamports;
+
         thread.sign(|seeds| {
             antegen_fiber_program::cpi::create_fiber(
                 CpiContext::new_with_signer(
                     fiber_program.key(),
                     antegen_fiber_program::cpi::accounts::FiberCreate {
                         thread: thread.to_account_info(),
-                        payer: payer.to_account_info(),
                         fiber: fiber.to_account_info(),
                         system_program: ctx.accounts.system_program.to_account_info(),
                     },
@@ -227,34 +261,6 @@ pub fn thread_create(
         thread.fiber_ids = Vec::new();
         thread.fiber_cursor = 0;
     }
-
-    // Build and store pre-compiled thread_close instruction for self-closing
-    let close_ix = Instruction {
-        program_id: crate::ID,
-        accounts: crate::accounts::ThreadClose {
-            authority: thread_pubkey,   // thread signs as authority
-            close_to: thread.authority, // rent goes to owner
-            thread: thread_pubkey,
-            fiber_program: Some(antegen_fiber_program::ID),
-        }
-        .to_account_metas(None),
-        data: crate::instruction::CloseThread {}.data(),
-    };
-
-    let compiled = compile_instruction(close_ix)?;
-    thread.close_fiber = borsh::to_vec(&compiled)?;
-
-    // Transfer SOL from payer to the thread.
-    transfer(
-        CpiContext::new(
-            anchor_lang::system_program::ID,
-            Transfer {
-                from: payer.to_account_info(),
-                to: thread.to_account_info(),
-            },
-        ),
-        amount,
-    )?;
 
     Ok(())
 }

@@ -155,13 +155,13 @@ impl Actor for RpcSourceActor {
     ) -> Result<Self::State, Box<dyn Error + Send + Sync>> {
         let ws_url = endpoint.get_ws_url();
         log::debug!("RpcSourceActor starting for: {} (ws: {})", endpoint.url, ws_url);
-        log::debug!("  - Thread program: {}", antegen_thread_program::ID);
+        log::debug!("  - Thread program: {}", resources.program_id);
         log::debug!("  - Clock sysvar: {}", solana_sdk::sysvar::clock::ID);
 
         // Spawn program subscription task (pws handles reconnection automatically)
         // Note: Backfill is triggered by ConnectionOpened event (handles both initial and reconnection)
         let program_ws_url = ws_url.clone();
-        let program_id = antegen_thread_program::ID;
+        let program_id = resources.program_id;
         let program_rpc_client = resources.rpc_client.clone();
         let program_actor_ref = myself.clone();
         tokio::spawn(async move {
@@ -173,10 +173,11 @@ impl Actor for RpcSourceActor {
 
         // Spawn clock subscription task (pws handles reconnection automatically)
         let clock_ws_url = ws_url.clone();
+        let clock_program_id = resources.program_id;
         let clock_rpc_client = resources.rpc_client.clone();
         let clock_actor_ref = myself.clone();
         tokio::spawn(async move {
-            let subscription = RpcSubscription::new(clock_ws_url, antegen_thread_program::ID, clock_rpc_client);
+            let subscription = RpcSubscription::new(clock_ws_url, clock_program_id, clock_rpc_client);
             subscription
                 .subscribe_to_clock(clock_actor_ref)
                 .await;
@@ -256,7 +257,7 @@ impl Actor for RpcSourceActor {
                 // WebSocket connected - perform backfill to load/refresh threads
                 let subscription = RpcSubscription::new(
                     state.ws_url.clone(),
-                    antegen_thread_program::ID,
+                    state.resources.program_id,
                     state.resources.rpc_client.clone(),
                 );
                 if let Err(e) = subscription.perform_backfill(myself.clone()).await {

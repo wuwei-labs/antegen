@@ -107,12 +107,32 @@ pub enum EndpointRole {
 pub struct DatasourceConfig {
     #[serde(default = "default_commitment")]
     pub commitment: String,
+    #[serde(default = "default_program_id", with = "pubkey_string")]
+    pub program_id: Pubkey,
 }
 
-impl DatasourceConfig {
-    /// Get the thread program ID
-    pub fn program_id(&self) -> Pubkey {
-        antegen_thread_program::ID
+fn default_program_id() -> Pubkey {
+    antegen_thread_program::ID
+}
+
+mod pubkey_string {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+    use solana_sdk::pubkey::Pubkey;
+    use std::str::FromStr;
+
+    pub fn serialize<S>(pubkey: &Pubkey, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&pubkey.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Pubkey, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Pubkey::from_str(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -406,6 +426,7 @@ impl Default for ClientConfig {
             },
             datasources: DatasourceConfig {
                 commitment: "confirmed".to_string(),
+                program_id: default_program_id(),
             },
             processor: ProcessorConfig {
                 max_concurrent_threads: 10,

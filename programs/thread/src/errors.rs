@@ -156,8 +156,6 @@ pub enum AntegenThreadError {
     #[msg("Thread has not signaled close - fiber_signal must be Signal::Close")]
     CloseNotSignaled,
 
-    #[msg("Chain signal must target the next consecutive fiber")]
-    InvalidChainTarget,
 }
 
 /// Alias for AntegenThreadError

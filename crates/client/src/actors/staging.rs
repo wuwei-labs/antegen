@@ -75,7 +75,7 @@ impl Actor for StagingActor {
         (_config, resources, eviction_rx): Self::Arguments,
     ) -> Result<Self::State, Box<dyn Error + Send + Sync>> {
         log::debug!("StagingActor starting...");
-        log::debug!("Thread program ID: {}", antegen_thread_program::ID);
+        log::debug!("Thread program ID: {}", resources.program_id);
 
         Ok(StagingState {
             tracked_threads: HashMap::new(),
@@ -220,7 +220,7 @@ impl StagingActor {
                         }
                     }
                 } else {
-                    debug!("Thread {} discovered (exec_count={})", update.pubkey, thread.exec_count);
+                    info!("Thread {} discovered (exec_count={})", update.pubkey, thread.exec_count);
                 }
 
                 // Track exec_count and schedule (cache has full data)

@@ -3,7 +3,11 @@ cluster = "mainnet"
 wallet = "~/.config/solana/id.json"
 
 [workspace]
-members = ["programs/*"]
+members = [
+    "programs/fiber",
+    "programs/thread",
+    "programs/reentrance-test",
+]
 
 [programs.localnet]
 antegen_thread_program = "AgV3xRAdyTe1wW4gTW2oAnzHiAGofsxC7jBVGGkzUQbY"

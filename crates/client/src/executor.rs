@@ -43,6 +43,8 @@ pub struct ExecutorLogic {
     resources: SharedResources,
     /// Whether to forgo executor commission
     forgo_executor_commission: bool,
+    /// Thread program ID (configurable)
+    program_id: Pubkey,
 }
 
 impl ExecutorLogic {
@@ -52,10 +54,12 @@ impl ExecutorLogic {
         resources: SharedResources,
         forgo_executor_commission: bool,
     ) -> Self {
+        let program_id = resources.program_id;
         Self {
             keypair,
             resources,
             forgo_executor_commission,
+            program_id,
         }
     }
 
@@ -126,10 +130,11 @@ impl ExecutorLogic {
                 ixs.len()
             );
             let (signal, units) = self.simulate_transaction(&ixs, thread_pubkey).await?;
-            debug!(
-                "Simulation result: signal={:?}, units_consumed={}",
-                signal, units
+            info!(
+                "{}: fiber {} simulation signal={:?}",
+                thread_pubkey, current_fiber_cursor, signal
             );
+            debug!("  units_consumed={}", units);
 
             // Handle signal - only Chain and Close trigger batching
             match signal {
@@ -162,7 +167,10 @@ impl ExecutorLogic {
                 }
                 _ => {
                     // No batching needed for None, Repeat, Next, Update
-                    debug!("No batching needed for signal: {:?}", signal);
+                    info!(
+                        "{}: signal={:?}, no batching (submitting {} instruction(s))",
+                        thread_pubkey, signal, ixs.len()
+                    );
                     break;
                 }
             }
@@ -188,6 +196,13 @@ impl ExecutorLogic {
                 ComputeBudgetInstruction::set_compute_unit_price(priority_fee),
             );
         }
+
+        info!(
+            "{}: built {} instruction(s), priority_fee={}",
+            thread_pubkey,
+            ixs.len(),
+            priority_fee
+        );
 
         Ok((ixs, priority_fee))
     }
@@ -392,13 +407,13 @@ impl ExecutorLogic {
 
         debug!(
             "Instruction built: program={}, total_accounts={}, data_len={}",
-            antegen_thread_program::ID,
+            self.program_id,
             accounts.len(),
             data.len()
         );
 
         Ok(Instruction {
-            program_id: antegen_thread_program::ID,
+            program_id: self.program_id,
             accounts,
             data,
         })
@@ -459,7 +474,7 @@ impl ExecutorLogic {
 
         // 3. Thread program ID (for CPI)
         accounts.push(AccountMeta {
-            pubkey: antegen_thread_program::ID,
+            pubkey: self.program_id,
             is_signer: false,
             is_writable: false,
         });
@@ -478,7 +493,7 @@ impl ExecutorLogic {
         );
 
         Ok(Instruction {
-            program_id: antegen_thread_program::ID,
+            program_id: self.program_id,
             accounts,
             data,
         })
@@ -570,9 +585,9 @@ impl ExecutorLogic {
                         } else {
                             match Thread::try_deserialize(&mut data.as_slice()) {
                                 Ok(thread) => {
-                                    debug!(
-                                        "Extracted signal from simulation: {:?}",
-                                        thread.fiber_signal
+                                    info!(
+                                        "{}: extracted signal={:?} from simulation",
+                                        thread_pubkey, thread.fiber_signal
                                     );
                                     thread.fiber_signal
                                 }
@@ -589,11 +604,11 @@ impl ExecutorLogic {
                     }
                 }
             } else {
-                debug!("No account data in simulation response (account is null)");
+                warn!("{}: no account data in simulation response (account is null)", thread_pubkey);
                 Signal::None
             }
         } else {
-            debug!("No accounts in simulation response");
+            warn!("{}: no accounts in simulation response", thread_pubkey);
             Signal::None
         };
 
@@ -704,7 +719,7 @@ impl ExecutorLogic {
         .data();
 
         Ok(vec![Instruction {
-            program_id: antegen_thread_program::ID,
+            program_id: self.program_id,
             accounts: accounts.to_account_metas(Some(true)),
             data,
         }])
