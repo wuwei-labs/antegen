@@ -36,6 +36,8 @@ pub struct SharedResources {
     /// All workers share this single instance via Arc for efficient QUIC
     /// connection management.
     pub tpu_client: Option<Arc<TpuClient>>,
+    /// Thread program ID (configurable, defaults to compiled-in value)
+    pub program_id: Pubkey,
 }
 
 impl SharedResources {
@@ -99,6 +101,7 @@ impl SharedResources {
                 rpc_client,
                 cache,
                 tpu_client,
+                program_id: config.datasources.program_id,
             },
             eviction_rx,
         ))
@@ -111,6 +114,7 @@ impl SharedResources {
             rpc_client,
             cache,
             tpu_client: None,
+            program_id: antegen_thread_program::ID,
         }
     }
 }
