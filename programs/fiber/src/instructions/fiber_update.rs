@@ -1,3 +1,4 @@
+use crate::constants::*;
 use crate::state::*;
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::Instruction;
@@ -12,8 +13,12 @@ pub struct FiberUpdate<'info> {
     /// Thread PDA - must be signer
     pub thread: Signer<'info>,
 
-    /// CHECK: The fiber to update (or initialize if it doesn't exist) — validated via PDA or deserialization
-    #[account(mut)]
+    /// CHECK: Validated via seeds — may not be initialized yet
+    #[account(
+        mut,
+        seeds = [SEED_THREAD_FIBER, thread.key().as_ref(), &[fiber_index]],
+        bump,
+    )]
     pub fiber: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,

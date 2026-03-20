@@ -16,7 +16,7 @@ fn setup_thread_external(
         &authority.pubkey(),
         &payer.pubkey(),
         &thread_pubkey,
-        1_000_000,
+        10_000_000, // enough to fund 1 fiber
         thread_id,
         Trigger::Immediate { jitter: 0 },
         None,
@@ -189,7 +189,7 @@ fn test_fiber_close_middle_of_sequence() {
         &authority.pubkey(),
         &payer.pubkey(),
         &thread_pubkey,
-        1_000_000,
+        30_000_000, // enough to fund 3 fibers
         thread_id,
         Trigger::Immediate { jitter: 0 },
         None,
@@ -263,7 +263,7 @@ fn test_fiber_close_advances_cursor() {
         &authority.pubkey(),
         &payer.pubkey(),
         &thread_pubkey,
-        1_000_000,
+        20_000_000, // enough to fund 2 fibers
         thread_id,
         Trigger::Immediate { jitter: 0 },
         None,

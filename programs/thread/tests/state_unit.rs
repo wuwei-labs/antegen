@@ -36,7 +36,6 @@ fn make_thread(fiber_ids: Vec<u8>, fiber_cursor: u8) -> Thread {
         paused: false,
         exec_count: 0,
         last_executor: Pubkey::default(),
-        last_error_time: None,
         nonce_account: PROGRAM_ID, // sentinel for no nonce
         last_nonce: String::new(),
         close_fiber: Vec::new(),

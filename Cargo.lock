@@ -563,7 +563,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-fiber-program"
-version = "5.0.1"
+version = "5.0.2"
 dependencies = [
  "anchor-lang",
  "borsh",
@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-thread-program"
-version = "5.0.1"
+version = "5.0.2"
 dependencies = [
  "anchor-lang",
  "antegen-cron",

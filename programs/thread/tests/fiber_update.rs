@@ -16,7 +16,7 @@ fn setup_thread_with_fiber_account(
         &authority.pubkey(),
         &payer.pubkey(),
         &thread_pubkey,
-        1_000_000,
+        10_000_000, // enough to fund 1 fiber
         thread_id,
         Trigger::Immediate { jitter: 0 },
         None,

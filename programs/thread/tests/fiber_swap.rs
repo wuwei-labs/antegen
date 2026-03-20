@@ -21,7 +21,7 @@ fn setup_thread_with_two_fibers(
         &authority.pubkey(),
         &payer.pubkey(),
         &thread_pubkey,
-        1_000_000,
+        20_000_000, // enough to fund 2 fibers
         thread_id,
         Trigger::Immediate { jitter: 0 },
         None,

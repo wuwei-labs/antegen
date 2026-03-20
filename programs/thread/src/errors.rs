@@ -129,18 +129,6 @@ pub enum AntegenThreadError {
     #[msg("Invalid execution index - fiber not found in thread")]
     InvalidExecIndex,
 
-    #[msg("Only the last executor or no executor can report errors")]
-    NotLastExecutor,
-
-    #[msg("An error has already been reported for this thread")]
-    ErrorAlreadyReported,
-
-    #[msg("Thread is not sufficiently overdue to report an error")]
-    ThreadNotSufficientlyOverdue,
-
-    #[msg("Payment distribution failed")]
-    PaymentFailed,
-
     #[msg("Fiber account is required for this execution")]
     FiberAccountRequired,
 

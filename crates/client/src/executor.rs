@@ -690,40 +690,6 @@ impl ExecutorLogic {
         Ok(config)
     }
 
-    /// Build thread error instruction for reporting execution failures
-    pub async fn build_thread_error_instruction(
-        &self,
-        thread_pubkey: &Pubkey,
-        error_code: u32,
-        error_message: String,
-    ) -> Result<Vec<Instruction>> {
-        // Get config pubkey
-        let config_pubkey = ThreadConfig::pubkey();
-
-        // Fetch config to get admin
-        let config = self.fetch_thread_config(&config_pubkey).await?;
-
-        // Build the error instruction
-        let accounts = antegen_thread_program::accounts::ThreadError {
-            executor: self.keypair.pubkey(),
-            thread: *thread_pubkey,
-            config: config_pubkey,
-            admin: config.admin,
-            system_program: solana_system_interface::program::ID,
-        };
-
-        let data = antegen_thread_program::instruction::ErrorThread {
-            error_code,
-            error_message,
-        }
-        .data();
-
-        Ok(vec![Instruction {
-            program_id: self.program_id,
-            accounts: accounts.to_account_metas(Some(true)),
-            data,
-        }])
-    }
 }
 
 #[cfg(test)]

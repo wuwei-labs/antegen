@@ -172,15 +172,6 @@ pub mod antegen_thread {
         thread_withdraw(ctx, amount)
     }
 
-    /// Reports an error for a thread that failed to execute.
-    pub fn error_thread(
-        ctx: Context<ThreadError>,
-        error_code: u32,
-        error_message: String,
-    ) -> Result<()> {
-        thread_error(ctx, error_code, error_message)
-    }
-
     /// Memo instruction that logs a message (replacement for spl-memo).
     /// Used for tracking thread fiber execution in logs without external dependencies.
     /// Optionally emits a signal for testing signal behaviors.

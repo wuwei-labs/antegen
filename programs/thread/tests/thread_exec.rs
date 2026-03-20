@@ -27,7 +27,7 @@ fn setup_exec_thread(
         &authority.pubkey(),
         &payer.pubkey(),
         &thread_pubkey,
-        5_000_000, // enough to pay fees
+        10_000_000, // enough to pay fees
         thread_id,
         trigger,
         None,

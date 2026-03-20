@@ -111,7 +111,6 @@ fn print_thread(thread: &Thread) {
     println!("--- Execution Tracking ---");
     println!("  exec_count: {}", thread.exec_count);
     println!("  last_executor: {}", thread.last_executor);
-    println!("  last_error_time: {:?}", thread.last_error_time);
     println!();
 
     // Nonce

@@ -1,3 +1,4 @@
+use antegen_thread_program as thread_program;
 use litesvm::LiteSVM;
 use solana_sdk::{
     clock::Clock,
@@ -9,12 +10,8 @@ use solana_sdk::{
 use super::accounts::config_pda;
 use super::instructions::build_init_config;
 
-/// Program ID for antegen_thread_program
-pub const PROGRAM_ID: Pubkey = solana_sdk::pubkey!("AgV3xRAdyTe1wW4gTW2oAnzHiAGofsxC7jBVGGkzUQbY");
-
-/// Program ID for antegen_fiber_program
-pub const FIBER_PROGRAM_ID: Pubkey =
-    solana_sdk::pubkey!("4dWvYEaDaoG1umoLDPbU8venq3HcAwAc1feMAsXa6tyb");
+pub const PROGRAM_ID: Pubkey = thread_program::ID;
+pub const FIBER_PROGRAM_ID: Pubkey = thread_program::fiber::ID;
 
 /// Compiled program bytes
 const PROGRAM_BYTES: &[u8] = include_bytes!("../../../../target/deploy/antegen_thread_program.so");

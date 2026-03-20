@@ -17,8 +17,7 @@
 | thread_delete | 4 | 4 | |
 | thread_memo | 8 | 8 | |
 | thread_exec | 13 | 13 | CPI-dependent; nonce test excluded |
-| thread_error | 7 | 7 | |
-| **Total** | **142** | **142** | |
+| **Total** | **135** | **135** | |
 
 ## Error Codes Tested
 
@@ -33,13 +32,10 @@
 | MissingFiberAccounts | thread_close |
 | InvalidConfigAdmin | thread_delete |
 | WithdrawalTooLarge | thread_withdraw |
-| ThreadPaused | thread_exec, thread_error |
+| ThreadPaused | thread_exec |
 | GlobalPauseActive | thread_exec |
 | InvalidThreadState | thread_exec (no fibers) |
 | TriggerConditionFailed | thread_exec (timestamp not ready) |
-| NotLastExecutor | thread_error |
-| ErrorAlreadyReported | thread_error |
-| ThreadNotSufficientlyOverdue | thread_error |
 
 ## Trigger Types Tested
 

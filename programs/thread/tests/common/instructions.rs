@@ -269,7 +269,7 @@ pub fn build_swap_fiber(
 }
 
 // ============================================================================
-// Exec / Error / Memo Instructions
+// Exec / Memo Instructions
 // ============================================================================
 
 pub fn build_exec_thread(
@@ -303,37 +303,6 @@ pub fn build_exec_thread(
         data: antegen_thread_program::instruction::ExecThread {
             forgo_commission,
             fiber_cursor,
-        }
-        .data(),
-    }
-}
-
-pub fn build_error_thread(
-    executor: &Pubkey,
-    thread: &Pubkey,
-    config: &Pubkey,
-    admin: &Pubkey,
-    error_code: u32,
-    error_message: &str,
-    remaining_accounts: &[AccountMeta],
-) -> Instruction {
-    let mut accounts = antegen_thread_program::accounts::ThreadError {
-        executor: *executor,
-        thread: *thread,
-        config: *config,
-        admin: *admin,
-        system_program: solana_system_interface::program::ID,
-    }
-    .to_account_metas(None);
-
-    accounts.extend_from_slice(remaining_accounts);
-
-    Instruction {
-        program_id: PROGRAM_ID,
-        accounts,
-        data: antegen_thread_program::instruction::ErrorThread {
-            error_code,
-            error_message: error_message.to_string(),
         }
         .data(),
     }

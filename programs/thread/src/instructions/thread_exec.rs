@@ -215,14 +215,13 @@ pub fn thread_exec(
     }
 
     // ── Finalize ──
-    if !is_chained {
+    if signal != Signal::Chain {
         thread.update_schedule(&clock, ctx.remaining_accounts, &thread_pubkey)?;
     }
 
     // Fiber stats not updated — fiber is owned by Fiber Program
     thread.exec_count += 1;
     thread.last_executor = executor.key();
-    thread.last_error_time = None;
 
     Ok(())
 }
