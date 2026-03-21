@@ -102,7 +102,7 @@ fn test_reentrancy_update_fiber_during_exec() {
         &authority.pubkey(),
         &payer.pubkey(),
         &thread_pubkey,
-        10_000_000, // enough SOL for rent + fees
+        20_000_000, // 10M per fiber × 2 fibers
         thread_id,
         Trigger::Interval {
             seconds: 10,
@@ -230,7 +230,7 @@ fn test_reentrancy_close_fiber_during_exec() {
         &authority.pubkey(),
         &payer.pubkey(),
         &thread_pubkey,
-        10_000_000,
+        20_000_000, // 10M per fiber × 2 fibers
         thread_id,
         Trigger::Interval {
             seconds: 10,
@@ -348,7 +348,7 @@ fn test_reentrancy_swap_fiber_during_exec() {
         &authority.pubkey(),
         &payer.pubkey(),
         &thread_pubkey,
-        10_000_000,
+        30_000_000, // 10M per fiber × 3 fibers
         thread_id,
         Trigger::Interval {
             seconds: 10,

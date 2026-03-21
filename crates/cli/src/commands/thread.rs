@@ -546,7 +546,7 @@ mod test_commands {
 
     /// Build a fiber_create instruction (does not send)
     fn build_fiber_create_instruction(
-        payer: &Keypair,
+        _payer: &Keypair,
         authority: &Keypair,
         thread_pubkey: Pubkey,
         fiber_index: u8,
@@ -937,6 +937,8 @@ mod test_commands {
             recent_blockhashes: None,
             rent: None,
             system_program: anchor_lang::system_program::ID,
+            fiber: None,
+            fiber_program: None,
         }
         .to_account_metas(Some(false));
 
@@ -945,7 +947,8 @@ mod test_commands {
             amount: LAMPORTS_PER_SOL / 10, // 0.1 SOL
             id: thread_id.into(),
             trigger,
-            initial_instruction: Some(serializable_ix),
+            paused: None,
+            instruction: Some(serializable_ix),
             priority_fee: Some(0),
         }
         .data();
@@ -1082,6 +1085,8 @@ mod test_commands {
             recent_blockhashes: None,
             rent: None,
             system_program: anchor_lang::system_program::ID,
+            fiber: None,
+            fiber_program: None,
         }
         .to_account_metas(Some(false));
 
@@ -1093,7 +1098,8 @@ mod test_commands {
                 skippable: true,
                 jitter: 0,
             },
-            initial_instruction: Some(serializable_a),
+            paused: None,
+            instruction: Some(serializable_a),
             priority_fee: Some(0),
         }
         .data();
@@ -1131,6 +1137,8 @@ mod test_commands {
             recent_blockhashes: None,
             rent: None,
             system_program: anchor_lang::system_program::ID,
+            fiber: None,
+            fiber_program: None,
         }
         .to_account_metas(Some(false));
 
@@ -1142,7 +1150,8 @@ mod test_commands {
                 offset: 0,
                 size: 100,
             },
-            initial_instruction: Some(serializable_b),
+            paused: None,
+            instruction: Some(serializable_b),
             priority_fee: Some(0),
         }
         .data();
@@ -1204,6 +1213,8 @@ mod test_commands {
             recent_blockhashes: None,
             rent: None,
             system_program: anchor_lang::system_program::ID,
+            fiber: None,
+            fiber_program: None,
         }
         .to_account_metas(Some(false));
 
@@ -1215,7 +1226,8 @@ mod test_commands {
                 skippable: true,
                 jitter: 0,
             },
-            initial_instruction: Some(serializable),
+            paused: None,
+            instruction: Some(serializable),
             priority_fee: Some(0),
         }
         .data();

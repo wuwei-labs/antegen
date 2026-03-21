@@ -17,7 +17,6 @@ pub struct FiberCreate<'info> {
     /// The thread to add the fiber to
     #[account(
         mut,
-        constraint = thread.fiber_next_id.eq(&fiber_index) @ AntegenThreadError::InvalidFiberIndex,
         seeds = [
             SEED_THREAD,
             thread.authority.as_ref(),
@@ -54,11 +53,13 @@ pub fn fiber_create(
         return Err(AntegenThreadError::InvalidInstruction.into());
     }
 
-    // Pre-fund fiber account from thread PDA
-    let space = 8 + antegen_fiber_program::state::FiberState::INIT_SPACE;
-    let rent_lamports = Rent::get()?.minimum_balance(space);
-    **thread.to_account_info().try_borrow_mut_lamports()? -= rent_lamports;
-    **ctx.accounts.fiber.to_account_info().try_borrow_mut_lamports()? += rent_lamports;
+    // Conditional pre-funding: only pre-fund if fiber account is not yet initialized
+    if ctx.accounts.fiber.to_account_info().data_len() == 0 {
+        let space = 8 + antegen_fiber_program::state::FiberState::INIT_SPACE;
+        let rent_lamports = Rent::get()?.minimum_balance(space);
+        **thread.to_account_info().try_borrow_mut_lamports()? -= rent_lamports;
+        **ctx.accounts.fiber.to_account_info().try_borrow_mut_lamports()? += rent_lamports;
+    }
 
     thread.sign(|seeds| {
         antegen_fiber_program::cpi::create_fiber(
@@ -77,12 +78,14 @@ pub fn fiber_create(
         )
     })?;
 
-    // Update thread's fiber_ids and increment fiber_next_id
+    // Track fiber: push to fiber_ids if not present, bump fiber_next_id if needed
     if !thread.fiber_ids.contains(&fiber_index) {
         thread.fiber_ids.push(fiber_index);
         thread.fiber_ids.sort();
     }
-    thread.fiber_next_id = thread.fiber_next_id.saturating_add(1);
+    if fiber_index >= thread.fiber_next_id {
+        thread.fiber_next_id = fiber_index.saturating_add(1);
+    }
 
     Ok(())
 }

@@ -43,10 +43,10 @@ edition = "2021"
 antegen-cron = { version = "4.0.0", path = "crates/cron" }
 antegen-client = { version = "5.0.0", path = "crates/client" }
 antegen-geyser-plugin = { version = "5.0.0", path = "plugin/geyser" }
-antegen-fiber-program = { version = "5.0.2", path = "programs/fiber", features = [
+antegen-fiber-program = { version = "5.0.3", path = "programs/fiber", features = [
     "cpi",
 ] }
-antegen-thread-program = { version = "5.0.2", path = "programs/thread", features = [
+antegen-thread-program = { version = "5.0.3", path = "programs/thread", features = [
     "cpi",
 ] }
 

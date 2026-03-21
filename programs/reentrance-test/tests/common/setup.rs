@@ -9,15 +9,14 @@ use solana_sdk::{
 use super::accounts::config_pda;
 use super::instructions::build_init_config;
 
-/// Program ID for antegen_thread_program
-pub const PROGRAM_ID: Pubkey = solana_sdk::pubkey!("AgV3xRAdyTe1wW4gTW2oAnzHiAGofsxC7jBVGGkzUQbY");
+/// Program ID for antegen_thread_program — sourced from the crate's declare_id!
+pub const PROGRAM_ID: Pubkey = antegen_thread_program::ID;
 
 /// Fiber program ID — sourced from the thread program re-export.
 pub const FIBER_PROGRAM_ID: Pubkey = antegen_thread_program::fiber::ID;
 
-/// Program ID for antegen_reentrance_test
-pub const TEST_PROCESSOR_ID: Pubkey =
-    solana_sdk::pubkey!("FncKotqKRzg4D8T6pBj1cPz1mJgQb1YGzkPFh8SEAEXo");
+/// Program ID for antegen_reentrance_test — sourced from the crate's declare_id!
+pub const TEST_PROCESSOR_ID: Pubkey = antegen_reentrance_test::ID;
 
 /// Compiled program bytes
 const PROGRAM_BYTES: &[u8] = include_bytes!("../../../../target/deploy/antegen_thread_program.so");

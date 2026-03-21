@@ -101,20 +101,23 @@ fn test_fiber_create_sequential_index() {
 }
 
 #[test]
-fn test_fiber_create_wrong_index() {
+fn test_fiber_create_non_sequential_index() {
     let (mut svm, _admin, payer) = create_test_env();
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let thread_pubkey = setup_thread(&mut svm, &authority, &payer, "fc-wrong");
+    let thread_pubkey = setup_thread(&mut svm, &authority, &payer, "fc-nonseq");
 
-    // fiber_next_id is 0, try index 1
-    let result = send_create_fiber(&mut svm, &authority, &payer, &thread_pubkey, 1, 0);
-    assert!(result.is_err());
+    // fiber_next_id is 0, create index 1 directly — should succeed (relaxed constraint)
+    send_create_fiber(&mut svm, &authority, &payer, &thread_pubkey, 1, 0).unwrap();
+
+    let thread = deserialize_thread(&svm, &thread_pubkey);
+    assert_eq!(thread.fiber_ids, vec![1]);
+    assert_eq!(thread.fiber_next_id, 2); // bumped past index 1
 }
 
 #[test]
-fn test_fiber_create_non_sequential() {
+fn test_fiber_create_skip_index() {
     let (mut svm, _admin, payer) = create_test_env();
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
@@ -122,9 +125,12 @@ fn test_fiber_create_non_sequential() {
     let thread_pubkey = setup_thread(&mut svm, &authority, &payer, "fc-skip");
     send_create_fiber(&mut svm, &authority, &payer, &thread_pubkey, 0, 0).unwrap();
 
-    // Try to skip index 1 and go to 2
-    let result = send_create_fiber(&mut svm, &authority, &payer, &thread_pubkey, 2, 0);
-    assert!(result.is_err());
+    // Skip index 1 and create index 2 — should succeed (relaxed constraint)
+    send_create_fiber(&mut svm, &authority, &payer, &thread_pubkey, 2, 0).unwrap();
+
+    let thread = deserialize_thread(&svm, &thread_pubkey);
+    assert_eq!(thread.fiber_ids, vec![0, 2]);
+    assert_eq!(thread.fiber_next_id, 3); // bumped past index 2
 }
 
 #[test]

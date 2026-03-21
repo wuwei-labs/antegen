@@ -132,6 +132,7 @@ pub struct Thread {
     // Execution tracking
     pub exec_count: u64,
     pub last_executor: Pubkey,
+
     // Nonce (for durable transactions)
     pub nonce_account: Pubkey,
     #[max_len(44)]

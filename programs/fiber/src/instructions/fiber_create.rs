@@ -28,15 +28,40 @@ pub fn fiber_create(
     priority_fee: u64,
 ) -> Result<()> {
     let thread_key = ctx.accounts.thread.key();
+    let fiber_info = ctx.accounts.fiber.to_account_info();
 
-    initialize_fiber(
-        &ctx.accounts.fiber,
-        &ctx.accounts.system_program,
-        &thread_key,
-        fiber_index,
-        &instruction,
-        priority_fee,
-    )
+    if fiber_info.data_len() == 0 {
+        // Not initialized — full init
+        initialize_fiber(
+            &ctx.accounts.fiber,
+            &ctx.accounts.system_program,
+            &thread_key,
+            fiber_index,
+            &instruction,
+            priority_fee,
+        )
+    } else {
+        // Already initialized — update in place (same as fiber_update)
+        let mut data = fiber_info.try_borrow_mut_data()?;
+        let discriminator = FiberState::DISCRIMINATOR;
+        if data[..8] != discriminator[..] {
+            return Err(anchor_lang::error::ErrorCode::AccountDiscriminatorMismatch.into());
+        }
+
+        let compiled = compile_instruction(instruction)?;
+        let compiled_bytes = borsh::to_vec(&compiled)?;
+
+        let mut state: FiberState = FiberState::try_deserialize(&mut &data[..])?;
+        state.thread = thread_key;
+        state.compiled_instruction = compiled_bytes;
+        state.priority_fee = priority_fee;
+        state.last_executed = 0;
+        state.exec_count = 0;
+
+        let state_bytes = borsh::to_vec(&state)?;
+        data[8..8 + state_bytes.len()].copy_from_slice(&state_bytes);
+        Ok(())
+    }
 }
 
 /// Shared helper for manual fiber account initialization.
@@ -52,12 +77,6 @@ pub fn initialize_fiber<'info>(
     priority_fee: u64,
 ) -> Result<()> {
     let fiber_info = fiber.to_account_info();
-
-    // Verify account is not already initialized
-    require!(
-        fiber_info.data_len().eq(&0),
-        AntegenFiberError::AlreadyInitialized
-    );
 
     // Derive PDA with known seeds — single call, same as Anchor does
     let (expected_pda, bump) = Pubkey::find_program_address(

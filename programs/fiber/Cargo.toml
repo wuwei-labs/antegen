@@ -1,7 +1,7 @@
 [package]
 name = "antegen-fiber-program"
 description = "Solana program for Antegen - fiber (instruction) account management"
-version = "5.0.2"
+version = "5.0.3"
 authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
 repository = "https://github.com/wuwei-labs/antegen"
 homepage = "https://antegen.xyz/"
