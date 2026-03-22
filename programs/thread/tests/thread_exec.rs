@@ -672,6 +672,7 @@ fn test_exec_thread_signal_update_pause() {
         Some(Signal::Update {
             paused: Some(true),
             trigger: None,
+            index: None,
         }),
     );
 
@@ -733,6 +734,7 @@ fn test_exec_thread_signal_update_trigger() {
         Some(Signal::Update {
             paused: None,
             trigger: Some(new_trigger.clone()),
+            index: None,
         }),
     );
 

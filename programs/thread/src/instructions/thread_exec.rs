@@ -192,14 +192,18 @@ pub fn thread_exec(
         Signal::Next { index } => {
             thread.fiber_cursor = *index;
         }
-        Signal::Update { paused, trigger } => {
+        Signal::Update { paused, trigger, index } => {
             if let Some(paused) = paused {
                 thread.paused = *paused;
             }
             if let Some(trigger) = trigger {
                 thread.trigger = trigger.clone();
             }
-            thread.advance_to_next_fiber();
+            if let Some(index) = index {
+                thread.fiber_cursor = *index;
+            } else {
+                thread.advance_to_next_fiber();
+            }
         }
         Signal::Repeat => {
             // Keep cursor on current fiber — no advancement

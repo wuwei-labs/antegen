@@ -98,6 +98,7 @@ pub enum Signal {
     Update {
         paused: Option<bool>,
         trigger: Option<Trigger>,
+        index: Option<u8>,
     },
 }
 

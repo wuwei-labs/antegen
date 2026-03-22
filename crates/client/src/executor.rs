@@ -115,6 +115,9 @@ impl ExecutorLogic {
             priority_fee
         );
 
+        let mut last_units = 0u64;
+        let mut simulated_ix_count = 0usize;
+
         loop {
             if ixs.len() >= MAX_BATCHED_EXECS {
                 warn!(
@@ -130,6 +133,8 @@ impl ExecutorLogic {
                 ixs.len()
             );
             let (signal, units) = self.simulate_transaction(&ixs, thread_pubkey).await?;
+            last_units = units;
+            simulated_ix_count = ixs.len();
             info!(
                 "{}: fiber {} simulation signal={:?}",
                 thread_pubkey, current_fiber_cursor, signal
@@ -168,7 +173,7 @@ impl ExecutorLogic {
                 _ => {
                     // No batching needed for None, Repeat, Next, Update
                     info!(
-                        "{}: signal={:?}, no batching (submitting {} instruction(s))",
+                        "{}: signal={:?}, no chaining needed ({} exec instruction(s))",
                         thread_pubkey, signal, ixs.len()
                     );
                     break;
@@ -176,10 +181,16 @@ impl ExecutorLogic {
             }
         }
 
-        // Final simulation to get accurate compute units
-        debug!("Final simulation to get accurate compute units...");
-        let (_, units_consumed) = self.simulate_transaction(&ixs, thread_pubkey).await?;
-        debug!("Final simulation: units_consumed={}", units_consumed);
+        // Only re-simulate if chaining added more instructions since last sim
+        let units_consumed = if ixs.len() > simulated_ix_count {
+            debug!("Final simulation to get accurate compute units...");
+            let (_, units) = self.simulate_transaction(&ixs, thread_pubkey).await?;
+            debug!("Final simulation: units_consumed={}", units);
+            units
+        } else {
+            debug!("Skipping redundant final simulation (no new instructions since last sim)");
+            last_units
+        };
 
         // Add compute budget instruction at the beginning with measured CU
         // Add 10% buffer for safety
