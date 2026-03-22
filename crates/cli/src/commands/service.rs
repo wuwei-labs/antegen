@@ -317,10 +317,7 @@ pub async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
             println!("Use `anm stop` to stop or `anm restart` to restart.");
 
             // Check for updates
-            if let Some(latest) = check_update_available().await {
-                println!();
-                println!("Update available: {} -> Run `anm update`", latest);
-            }
+            print_update_notices().await;
         }
         ServiceStatus::Stopped(reason) => {
             println!("✗ Service started but crashed immediately");
@@ -457,7 +454,7 @@ pub fn logs(follow: bool) -> Result<()> {
 
         let mut cmd = std::process::Command::new("tail");
         if follow {
-            cmd.arg("-f");
+            cmd.arg("-n").arg("50").arg("-f");
         } else {
             cmd.arg("-n").arg("100");
         }
@@ -502,28 +499,41 @@ pub fn is_installed() -> bool {
     )
 }
 
-/// Check if an update is available (compares installed binary to latest release)
-async fn check_update_available() -> Option<String> {
-    // Skip in dev mode - dev always uses local build
+/// Print update notices for CLI and node if newer versions are available
+async fn print_update_notices() {
     #[cfg(not(feature = "prod"))]
     if super::update::is_dev_build() {
-        return None;
+        return;
     }
 
-    let binary_path = super::update::binary_path().ok()?;
-    if !binary_path.is_symlink() {
-        return None;
+    let (cli_update, node_update) = tokio::join!(
+        async {
+            let installed = super::update::current_version();
+            let latest = super::update::fetch_latest_version().await.ok()?;
+            if super::update::version_less_than(installed, &latest) {
+                Some(latest)
+            } else {
+                None
+            }
+        },
+        async {
+            let installed = super::update::read_node_version()?;
+            let latest = super::update::fetch_latest_node_version().await.ok()?;
+            if super::update::version_less_than(&installed, &latest) {
+                Some(latest)
+            } else {
+                None
+            }
+        },
+    );
+
+    if cli_update.is_some() || node_update.is_some() {
+        println!();
     }
-
-    let target = std::fs::read_link(&binary_path).ok()?;
-    let filename = target.file_name()?.to_str()?;
-    let installed = filename.strip_prefix("antegen-")?;
-
-    let latest = super::update::fetch_latest_version().await.ok()?;
-
-    if super::update::version_less_than(installed, &latest) {
-        Some(latest)
-    } else {
-        None
+    if let Some(latest) = cli_update {
+        println!("CLI update available: {} -> Run `antegen update`", latest);
+    }
+    if let Some(latest) = node_update {
+        println!("Node update available: {} -> Run `anm update`", latest);
     }
 }

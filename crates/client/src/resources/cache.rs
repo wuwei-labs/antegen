@@ -130,8 +130,11 @@ impl ThreadExpiry {
                     let secs = (diff as u64).min(86400);
                     Some(Duration::from_secs(secs))
                 } else {
-                    // Already past expiration, set minimal TTL to allow cleanup
-                    Some(Duration::from_secs(1))
+                    // Already past expiration — thread is overdue.
+                    // Use a processing window floor so the execution pipeline has time
+                    // to evaluate and execute the thread before cache eviction.
+                    let processing_window = self.grace_period + self.eviction_buffer;
+                    Some(Duration::from_secs(processing_window.max(30)))
                 }
             }
             // Block, Account, Unknown triggers: no expiration
@@ -449,7 +452,7 @@ mod tests {
         let cache = AccountCache::with_config(&config, 1, 0, None); // 1 second grace period, no eviction buffer
         let pubkey = Pubkey::new_unique();
 
-        // Set trigger time in the past (should expire quickly)
+        // Set trigger time in the past (should expire with processing window floor)
         let past_timestamp = chrono::Utc::now().timestamp() - 10;
         cache
             .put(
@@ -464,12 +467,13 @@ mod tests {
 
         assert!(cache.get(&pubkey).await.is_some());
 
-        // Wait for expiration (past trigger + grace period = already expired, uses 1s min TTL)
+        // Wait briefly — should NOT be evicted yet because overdue threads now get
+        // a processing window floor of max(grace_period + eviction_buffer, 30s) = 30s
         tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
         cache.run_pending_tasks().await;
 
-        // Should be evicted
-        assert!(cache.get(&pubkey).await.is_none());
+        // Should still be present (30s processing window, not 1s)
+        assert!(cache.get(&pubkey).await.is_some());
     }
 
     #[tokio::test]

@@ -269,6 +269,16 @@ impl StagingActor {
         // Update last processed slot
         state.last_processed_slot = clock.slot;
 
+        // Periodic heartbeat at INFO level every 100 slots
+        if clock.slot % 100 == 0 {
+            info!(
+                "ClockTick heartbeat: slot={}, tracked={}, queued={}",
+                clock.slot,
+                state.tracked_threads.len(),
+                state.queued_threads.len()
+            );
+        }
+
         trace!("ClockTick: slot={}, epoch={}, timestamp={}",
             clock.slot, clock.epoch, clock.unix_timestamp);
 
@@ -314,7 +324,7 @@ impl StagingActor {
             .await;
 
         if !ready_threads.is_empty() {
-            debug!("Found {} ready threads", ready_threads.len());
+            info!("Found {} ready threads", ready_threads.len());
         }
 
         // Push each ready thread to ProcessorFactory
@@ -344,9 +354,9 @@ impl StagingActor {
                     // Remove from queued since it wasn't successfully sent
                     state.queued_threads.remove(&ready_thread.thread_pubkey);
                 } else {
-                    debug!(
-                        "Pushed thread {} to processor queue",
-                        ready_thread.thread_pubkey
+                    info!(
+                        "Pushed thread {} to processor (overdue_seconds={})",
+                        ready_thread.thread_pubkey, ready_thread.overdue_seconds
                     );
                 }
             } else {

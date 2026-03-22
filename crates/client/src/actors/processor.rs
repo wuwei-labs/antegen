@@ -261,8 +261,8 @@ impl ProcessorFactory {
             }
             None => {
                 // Cache miss - try RPC fallback
-                log::debug!(
-                    "Thread {} not in cache, attempting RPC fetch",
+                log::warn!(
+                    "Cache miss for thread {} during worker spawn, attempting RPC fetch",
                     ready_thread.thread_pubkey
                 );
 
@@ -366,7 +366,7 @@ impl ProcessorFactory {
 
         // Log the result
         if result.success {
-            log::debug!("Thread {} execution succeeded", result.thread_pubkey);
+            log::info!("Thread {} execution succeeded", result.thread_pubkey);
         } else if is_lb_skip {
             log::debug!(
                 "Thread {} skipped: {:?}",

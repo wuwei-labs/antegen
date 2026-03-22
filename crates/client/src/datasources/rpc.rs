@@ -203,6 +203,18 @@ impl RpcSubscription {
 
         debug!("[{}] Clock subscription request sent", self.ws_url);
 
+        // Spawn keep-alive ping task (every 10 seconds, same as program subscription)
+        let ping_sender = sender.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            loop {
+                interval.tick().await;
+                if ping_sender.send(WsMessage::Ping(vec![])).await.is_err() {
+                    break;
+                }
+            }
+        });
+
         // Process incoming messages
         loop {
             match receiver.recv().await {
