@@ -23,7 +23,9 @@ pub struct InfoOutput {
     pub observability: ObservabilityInfo,
     pub data: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub update_available: Option<String>,
+    pub cli_update_available: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_update_available: Option<String>,
 }
 
 /// Observability info
@@ -101,7 +103,7 @@ async fn gather_info() -> Result<InfoOutput> {
     };
 
     // Check for updates (non-blocking, fail silently)
-    let update_available = check_update_available(&service_version).await;
+    let (cli_update_available, node_update_available) = check_updates_available().await;
 
     // If config doesn't exist, return minimal info
     if !config_path.exists() {
@@ -118,7 +120,8 @@ async fn gather_info() -> Result<InfoOutput> {
                 status_page: None,
             },
             data: shorten_path(&data_dir),
-            update_available,
+            cli_update_available,
+            node_update_available,
         });
     }
 
@@ -157,7 +160,8 @@ async fn gather_info() -> Result<InfoOutput> {
         service,
         observability,
         data: shorten_path(&data_dir),
-        update_available,
+        cli_update_available,
+        node_update_available,
     })
 }
 
@@ -217,24 +221,31 @@ fn get_observability_info(config: &ClientConfig) -> ObservabilityInfo {
     }
 }
 
-/// Check if update is available (compares service/installed version to latest)
-async fn check_update_available(service_version: &Option<String>) -> Option<String> {
-    // Skip in dev mode - dev always uses local build
+/// Check if CLI and/or node updates are available
+async fn check_updates_available() -> (Option<String>, Option<String>) {
     #[cfg(not(feature = "prod"))]
     if super::update::is_dev_build() {
-        return None;
+        return (None, None);
     }
 
-    // Get the version that's running (service version if available, otherwise installed binary)
-    let running_version = match service_version {
-        Some(v) => v.clone(),
-        None => get_installed_binary_version()?,
-    };
+    let (cli, node) = tokio::join!(check_cli_update(), check_node_update(),);
+    (cli, node)
+}
 
+async fn check_cli_update() -> Option<String> {
+    let installed = super::update::current_version();
     let latest = super::update::fetch_latest_version().await.ok()?;
+    if super::update::version_less_than(installed, &latest) {
+        Some(latest)
+    } else {
+        None
+    }
+}
 
-    // Only show update if latest is actually newer than running version
-    if super::update::version_less_than(&running_version, &latest) {
+async fn check_node_update() -> Option<String> {
+    let installed = super::update::read_node_version()?;
+    let latest = super::update::fetch_latest_node_version().await.ok()?;
+    if super::update::version_less_than(&installed, &latest) {
         Some(latest)
     } else {
         None
@@ -281,9 +292,14 @@ fn print_info(info: &InfoOutput) {
 
     println!("{:14} {}", "data:", info.data);
 
-    if let Some(update) = &info.update_available {
+    if info.cli_update_available.is_some() || info.node_update_available.is_some() {
         println!();
-        println!("Update available: {} -> Run `anm update`", update);
+    }
+    if let Some(version) = &info.cli_update_available {
+        println!("CLI update available: {} -> Run `antegen update`", version);
+    }
+    if let Some(version) = &info.node_update_available {
+        println!("Node update available: {} -> Run `anm update`", version);
     }
 }
 

@@ -508,7 +508,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-client"
-version = "5.0.0"
+version = "5.0.1"
 dependencies = [
  "anchor-lang",
  "antegen-fiber-program",
