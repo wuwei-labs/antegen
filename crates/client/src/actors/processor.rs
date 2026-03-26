@@ -209,6 +209,16 @@ impl ProcessorFactory {
             return Ok(());
         };
 
+        // Guard against duplicate active workers
+        if state.active_workers.contains_key(&ready_thread.thread_pubkey) {
+            log::debug!(
+                "Thread {} already has active worker, re-queuing",
+                ready_thread.thread_pubkey
+            );
+            state.pending_queue.push_back(ready_thread);
+            return Ok(());
+        }
+
         log::debug!(
             "Spawning worker for thread {} (queue_size={}, active={})",
             ready_thread.thread_pubkey,

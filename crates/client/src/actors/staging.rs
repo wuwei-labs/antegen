@@ -210,6 +210,7 @@ impl StagingActor {
                     }
 
                     if state.queued_threads.contains(&update.pubkey) {
+                        state.queued_threads.remove(&update.pubkey);
                         // Send cancel message to ProcessorFactory
                         if let Some(ref processor_ref) = state.processor_ref {
                             if let Err(e) = processor_ref
