@@ -508,7 +508,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-client"
-version = "5.0.3"
+version = "5.0.4"
 dependencies = [
  "anchor-lang",
  "antegen-fiber-program",
@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-thread-program"
-version = "5.0.4"
+version = "5.0.5"
 dependencies = [
  "anchor-lang",
  "antegen-cron",

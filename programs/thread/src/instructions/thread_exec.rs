@@ -83,9 +83,18 @@ pub fn thread_exec(
     // ── Close path (early return) ──
     if thread.fiber_signal == Signal::Close {
         let compiled = CompiledInstructionV0::try_from_slice(&thread.close_fiber)?;
-        let instruction = decompile_instruction(&compiled)?;
+        let mut instruction = decompile_instruction(&compiled)?;
 
-        msg!("Executing close_fiber to delete thread");
+        // Append fiber PDAs so thread_close receives them as remaining_accounts
+        for &fiber_idx in &thread.fiber_ids {
+            instruction.accounts.push(AccountMeta {
+                pubkey: FiberState::pubkey(thread_pubkey, fiber_idx),
+                is_signer: false,
+                is_writable: true,
+            });
+        }
+
+        msg!("Executing close_fiber to delete thread ({} fibers)", thread.fiber_ids.len());
 
         thread.sign(|seeds| invoke_signed(&instruction, ctx.remaining_accounts, &[seeds]))?;
 

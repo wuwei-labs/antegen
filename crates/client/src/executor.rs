@@ -490,6 +490,13 @@ impl ExecutorLogic {
             is_writable: false,
         });
 
+        // 4. Fiber program ID (needed by ThreadClose for CPI to close_fiber)
+        accounts.push(AccountMeta {
+            pubkey: antegen_fiber_program::ID,
+            is_signer: false,
+            is_writable: false,
+        });
+
         // Build instruction data - fiber_cursor doesn't matter since Signal::Close is set
         let data = ExecThread {
             forgo_commission: self.forgo_executor_commission,

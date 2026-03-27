@@ -1,6 +1,6 @@
 [package]
 name = "antegen-client"
-version = "5.0.3"
+version = "5.0.4"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
