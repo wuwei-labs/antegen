@@ -37,7 +37,7 @@ pub struct ThreadClose<'info> {
     pub fiber_program: Option<Program<'info, antegen_fiber_program::program::AntegenFiber>>,
 }
 
-pub fn thread_close<'info>(ctx: Context<'_, '_, 'info, 'info, ThreadClose<'info>>) -> Result<()> {
+pub fn thread_close<'info>(ctx: Context<'info, ThreadClose<'info>>) -> Result<()> {
     let thread = &mut ctx.accounts.thread;
     let thread_key = thread.key();
 

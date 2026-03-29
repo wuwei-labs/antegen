@@ -41,18 +41,18 @@ edition = "2021"
 [workspace.dependencies]
 # Internal workspace crates (each has its own version)
 antegen-cron = { version = "4.0.0", path = "crates/cron" }
-antegen-client = { version = "5.0.0", path = "crates/client" }
+antegen-client = { version = "5.0.4", path = "crates/client" }
 antegen-geyser-plugin = { version = "5.0.0", path = "plugin/geyser" }
-antegen-fiber-program = { version = "5.0.3", path = "programs/fiber", features = [
+antegen-fiber-program = { version = "5.0.4", path = "programs/fiber", features = [
     "cpi",
 ] }
-antegen-thread-program = { version = "5.0.3", path = "programs/thread", features = [
+antegen-thread-program = { version = "5.0.6", path = "programs/thread", features = [
     "cpi",
 ] }
 
 # Anchor
-anchor-lang = "=1.0.0-rc.1"
-anchor-spl = { version = "=1.0.0-rc.1", features = ["mint", "token"] }
+anchor-lang = "=1.0.0-rc.5"
+anchor-spl = { version = "=1.0.0-rc.5", features = ["mint", "token"] }
 borsh = "=1.6.0"
 
 # Agave Geyser

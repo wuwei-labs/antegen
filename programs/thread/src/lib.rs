@@ -147,7 +147,7 @@ pub mod antegen_thread {
     /// Requires authority (owner) or thread itself to sign.
     /// External fiber accounts should be passed via remaining_accounts.
     pub fn close_thread<'info>(
-        ctx: Context<'_, '_, 'info, 'info, ThreadClose<'info>>,
+        ctx: Context<'info, ThreadClose<'info>>,
     ) -> Result<()> {
         thread_close(ctx)
     }

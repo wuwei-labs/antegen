@@ -1,14 +1,13 @@
 [package]
 name = "antegen-fiber-program"
 description = "Solana program for Antegen - fiber (instruction) account management"
-version = "5.0.3"
+version = "5.0.4"
 authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
 repository = "https://github.com/wuwei-labs/antegen"
 homepage = "https://antegen.xyz/"
 documentation = "https://docs.antegen.xyz/"
 license = "MIT"
 edition = "2021"
-publish = false
 readme = "../../README.md"
 keywords = ["solana", "automation", "fiber", "blockchain", "anchor"]
 

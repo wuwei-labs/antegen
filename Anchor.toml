@@ -25,6 +25,6 @@ antegen_thread_program = "AgV3xRAdyTe1wW4gTW2oAnzHiAGofsxC7jBVGGkzUQbY"
 url = "https://api.apr.dev"
 
 [toolchain]
-anchor_version = "1.0.0-rc.1"
+anchor_version = "1.0.0-rc.5"
 solana_version = "3.0.0"      # Solana version to use(applies to all Solana tools)
 package_manager = "pnpm"
