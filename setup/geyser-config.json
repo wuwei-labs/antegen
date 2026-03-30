@@ -1,0 +1,7 @@
+{
+  "libpath": "/home/sol/libantegen_plugin.so",
+  "keypath": "/home/sol/CRNKaxMoyKs1hhzRRuBKj1mTrtYWY5qPsbhKWNz3cjaC.json",
+  "transaction_timeout_threshold": 150,
+  "thread_count": 10,
+  "worker_id": 1
+}
