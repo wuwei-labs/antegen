@@ -22,7 +22,7 @@ pub async fn execute(
                 Err(e) => {
                     anyhow::bail!(
                         "No node binary available: {}\n  \
-                         Run `anm install <version>` when a release is available.",
+                         Run `antegenctl install <version>` when a release is available.",
                         e
                     );
                 }
@@ -112,7 +112,7 @@ fn find_node_binary() -> Result<PathBuf> {
 
     anyhow::bail!(
         "antegen-node binary not found.\n\
-         Install it with: anm install <version>\n\
+         Install it with: antegenctl install <version>\n\
          Or build it with: cargo build -p antegen-client --features node"
     )
 }

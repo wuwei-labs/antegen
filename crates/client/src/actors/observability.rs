@@ -19,7 +19,6 @@ pub struct ObservabilityState {
     _agent: Agent,
 }
 
-#[ractor::async_trait]
 impl Actor for ObservabilityActor {
     type Msg = ObservabilityMessage;
     type State = ObservabilityState;

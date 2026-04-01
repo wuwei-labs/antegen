@@ -11,9 +11,9 @@ use solana_sdk::signature::{read_keypair_file, Keypair};
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use super::get_rpc_url;
+use antegen_cli_core::commands::get_rpc_url;
 #[cfg(feature = "dev")]
-use super::get_keypair;
+use antegen_cli_core::commands::get_keypair;
 
 // =============================================================================
 // Thread inspection commands (always available)

@@ -494,12 +494,30 @@ version = "0.0.0"
 
 [[package]]
 name = "antegen-cli"
-version = "5.0.4"
+version = "6.0.0"
 dependencies = [
  "anchor-lang",
+ "antegen-cli-core",
  "antegen-client",
  "antegen-fiber-program",
  "antegen-thread-program",
+ "anyhow",
+ "chrono",
+ "clap 4.5.53",
+ "dirs 5.0.1",
+ "log",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "solana-sdk",
+ "tokio",
+]
+
+[[package]]
+name = "antegen-cli-core"
+version = "6.0.0"
+dependencies = [
+ "antegen-client",
  "anyhow",
  "chrono",
  "clap 4.5.53",
@@ -528,7 +546,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-client"
-version = "5.0.4"
+version = "5.0.5"
 dependencies = [
  "anchor-lang",
  "antegen-fiber-program",
@@ -548,7 +566,7 @@ dependencies = [
  "moka",
  "parking_lot",
  "pws",
- "ractor 0.13.5",
+ "ractor 0.15.12",
  "reqwest 0.12.28",
  "seahash",
  "serde",
@@ -618,7 +636,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-thread-program"
-version = "5.0.6"
+version = "5.0.7"
 dependencies = [
  "anchor-lang",
  "antegen-cron",
@@ -630,6 +648,17 @@ dependencies = [
  "solana-nonce",
  "solana-sdk",
  "solana-system-interface 3.0.0",
+]
+
+[[package]]
+name = "antegenctl"
+version = "6.0.0"
+dependencies = [
+ "antegen-cli-core",
+ "anyhow",
+ "clap 4.5.53",
+ "log",
+ "tokio",
 ]
 
 [[package]]
@@ -4555,9 +4584,9 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "ractor"
-version = "0.13.5"
+version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cbebed288497a3e7567eba6e1496e89d6b9850f03fb27876e1451fd85b07cf4"
+checksum = "1d65972a0286ef14c43c6daafbac6cf15e96496446147683b2905292c35cc178"
 dependencies = [
  "async-trait",
  "bon",
@@ -4571,18 +4600,22 @@ dependencies = [
 
 [[package]]
 name = "ractor"
-version = "0.14.7"
+version = "0.15.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d65972a0286ef14c43c6daafbac6cf15e96496446147683b2905292c35cc178"
+checksum = "4a64ac8ba2e8d71b25c55ab7acafc481ae4c9175f3ee8f7c36b66c4cad369bb5"
 dependencies = [
- "async-trait",
  "bon",
  "dashmap 6.1.0",
  "futures",
+ "js-sys",
  "once_cell",
  "strum",
  "tokio",
+ "tokio_with_wasm",
  "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-time",
 ]
 
 [[package]]
@@ -8566,6 +8599,30 @@ dependencies = [
  "futures-util",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "tokio_with_wasm"
+version = "0.8.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34e40fbbbd95441133fe9483f522db15dbfd26dc636164ebd8f2dd28759a6aa6"
+dependencies = [
+ "js-sys",
+ "tokio",
+ "tokio_with_wasm_proc",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "tokio_with_wasm_proc"
+version = "0.8.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d01145a2c788d6aae4cd653afec1e8332534d7d783d01897cefcafe4428de992"
+dependencies = [
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

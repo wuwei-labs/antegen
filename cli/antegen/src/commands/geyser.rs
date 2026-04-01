@@ -1,6 +1,6 @@
 //! Geyser plugin commands
 
-use crate::download::{
+use antegen_cli_core::download::{
     current_version, download_geyser_plugin, get_library_filename, needs_update, save_version_info,
 };
 use antegen_client::ClientConfig;

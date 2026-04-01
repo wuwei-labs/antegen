@@ -29,6 +29,8 @@ pub enum RpcSourceMessage {
     ClockReceived(Clock),
     /// Signal that WebSocket reconnected - trigger backfill
     Reconnected,
+    /// A subscription background task has exited (name identifies which one)
+    SubscriptionDied(String),
 }
 
 #[derive(Debug, Clone)]

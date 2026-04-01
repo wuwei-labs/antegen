@@ -7,7 +7,9 @@
 //! All source actors push updates through the shared cache for deduplication
 //! before forwarding to StagingActor.
 
-use crate::actors::messages::{DatasourceMessage, GeyserSourceMessage, RpcSourceMessage, StagingMessage};
+use crate::actors::messages::{
+    DatasourceMessage, GeyserSourceMessage, RpcSourceMessage, StagingMessage,
+};
 use crate::config::{ClientConfig, EndpointRole, RpcEndpoint};
 use crate::datasources::RpcSubscription;
 use crate::resources::SharedResources;
@@ -16,6 +18,7 @@ use ractor::{Actor, ActorProcessingErr, ActorRef};
 use std::collections::HashMap;
 use std::error::Error;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 // ============================================================================
 // Datasource Supervisor
@@ -31,7 +34,6 @@ pub struct DatasourceState {
     geyser_source: Option<ActorRef<GeyserSourceMessage>>,
 }
 
-#[ractor::async_trait]
 impl Actor for DatasourceSupervisor {
     type Msg = DatasourceMessage;
     type State = DatasourceState;
@@ -44,25 +46,27 @@ impl Actor for DatasourceSupervisor {
 
     async fn pre_start(
         &self,
-        _myself: ActorRef<Self::Msg>,
+        myself: ActorRef<Self::Msg>,
         (config, resources, staging_ref, geyser_receiver): Self::Arguments,
     ) -> Result<Self::State, Box<dyn Error + Send + Sync>> {
         log::debug!("DatasourceSupervisor starting...");
 
+        let supervisor = myself.get_cell();
         let mut rpc_sources = HashMap::new();
         let mut datasource_count = 0;
 
-        // Spawn RpcSourceActor for each datasource endpoint
+        // Spawn RpcSourceActor for each datasource endpoint (linked to this supervisor)
         for endpoint in &config.rpc.endpoints {
             if matches!(endpoint.role, EndpointRole::Datasource | EndpointRole::Both) {
                 let actor_name = format!("rpc-source-{}", endpoint.url);
 
                 log::debug!("Spawning RpcSourceActor for: {}", endpoint.url);
 
-                let (rpc_ref, _handle) = Actor::spawn(
+                let (rpc_ref, _handle) = Actor::spawn_linked(
                     Some(actor_name.clone()),
                     RpcSourceActor,
                     (endpoint.clone(), resources.clone(), staging_ref.clone()),
+                    supervisor.clone(),
                 )
                 .await
                 .map_err(|e| format!("Failed to spawn RpcSourceActor: {}", e))?;
@@ -74,14 +78,15 @@ impl Actor for DatasourceSupervisor {
 
         log::debug!("Spawned {} RPC datasource actors", datasource_count);
 
-        // Optionally spawn GeyserSourceActor if we have a channel from the plugin
+        // Optionally spawn GeyserSourceActor if we have a channel from the plugin (linked)
         let geyser_source = if let Some(receiver) = geyser_receiver {
             log::info!("Spawning GeyserSourceActor for plugin mode");
 
-            let (geyser_ref, _handle) = Actor::spawn(
+            let (geyser_ref, _handle) = Actor::spawn_linked(
                 Some("geyser-source".to_string()),
                 GeyserSourceActor,
                 (receiver, resources.clone(), staging_ref.clone()),
+                supervisor.clone(),
             )
             .await
             .map_err(|e| format!("Failed to spawn GeyserSourceActor: {}", e))?;
@@ -136,13 +141,18 @@ impl Actor for DatasourceSupervisor {
 #[derive(Default)]
 pub struct RpcSourceActor;
 
+/// Maximum number of subscription restart attempts before the actor gives up
+const MAX_SUBSCRIPTION_RESTARTS: u32 = 3;
+
 pub struct RpcSourceState {
     ws_url: String,
     staging_ref: ActorRef<StagingMessage>,
     resources: SharedResources,
+    cancel_token: CancellationToken,
+    program_restart_count: u32,
+    clock_restart_count: u32,
 }
 
-#[ractor::async_trait]
 impl Actor for RpcSourceActor {
     type Msg = RpcSourceMessage;
     type State = RpcSourceState;
@@ -154,39 +164,27 @@ impl Actor for RpcSourceActor {
         (endpoint, resources, staging_ref): Self::Arguments,
     ) -> Result<Self::State, Box<dyn Error + Send + Sync>> {
         let ws_url = endpoint.get_ws_url();
-        log::debug!("RpcSourceActor starting for: {} (ws: {})", endpoint.url, ws_url);
+        log::debug!(
+            "RpcSourceActor starting for: {} (ws: {})",
+            endpoint.url,
+            ws_url
+        );
         log::debug!("  - Thread program: {}", resources.program_id);
         log::debug!("  - Clock sysvar: {}", solana_sdk::sysvar::clock::ID);
 
-        // Spawn program subscription task (pws handles reconnection automatically)
-        // Note: Backfill is triggered by ConnectionOpened event (handles both initial and reconnection)
-        let program_ws_url = ws_url.clone();
-        let program_id = resources.program_id;
-        let program_rpc_client = resources.rpc_client.clone();
-        let program_actor_ref = myself.clone();
-        tokio::spawn(async move {
-            let subscription = RpcSubscription::new(program_ws_url, program_id, program_rpc_client);
-            subscription
-                .subscribe_to_program_accounts(program_actor_ref)
-                .await;
-        });
+        let cancel_token = CancellationToken::new();
 
-        // Spawn clock subscription task (pws handles reconnection automatically)
-        let clock_ws_url = ws_url.clone();
-        let clock_program_id = resources.program_id;
-        let clock_rpc_client = resources.rpc_client.clone();
-        let clock_actor_ref = myself.clone();
-        tokio::spawn(async move {
-            let subscription = RpcSubscription::new(clock_ws_url, clock_program_id, clock_rpc_client);
-            subscription
-                .subscribe_to_clock(clock_actor_ref)
-                .await;
-        });
+        // Spawn monitored subscription tasks
+        spawn_program_subscription(&ws_url, &resources, myself.clone(), cancel_token.clone());
+        spawn_clock_subscription(&ws_url, &resources, myself.clone(), cancel_token.clone());
 
         Ok(RpcSourceState {
             ws_url,
             staging_ref,
             resources,
+            cancel_token,
+            program_restart_count: 0,
+            clock_restart_count: 0,
         })
     }
 
@@ -266,6 +264,61 @@ impl Actor for RpcSourceActor {
 
                 Ok(())
             }
+            RpcSourceMessage::SubscriptionDied(which) => {
+                // A subscription background task has exited — restart it if under retry limit
+                let (restart_count, limit_name) = match which.as_str() {
+                    "program" => (&mut state.program_restart_count, "program"),
+                    "clock" => (&mut state.clock_restart_count, "clock"),
+                    other => {
+                        log::warn!("[{}] Unknown subscription died: {}", state.ws_url, other);
+                        return Ok(());
+                    }
+                };
+
+                *restart_count += 1;
+                log::warn!(
+                    "[{}] {} subscription died (restart {}/{})",
+                    state.ws_url,
+                    limit_name,
+                    *restart_count,
+                    MAX_SUBSCRIPTION_RESTARTS
+                );
+
+                if *restart_count > MAX_SUBSCRIPTION_RESTARTS {
+                    log::error!(
+                        "[{}] {} subscription exceeded max restarts, stopping actor",
+                        state.ws_url,
+                        limit_name
+                    );
+                    return Err(From::from(format!(
+                        "{} subscription exceeded max restarts",
+                        limit_name
+                    )));
+                }
+
+                // Re-spawn the dead subscription
+                match which.as_str() {
+                    "program" => {
+                        spawn_program_subscription(
+                            &state.ws_url,
+                            &state.resources,
+                            myself.clone(),
+                            state.cancel_token.clone(),
+                        );
+                    }
+                    "clock" => {
+                        spawn_clock_subscription(
+                            &state.ws_url,
+                            &state.resources,
+                            myself.clone(),
+                            state.cancel_token.clone(),
+                        );
+                    }
+                    _ => {}
+                }
+
+                Ok(())
+            }
         }
     }
 
@@ -274,9 +327,72 @@ impl Actor for RpcSourceActor {
         _myself: ActorRef<Self::Msg>,
         state: &mut Self::State,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // Cancel all background subscription tasks so they exit cleanly
+        state.cancel_token.cancel();
         log::info!("RpcSourceActor for {} stopped", state.ws_url);
         Ok(())
     }
+}
+
+/// Spawn a monitored program subscription task.
+/// When the subscription task exits (for any reason), a watcher task
+/// sends `SubscriptionDied("program")` to the actor so it can restart.
+fn spawn_program_subscription(
+    ws_url: &str,
+    resources: &SharedResources,
+    actor_ref: ActorRef<RpcSourceMessage>,
+    cancel_token: CancellationToken,
+) {
+    let program_ws_url = ws_url.to_string();
+    let program_id = resources.program_id;
+    let rpc_client = resources.rpc_client.clone();
+    let sub_actor_ref = actor_ref.clone();
+
+    let handle = tokio::spawn(async move {
+        let subscription = RpcSubscription::new(program_ws_url, program_id, rpc_client);
+        tokio::select! {
+            _ = subscription.subscribe_to_program_accounts(sub_actor_ref) => {}
+            _ = cancel_token.cancelled() => {
+                log::debug!("Program subscription cancelled");
+            }
+        }
+    });
+
+    // Watcher: notify the actor when the subscription task exits
+    tokio::spawn(async move {
+        let _ = handle.await;
+        let _ = actor_ref.send_message(RpcSourceMessage::SubscriptionDied("program".to_string()));
+    });
+}
+
+/// Spawn a monitored clock subscription task.
+/// Same pattern as `spawn_program_subscription`.
+fn spawn_clock_subscription(
+    ws_url: &str,
+    resources: &SharedResources,
+    actor_ref: ActorRef<RpcSourceMessage>,
+    cancel_token: CancellationToken,
+) {
+    let clock_ws_url = ws_url.to_string();
+    let program_id = resources.program_id;
+    let rpc_client = resources.rpc_client.clone();
+    let sub_actor_ref = actor_ref.clone();
+
+    let handle = tokio::spawn(async move {
+        let subscription = RpcSubscription::new(clock_ws_url, program_id, rpc_client);
+        tokio::select! {
+            _ = subscription.subscribe_to_clock(sub_actor_ref) => {}
+            _ = cancel_token.cancelled() => {
+                log::debug!("Clock subscription cancelled");
+            }
+        }
+    });
+
+    // Watcher: notify the actor when the subscription task exits
+    tokio::spawn(async move {
+        let _ = handle.await;
+        let _ = actor_ref.send_message(RpcSourceMessage::SubscriptionDied("clock".to_string()));
+    });
 }
 
 // ============================================================================
@@ -292,9 +408,9 @@ pub struct GeyserSourceState {
     staging_ref: ActorRef<StagingMessage>,
     #[allow(dead_code)] // Kept for future message handling (supervisor commands)
     resources: SharedResources,
+    cancel_token: CancellationToken,
 }
 
-#[ractor::async_trait]
 impl Actor for GeyserSourceActor {
     type Msg = GeyserSourceMessage;
     type State = GeyserSourceState;
@@ -311,48 +427,63 @@ impl Actor for GeyserSourceActor {
     ) -> Result<Self::State, Box<dyn Error + Send + Sync>> {
         log::debug!("GeyserSourceActor starting...");
 
+        let cancel_token = CancellationToken::new();
+
         // Spawn task to consume the channel
         let cache = resources.cache.clone();
         let staging = staging_ref.clone();
         let actor_ref = myself.clone();
+        let task_token = cancel_token.clone();
 
         tokio::spawn(async move {
             log::info!("GeyserSourceActor channel consumer started");
 
-            while let Some(update) = receiver.recv().await {
-                log::trace!(
-                    "[Geyser] Received account update: pubkey={}, slot={}, data_len={}",
-                    update.pubkey,
-                    update.slot,
-                    update.data.len()
-                );
+            loop {
+                tokio::select! {
+                    update = receiver.recv() => {
+                        let Some(update) = update else {
+                            break; // Channel closed
+                        };
 
-                // Push to cache first - this deduplicates and stores the data
-                let is_new = cache
-                    .put_if_newer(update.pubkey, update.data.clone(), update.slot)
-                    .await;
+                        log::trace!(
+                            "[Geyser] Received account update: pubkey={}, slot={}, data_len={}",
+                            update.pubkey,
+                            update.slot,
+                            update.data.len()
+                        );
 
-                if is_new {
-                    log::debug!(
-                        "[Geyser] New/updated account: pubkey={}, slot={}",
-                        update.pubkey,
-                        update.slot
-                    );
+                        // Push to cache first - this deduplicates and stores the data
+                        let is_new = cache
+                            .put_if_newer(update.pubkey, update.data.clone(), update.slot)
+                            .await;
 
-                    // Forward to StagingActor only if data was actually new/updated
-                    if let Err(e) = staging.send_message(StagingMessage::AccountUpdate(update)) {
-                        log::error!("[Geyser] Failed to send to staging: {}", e);
+                        if is_new {
+                            log::debug!(
+                                "[Geyser] New/updated account: pubkey={}, slot={}",
+                                update.pubkey,
+                                update.slot
+                            );
+
+                            // Forward to StagingActor only if data was actually new/updated
+                            if let Err(e) = staging.send_message(StagingMessage::AccountUpdate(update)) {
+                                log::error!("[Geyser] Failed to send to staging: {}", e);
+                                break;
+                            }
+                        } else {
+                            log::trace!(
+                                "[Geyser] Duplicate/stale account update ignored: pubkey={}",
+                                update.pubkey
+                            );
+                        }
+                    }
+                    _ = task_token.cancelled() => {
+                        log::debug!("GeyserSourceActor channel consumer cancelled");
                         break;
                     }
-                } else {
-                    log::trace!(
-                        "[Geyser] Duplicate/stale account update ignored: pubkey={}",
-                        update.pubkey
-                    );
                 }
             }
 
-            log::info!("GeyserSourceActor channel consumer stopped (channel closed)");
+            log::info!("GeyserSourceActor channel consumer stopped");
 
             // Signal actor to stop when channel closes
             let _ = actor_ref.send_message(GeyserSourceMessage::Shutdown);
@@ -361,6 +492,7 @@ impl Actor for GeyserSourceActor {
         Ok(GeyserSourceState {
             staging_ref,
             resources,
+            cancel_token,
         })
     }
 
@@ -382,10 +514,11 @@ impl Actor for GeyserSourceActor {
     async fn post_stop(
         &self,
         _myself: ActorRef<Self::Msg>,
-        _state: &mut Self::State,
+        state: &mut Self::State,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // Cancel the background channel consumer task so it exits cleanly
+        state.cancel_token.cancel();
         log::info!("GeyserSourceActor stopped");
         Ok(())
     }
 }
-

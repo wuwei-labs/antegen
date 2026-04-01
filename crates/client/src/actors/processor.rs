@@ -52,7 +52,6 @@ pub struct ProcessorState {
     load_balancer: Arc<LoadBalancer>,
 }
 
-#[ractor::async_trait]
 impl Actor for ProcessorFactory {
     type Msg = ProcessorMessage;
     type State = ProcessorState;

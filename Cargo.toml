@@ -23,12 +23,15 @@ codegen-units = 1
 resolver = "2"
 members = [
     "crates/*",
+    "cli/core",
+    "cli/antegen",
+    "cli/antegenctl",
     "plugin/geyser",
     "programs/fiber",
     "programs/reentrance-test",
     "programs/thread",
 ]
-default-members = ["crates/cli"]
+default-members = ["cli/antegen"]
 
 [workspace.package]
 authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
@@ -40,6 +43,7 @@ edition = "2021"
 
 [workspace.dependencies]
 # Internal workspace crates (each has its own version)
+antegen-cli-core = { version = "6.0.0", path = "cli/core" }
 antegen-cron = { version = "4.0.0", path = "crates/cron" }
 antegen-client = { version = "5.0.4", path = "crates/client" }
 antegen-geyser-plugin = { version = "5.0.0", path = "plugin/geyser" }
@@ -82,7 +86,7 @@ moka = { version = "=0.12.11", features = ["future"] }
 nom = "=7.1.3"
 once_cell = "=1.21.3"
 proc-macro2 = "=1.0.103"
-ractor = "=0.13.5"
+ractor = "=0.15.12"
 rand = "=0.8.5"
 rand_chacha = "=0.3.1"
 rand_core = "=0.6.4"

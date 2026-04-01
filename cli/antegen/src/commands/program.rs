@@ -12,7 +12,7 @@ use solana_sdk::{
 };
 use std::path::PathBuf;
 
-use super::{get_keypair, get_rpc_url};
+use antegen_cli_core::commands::{get_keypair, get_rpc_url};
 
 // =============================================================================
 // Deploy command

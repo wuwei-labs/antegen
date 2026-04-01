@@ -155,7 +155,7 @@ async fn install_service(config_path: &PathBuf, version: Option<&str>) -> Result
                     Err(e) => {
                         anyhow::bail!(
                             "No node binary available: {}\n  \
-                             Run `anm install <version>` when a release is available.",
+                             Run `antegenctl install <version>` when a release is available.",
                             e
                         );
                     }
@@ -314,7 +314,7 @@ pub async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
             println!("✓ Service started");
             println!();
             println!("Antegen is now running as a user service.");
-            println!("Use `anm stop` to stop or `anm restart` to restart.");
+            println!("Use `antegenctl stop` to stop or `antegenctl restart` to restart.");
 
             // Check for updates
             print_update_notices().await;
@@ -325,7 +325,7 @@ pub async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
                 println!("  Reason: {}", msg);
             }
             println!();
-            println!("Check the configuration and try `anm run` to see error output.");
+            println!("Check the configuration and try `antegenctl run` to see error output.");
         }
         ServiceStatus::NotInstalled => {
             println!("✗ Service failed to install");
@@ -352,7 +352,7 @@ pub fn status() -> Result<()> {
         }
         ServiceStatus::NotInstalled => {
             println!("✗ Service is not installed");
-            println!("  Run `anm start` to install and start the service.");
+            println!("  Run `antegenctl start` to install and start the service.");
             return Ok(());
         }
     }
@@ -534,6 +534,6 @@ async fn print_update_notices() {
         println!("CLI update available: {} -> Run `antegen update`", latest);
     }
     if let Some(latest) = node_update {
-        println!("Node update available: {} -> Run `anm update`", latest);
+        println!("Node update available: {} -> Run `antegenctl update`", latest);
     }
 }

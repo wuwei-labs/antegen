@@ -11,7 +11,7 @@ use crate::executor::ExecutorLogic;
 use crate::load_balancer::{LoadBalancer, LoadBalancerConfig};
 use crate::resources::SharedResources;
 use crate::types::AccountUpdate;
-use ractor::{Actor, ActorProcessingErr, ActorRef};
+use ractor::{Actor, ActorProcessingErr, ActorRef, SupervisionEvent};
 use signal_hook::consts::signal::{SIGINT, SIGTERM};
 use signal_hook_tokio::Signals;
 use solana_sdk::pubkey::Pubkey;
@@ -29,7 +29,6 @@ pub struct RootState {
     observability_ref: Option<ActorRef<ObservabilityMessage>>,
 }
 
-#[ractor::async_trait]
 impl Actor for RootSupervisor {
     type Msg = RootMessage;
     type State = RootState;
@@ -74,19 +73,22 @@ impl Actor for RootSupervisor {
         };
         let load_balancer = Arc::new(LoadBalancer::new(executor_pubkey, load_balancer_config));
 
+        let supervisor = myself.get_cell();
+
         // Spawn StagingActor first (others depend on it)
         log::debug!("Spawning StagingActor...");
-        let (staging_ref, _staging_handle) = Actor::spawn(
+        let (staging_ref, _staging_handle) = Actor::spawn_linked(
             Some("staging-actor".to_string()),
             StagingActor,
-            (config.clone(), resources.clone(), eviction_rx),
+            (config.clone(), resources.clone(), load_balancer.clone(), eviction_rx),
+            supervisor.clone(),
         )
         .await
         .map_err(|e| format!("Failed to spawn StagingActor: {}", e))?;
 
         // Spawn ProcessorFactory (depends on staging)
         log::debug!("Spawning ProcessorFactory...");
-        let (processor_ref, _processor_handle) = Actor::spawn(
+        let (processor_ref, _processor_handle) = Actor::spawn_linked(
             Some("processor-factory".to_string()),
             ProcessorFactory,
             (
@@ -96,6 +98,7 @@ impl Actor for RootSupervisor {
                 executor,
                 load_balancer.clone(),
             ),
+            supervisor.clone(),
         )
         .await
         .map_err(|e| format!("Failed to spawn ProcessorFactory: {}", e))?;
@@ -108,7 +111,7 @@ impl Actor for RootSupervisor {
         // Spawn DatasourceSupervisor (depends on staging)
         // Pass optional geyser receiver for plugin mode
         log::debug!("Spawning DatasourceSupervisor...");
-        let (_datasource_ref, _datasource_handle) = Actor::spawn(
+        let (_datasource_ref, _datasource_handle) = Actor::spawn_linked(
             Some("datasource-supervisor".to_string()),
             DatasourceSupervisor,
             (
@@ -117,6 +120,7 @@ impl Actor for RootSupervisor {
                 staging_ref.clone(),
                 geyser_receiver,
             ),
+            supervisor.clone(),
         )
         .await
         .map_err(|e| format!("Failed to spawn DatasourceSupervisor: {}", e))?;
@@ -126,10 +130,11 @@ impl Actor for RootSupervisor {
         // Spawn ObservabilityActor if enabled
         let observability_ref = if config.observability.enabled {
             log::debug!("Spawning ObservabilityActor...");
-            let (obs_ref, _obs_handle) = Actor::spawn(
+            let (obs_ref, _obs_handle) = Actor::spawn_linked(
                 Some("observability".to_string()),
                 ObservabilityActor,
                 config.observability.clone(),
+                supervisor.clone(),
             )
             .await
             .map_err(|e| format!("Failed to spawn ObservabilityActor: {}", e))?;
@@ -162,6 +167,34 @@ impl Actor for RootSupervisor {
                 Err(From::from("Shutdown signal received"))
             }
         }
+    }
+
+    async fn handle_supervisor_evt(
+        &self,
+        myself: ActorRef<Self::Msg>,
+        message: SupervisionEvent,
+        _state: &mut Self::State,
+    ) -> Result<(), ActorProcessingErr> {
+        match message {
+            SupervisionEvent::ActorTerminated(who, _, reason) => {
+                log::error!(
+                    "Child actor {} terminated (reason: {:?}). Shutting down system.",
+                    who.get_name().unwrap_or_default(),
+                    reason
+                );
+                myself.stop(None);
+            }
+            SupervisionEvent::ActorFailed(who, error) => {
+                log::error!(
+                    "Child actor {} failed: {}. Shutting down system.",
+                    who.get_name().unwrap_or_default(),
+                    error
+                );
+                myself.stop(None);
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     async fn post_stop(

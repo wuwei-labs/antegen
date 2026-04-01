@@ -1,6 +1,6 @@
 [package]
 name = "antegen-cli"
-version = "5.0.4"
+version = "6.0.0"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,13 +10,13 @@ homepage.workspace = true
 documentation.workspace = true
 keywords = ["solana", "automation", "scheduler", "blockchain"]
 categories = ["command-line-utilities", "cryptography::cryptocurrencies"]
-readme = "README.md"
 
 [[bin]]
 name = "antegen"
 path = "src/main.rs"
 
 [dependencies]
+antegen-cli-core = { workspace = true }
 antegen-client = { workspace = true }
 antegen-thread-program = { workspace = true }
 antegen-fiber-program = { workspace = true }
@@ -29,32 +29,9 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 log = { workspace = true }
-loa-core = { workspace = true }
 dirs = { workspace = true }
-env_logger = { workspace = true }
 solana-sdk = { workspace = true }
-solana-cli-config = { workspace = true }
-solana-system-interface = { workspace = true }
-reqwest = { workspace = true }
-shellexpand = { workspace = true }
-toml = { workspace = true }
-tar = { workspace = true }
-flate2 = { workspace = true }
-tempfile = { workspace = true }
-service-manager = "0.11"
-self_update = { version = "0.42", default-features = false, features = [
-  "rustls",
-] }
-
-[target.'cfg(unix)'.dependencies]
-file-owner = "0.1"
-libc = "0.2"
-
-[build-dependencies]
 
 [features]
-dev = []
-prod = [] # Production mode - no dev build detection
-
-[dev-dependencies]
-tempfile = { workspace = true }
+dev = ["antegen-cli-core/dev"]
+prod = ["antegen-cli-core/prod"]

@@ -43,6 +43,11 @@ fn is_trigger_not_ready_error(error: &str) -> bool {
     error.contains("Custom(6004)") || error.contains("6004")
 }
 
+/// Check if an error indicates the thread is paused (error 6006)
+fn is_thread_paused_error(error: &str) -> bool {
+    error.contains("Custom(6006)") || error.contains("6006")
+}
+
 pub struct WorkerActor;
 
 pub struct WorkerArgs {
@@ -68,7 +73,6 @@ pub struct WorkerState {
     cancelled: Arc<AtomicBool>, // Flag for cancellation
 }
 
-#[ractor::async_trait]
 impl Actor for WorkerActor {
     type Msg = WorkerMessage;
     type State = WorkerState;
@@ -76,7 +80,7 @@ impl Actor for WorkerActor {
 
     async fn pre_start(
         &self,
-        _myself: ActorRef<Self::Msg>,
+        myself: ActorRef<Self::Msg>,
         args: Self::Arguments,
     ) -> Result<Self::State, Box<dyn Error + Send + Sync>> {
         log::debug!("WorkerActor started for thread: {}", args.thread_pubkey);
@@ -101,6 +105,7 @@ impl Actor for WorkerActor {
         let executor = args.executor;
         let load_balancer = args.load_balancer;
         let cancelled_flag = cancelled;
+        let myself_ref = myself.clone();
 
         tokio::spawn(async move {
             let result = execute_thread(
@@ -123,6 +128,10 @@ impl Actor for WorkerActor {
                     e
                 );
             }
+
+            // Always stop ourselves so the semaphore permit held in WorkerState is
+            // released via drop, even if the completion message failed to deliver.
+            myself_ref.stop(Some("execution complete".to_string()));
         });
 
         Ok(state)
@@ -326,6 +335,17 @@ async fn execute_thread(
                     );
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     continue;
+                } else if is_thread_paused_error(&error_str) {
+                    // 6006 = thread is paused, don't retry — will be rescheduled when unpaused
+                    log::debug!(
+                        "Thread {} is paused (6006), skipping execution",
+                        thread_pubkey
+                    );
+                    return ExecutionResult::failed(
+                        thread_pubkey,
+                        "Thread is paused".to_string(),
+                        0,
+                    );
                 } else {
                     // Other error, fail immediately
                     log::error!(
@@ -445,12 +465,23 @@ async fn execute_thread(
                     Ok(Some(Err(e))) => {
                         let error_str = format!("{:?}", e);
                         if is_trigger_not_ready_error(&error_str) {
-                            // 6004 on-chain - trigger wasn't ready, break to retry with new blockhash
                             log::debug!(
                                 "{}: 6004 on-chain (trigger not ready), will retry",
                                 thread_pubkey
                             );
-                            break; // Exit TPU loop to retry submission
+                            break;
+                        }
+
+                        if is_thread_paused_error(&error_str) {
+                            log::debug!(
+                                "{}: 6006 on-chain (thread paused), skipping",
+                                thread_pubkey
+                            );
+                            return ExecutionResult::failed(
+                                thread_pubkey,
+                                "Thread is paused".to_string(),
+                                attempt,
+                            );
                         }
 
                         // Other on-chain error - don't retry, return failure
@@ -534,11 +565,21 @@ async fn execute_thread(
             Err(e) => {
                 last_error = format!("Confirmation failed: {}", e);
 
-                // 6004 errors are transient timing issues - log as DEBUG, not WARN
+                // 6004/6006 errors are transient or expected — log as DEBUG, not WARN
                 if is_trigger_not_ready_error(&e) {
                     log::debug!(
                         "{}: 6004 on RPC confirmation (trigger not ready), will retry",
                         thread_pubkey
+                    );
+                } else if is_thread_paused_error(&e) {
+                    log::debug!(
+                        "{}: 6006 on RPC confirmation (thread paused), stopping",
+                        thread_pubkey
+                    );
+                    return ExecutionResult::failed(
+                        thread_pubkey,
+                        "Thread is paused".to_string(),
+                        attempt,
                     );
                 } else {
                     log::warn!(

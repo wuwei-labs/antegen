@@ -7,20 +7,17 @@ use std::path::{Path, PathBuf};
 
 /// Minimum lamports required for executor operation (0.001 SOL)
 /// Must exceed rent-exempt minimum for a system account (~890,880 lamports)
-pub(crate) const MIN_BALANCE_LAMPORTS: u64 = 1_000_000;
+pub const MIN_BALANCE_LAMPORTS: u64 = 1_000_000;
 
 pub mod client;
 pub mod config;
-pub mod geyser;
 pub mod info;
-pub mod program;
 pub mod run;
 pub mod service;
-pub mod thread;
 pub mod update;
 
 /// Get RPC URL from arg or Solana CLI config
-pub(crate) fn get_rpc_url(rpc: Option<String>) -> Result<String> {
+pub fn get_rpc_url(rpc: Option<String>) -> Result<String> {
     if let Some(url) = rpc {
         return Ok(url);
     }
@@ -33,7 +30,7 @@ pub(crate) fn get_rpc_url(rpc: Option<String>) -> Result<String> {
 }
 
 /// Get keypair from arg or Solana CLI config
-pub(crate) fn get_keypair(keypair_path: Option<PathBuf>) -> Result<Keypair> {
+pub fn get_keypair(keypair_path: Option<PathBuf>) -> Result<Keypair> {
     let path = if let Some(p) = keypair_path {
         p
     } else {

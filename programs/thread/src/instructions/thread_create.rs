@@ -29,7 +29,7 @@ pub struct ThreadCreate<'info> {
 
     /// The thread to be created.
     #[account(
-        init,
+        init_if_needed,
         seeds = [
             SEED_THREAD,
             authority.key().as_ref(),

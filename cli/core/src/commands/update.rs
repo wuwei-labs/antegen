@@ -271,7 +271,7 @@ pub fn import_node_binary() -> Result<()> {
 
     let node_binary = match candidates.iter().find(|p| p.exists()) {
         Some(p) => p,
-        None => return Ok(()), // silently skip — user can `anm install` instead
+        None => return Ok(()), // silently skip — user can `antegenctlinstall` instead
     };
 
     // Run --version to extract version string ("antegen-node 4.1.3" → "v4.1.3")
@@ -334,13 +334,13 @@ pub fn import_current_binary() -> Result<()> {
         }
     }
 
-    // Update symlinks so ~/.local/bin/antegen and ~/.local/bin/anm resolve correctly
+    // Update symlinks so ~/.local/bin/antegen and ~/.local/bin/antegenctl resolve correctly
     #[cfg(unix)]
     {
         let symlink_path = binary_path()?;
         update_symlink(&symlink_path, &versioned_path)?;
-        let anm_path = anm_symlink_path()?;
-        update_symlink(&anm_path, &versioned_path)?;
+        let antegenctl_path = antegenctl_symlink_path()?;
+        update_symlink(&antegenctl_path, &versioned_path)?;
     }
 
     ensure_path_configured();
@@ -429,10 +429,10 @@ pub fn binary_path() -> Result<PathBuf> {
         .context("Could not determine home directory")
 }
 
-/// Get the anm symlink path (~/.local/bin/anm)
-pub fn anm_symlink_path() -> Result<PathBuf> {
+/// Get the antegenctl symlink path (~/.local/bin/antegenctl)
+pub fn antegenctl_symlink_path() -> Result<PathBuf> {
     dirs::home_dir()
-        .map(|p| p.join(".local/bin/anm"))
+        .map(|p| p.join(".local/bin/antegenctl"))
         .context("Could not determine home directory")
 }
 
@@ -481,7 +481,7 @@ pub fn is_dev_build() -> bool {
 }
 
 /// Update the CLI binary to latest or a specific version.
-/// Updates both `antegen` and `anm` symlinks. Does not touch the node or service.
+/// Updates both `antegen` and `antegenctl` symlinks. Does not touch the node or service.
 pub async fn update(version: Option<String>) -> Result<()> {
     let installed = get_installed_version().unwrap_or_else(|| current_version().to_string());
     println!("Installed CLI version: {}", installed);
@@ -509,7 +509,7 @@ pub async fn update(version: Option<String>) -> Result<()> {
     let temp_path = download_binary(&url, "antegen-update").await?;
 
     let symlink_path = binary_path()?;
-    let anm_path = anm_symlink_path()?;
+    let antegenctl_path = antegenctl_symlink_path()?;
     let new_versioned_path = versioned_binary_path(&latest)?;
     let old_versioned_path = versioned_binary_path(&installed)?;
 
@@ -525,7 +525,7 @@ pub async fn update(version: Option<String>) -> Result<()> {
     #[cfg(unix)]
     {
         update_symlink(&symlink_path, &new_versioned_path)?;
-        update_symlink(&anm_path, &new_versioned_path)?;
+        update_symlink(&antegenctl_path, &new_versioned_path)?;
     }
 
     let node_version = read_node_version();
@@ -591,8 +591,8 @@ pub async fn ensure_binary_installed(version: Option<&str>) -> Result<PathBuf> {
                 #[cfg(unix)]
                 {
                     update_symlink(&symlink_path, &versioned_path)?;
-                    let anm_path = anm_symlink_path()?;
-                    update_symlink(&anm_path, &versioned_path)?;
+                    let antegenctl_path = antegenctl_symlink_path()?;
+                    update_symlink(&antegenctl_path, &versioned_path)?;
                 }
 
                 println!("Installed dev binary {}", version);
@@ -627,8 +627,8 @@ pub async fn ensure_binary_installed(version: Option<&str>) -> Result<PathBuf> {
     #[cfg(unix)]
     {
         update_symlink(&symlink_path, &versioned_path)?;
-        let anm_path = anm_symlink_path()?;
-        update_symlink(&anm_path, &versioned_path)?;
+        let antegenctl_path = antegenctl_symlink_path()?;
+        update_symlink(&antegenctl_path, &versioned_path)?;
     }
 
     println!("Switched CLI to {}", version);
@@ -653,9 +653,9 @@ pub async fn use_cli_version(version: String) -> Result<()> {
         #[cfg(unix)]
         {
             let symlink_path = binary_path()?;
-            let anm_path = anm_symlink_path()?;
+            let antegenctl_path = antegenctl_symlink_path()?;
             update_symlink(&symlink_path, &cargo_bin)?;
-            update_symlink(&anm_path, &cargo_bin)?;
+            update_symlink(&antegenctl_path, &cargo_bin)?;
         }
 
         println!("Switched to cargo-installed version");
@@ -676,9 +676,9 @@ pub async fn use_cli_version(version: String) -> Result<()> {
     #[cfg(unix)]
     {
         let symlink_path = binary_path()?;
-        let anm_path = anm_symlink_path()?;
+        let antegenctl_path = antegenctl_symlink_path()?;
         update_symlink(&symlink_path, &versioned_path)?;
-        update_symlink(&anm_path, &versioned_path)?;
+        update_symlink(&antegenctl_path, &versioned_path)?;
     }
 
     println!("Switched CLI to {}", version);
@@ -807,10 +807,111 @@ pub async fn ensure_node_downloaded(version: &str) -> Result<PathBuf> {
     Ok(versioned_path)
 }
 
-/// Update node to latest or a specific version (for `anm update`).
+/// Build antegen-node from the local workspace and install to ~/.local/bin/
+///
+/// Returns the version string of the built binary.
+pub fn cargo_build_and_install_node() -> Result<String> {
+    let workspace_root = find_workspace_root()?;
+
+    println!("Building antegen-node from {}...", workspace_root.display());
+
+    let status = std::process::Command::new("cargo")
+        .args([
+            "build",
+            "--release",
+            "-p", "antegen-client",
+            "--features", "node",
+        ])
+        .current_dir(&workspace_root)
+        .status()
+        .context("Failed to run cargo build")?;
+
+    if !status.success() {
+        anyhow::bail!("cargo build failed with exit code: {}", status);
+    }
+
+    let built_binary = workspace_root.join("target/release/antegen-node");
+    if !built_binary.exists() {
+        anyhow::bail!(
+            "Expected binary not found at {}.",
+            built_binary.display()
+        );
+    }
+
+    let output = std::process::Command::new(&built_binary)
+        .arg("--version")
+        .output()
+        .context("Failed to run built binary with --version")?;
+
+    let version_output = String::from_utf8_lossy(&output.stdout);
+    let version = version_output
+        .split_whitespace()
+        .nth(1)
+        .map(|v| normalize_version(v))
+        .context("Failed to parse version from built binary")?;
+
+    // Copy to versioned path (don't use install_binary_to — it deletes the source)
+    let versioned_path = versioned_node_binary_path(&version)?;
+    let dest_dir = bin_dir()?;
+    fs::create_dir_all(&dest_dir)?;
+    fs::copy(&built_binary, &versioned_path)
+        .context("Failed to copy built binary to install directory")?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&versioned_path, fs::Permissions::from_mode(0o755))?;
+    }
+
+    println!("Built and installed node {} from local source.", version);
+    Ok(version)
+}
+
+/// Find the cargo workspace root by walking up from CWD
+fn find_workspace_root() -> Result<PathBuf> {
+    let mut dir = std::env::current_dir().context("Failed to get current directory")?;
+    loop {
+        let cargo_toml = dir.join("Cargo.toml");
+        if cargo_toml.exists() {
+            let contents = fs::read_to_string(&cargo_toml)?;
+            if contents.contains("[workspace]") {
+                return Ok(dir);
+            }
+        }
+        if !dir.pop() {
+            anyhow::bail!(
+                "Could not find workspace Cargo.toml. Run this command from within the antegen repository."
+            );
+        }
+    }
+}
+
+/// Update node to latest or a specific version (for `antegenctl update`).
 /// Downloads the node binary, updates the `antegen-node` symlink, writes node-version.
-/// Does NOT touch `antegen`/`anm` CLI symlinks.
-pub async fn update_node(version: Option<String>) -> Result<()> {
+/// Does NOT touch `antegen`/`antegenctl` CLI symlinks.
+pub async fn update_node(version: Option<String>, local: bool) -> Result<()> {
+    if local {
+        let version = cargo_build_and_install_node()?;
+        let versioned_path = versioned_node_binary_path(&version)?;
+
+        #[cfg(unix)]
+        {
+            let symlink_path = node_binary_path()?;
+            update_symlink(&symlink_path, &versioned_path)?;
+        }
+
+        write_node_version(&version)?;
+
+        if super::service::is_installed() {
+            println!("Restarting service with local node {}...", version);
+            super::service::start(None, Some(version)).await?;
+        } else {
+            println!("Updated node to {} (local build)", version);
+        }
+
+        return Ok(());
+    }
+
     let installed = get_installed_node_version()
         .or_else(|| read_node_version())
         .unwrap_or_else(|| "none".to_string());
@@ -823,7 +924,6 @@ pub async fn update_node(version: Option<String>) -> Result<()> {
             match fetch_latest_node_version().await {
                 Ok(v) => v,
                 Err(_) => {
-                    // Fall back to CLI releases if no node-specific releases exist yet
                     println!("No node-specific releases found, checking CLI releases...");
                     fetch_latest_version().await?
                 }
@@ -852,7 +952,6 @@ pub async fn update_node(version: Option<String>) -> Result<()> {
 
     let versioned_path = ensure_node_downloaded(&latest).await?;
 
-    // Update antegen-node symlink
     #[cfg(unix)]
     {
         let symlink_path = node_binary_path()?;
@@ -861,7 +960,6 @@ pub async fn update_node(version: Option<String>) -> Result<()> {
 
     write_node_version(&latest)?;
 
-    // Reinstall service if running
     if super::service::is_installed() {
         println!("Restarting service with node {}...", latest);
         super::service::start(None, Some(latest.clone())).await?;
@@ -872,7 +970,7 @@ pub async fn update_node(version: Option<String>) -> Result<()> {
     Ok(())
 }
 
-/// Switch node to a specific version (for `anm use <version>`).
+/// Switch node to a specific version (for `antegenctluse <version>`).
 /// Downloads if needed, updates symlink, writes node-version, reinstalls service.
 /// Does NOT touch CLI symlinks.
 pub async fn use_node_version(version: String) -> Result<()> {
@@ -902,15 +1000,21 @@ pub async fn use_node_version(version: String) -> Result<()> {
         super::service::start(None, Some(version.clone())).await?;
     } else {
         println!("Node switched to {}", version);
-        println!("Run `anm start` to start the service.");
+        println!("Run `antegenctl start` to start the service.");
     }
 
     Ok(())
 }
 
-/// Download a specific node version without switching (for `anm install <version>`)
-pub async fn install_node_version(version: String) -> Result<()> {
-    let version = normalize_version(&version);
+/// Download a specific node version without switching (for `antegenctl install <version>`)
+pub async fn install_node_version(version: Option<String>, local: bool) -> Result<()> {
+    if local {
+        let version = cargo_build_and_install_node()?;
+        println!("Use `antegenctl use {}` to switch.", version);
+        return Ok(());
+    }
+
+    let version = normalize_version(&version.context("version required (or use --local)")?);
 
     if !is_node_version_supported(&version) {
         anyhow::bail!(
@@ -931,7 +1035,7 @@ pub async fn install_node_version(version: String) -> Result<()> {
     let temp_path = download_binary(&url, "antegen-node-update").await?;
     install_binary_to(&temp_path, &versioned_path)?;
 
-    println!("Downloaded node {}. Use `anm use {}` to switch.", version, version);
+    println!("Downloaded node {}. Use `antegenctl use {}` to switch.", version, version);
     Ok(())
 }
 
@@ -1045,7 +1149,7 @@ pub async fn list_cli(remote: bool) -> Result<()> {
 }
 
 /// Download the latest supported node binary and set it as active.
-/// Used by `antegen init` / `anm init` for out-of-box readiness.
+/// Used by `antegen init` / `antegenctlinit` for out-of-box readiness.
 pub async fn download_latest_node() -> Result<()> {
     let latest = fetch_latest_node_version().await?;
 
@@ -1069,7 +1173,7 @@ pub async fn download_latest_node() -> Result<()> {
     Ok(())
 }
 
-/// List node versions (for `anm list`)
+/// List node versions (for `antegenctllist`)
 /// Shows both installed and available remote versions, filtering out legacy (< v5.0.0).
 pub async fn list_node() -> Result<()> {
     let bin_dir = bin_dir()?;

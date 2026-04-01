@@ -12,6 +12,7 @@ use crate::actors::messages::{
     StagingStatus,
 };
 use crate::config::ClientConfig;
+use crate::load_balancer::LoadBalancer;
 use crate::resources::SharedResources;
 use anyhow::Result;
 use anchor_lang::AccountDeserialize;
@@ -34,6 +35,7 @@ pub struct StagingActor;
 struct TrackedThread {
     exec_count: u64,
     schedule: Schedule,
+    paused: bool,
 }
 
 pub struct StagingState {
@@ -59,20 +61,22 @@ pub struct StagingState {
     // Shared resources for RPC access
     resources: SharedResources,
 
+    // Load balancer for cleanup on thread deletion
+    load_balancer: Arc<LoadBalancer>,
+
     // Cache eviction receiver - threads to refetch after TTL expiry
     eviction_rx: mpsc::UnboundedReceiver<Pubkey>,
 }
 
-#[ractor::async_trait]
 impl Actor for StagingActor {
     type Msg = StagingMessage;
     type State = StagingState;
-    type Arguments = (ClientConfig, SharedResources, mpsc::UnboundedReceiver<Pubkey>);
+    type Arguments = (ClientConfig, SharedResources, Arc<LoadBalancer>, mpsc::UnboundedReceiver<Pubkey>);
 
     async fn pre_start(
         &self,
         _myself: ActorRef<Self::Msg>,
-        (_config, resources, eviction_rx): Self::Arguments,
+        (_config, resources, load_balancer, eviction_rx): Self::Arguments,
     ) -> Result<Self::State, Box<dyn Error + Send + Sync>> {
         log::debug!("StagingActor starting...");
         log::debug!("Thread program ID: {}", resources.program_id);
@@ -86,6 +90,7 @@ impl Actor for StagingActor {
             last_processed_slot: 0,
             processor_ref: None, // Will be set by RootSupervisor after processor spawns
             resources,
+            load_balancer,
             eviction_rx,
         })
     }
@@ -224,14 +229,21 @@ impl StagingActor {
                     info!("Thread {} discovered (exec_count={})", update.pubkey, thread.exec_count);
                 }
 
-                // Track exec_count and schedule (cache has full data)
+                // Track exec_count, schedule, and paused state (cache has full data)
                 state.tracked_threads.insert(
                     update.pubkey,
                     TrackedThread {
                         exec_count: thread.exec_count,
                         schedule: thread.schedule.clone(),
+                        paused: thread.paused,
                     },
                 );
+
+                // Skip scheduling paused threads — they'll be scheduled when unpaused
+                if thread.paused {
+                    debug!("Thread {} is paused, skipping scheduling", update.pubkey);
+                    return Ok(());
+                }
 
                 // Schedule in appropriate priority queue
                 self.schedule_thread(state, update.pubkey, &thread).await?;
@@ -243,6 +255,7 @@ impl StagingActor {
                 debug!("Thread {} deleted", update.pubkey);
                 state.tracked_threads.remove(&update.pubkey);
                 state.queued_threads.remove(&update.pubkey);
+                state.load_balancer.remove_thread(&update.pubkey).await;
             }
             AccountType::Other => {
                 // Not a thread account (could be Fiber, ThreadConfig, etc.)
@@ -280,13 +293,33 @@ impl StagingActor {
             );
         }
 
+        // Periodic load balancer pruning every 1000 slots (~7 minutes)
+        // Removes tracking entries for threads that no longer exist
+        if clock.slot % 1000 == 0 {
+            let known_threads: HashSet<Pubkey> = state.tracked_threads.keys().copied().collect();
+            state.load_balancer.prune_stale(&known_threads).await;
+        }
+
+        // Periodic priority queue compaction every 500 slots (~3.5 minutes)
+        // Removes stale entries where exec_count no longer matches or thread is untracked
+        if clock.slot % 500 == 0 {
+            self.compact_queues(state).await;
+        }
+
         trace!("ClockTick: slot={}, epoch={}, timestamp={}",
             clock.slot, clock.epoch, clock.unix_timestamp);
 
-        // Process cache eviction refetches
+        // Process cache eviction refetches (batch-limited to prevent blocking)
         // These are threads whose cache entries expired (trigger_time + grace_period)
         // We refetch them via RPC to ensure they're not lost
-        while let Ok(pubkey) = state.eviction_rx.try_recv() {
+        const MAX_EVICTIONS_PER_TICK: usize = 10;
+        let mut eviction_count = 0;
+        while eviction_count < MAX_EVICTIONS_PER_TICK {
+            let pubkey = match state.eviction_rx.try_recv() {
+                Ok(pk) => pk,
+                Err(_) => break,
+            };
+            eviction_count += 1;
             debug!("Processing cache eviction refetch for thread {}", pubkey);
             match state
                 .resources
@@ -301,10 +334,13 @@ impl StagingActor {
                         TrackedThread {
                             exec_count: thread.exec_count,
                             schedule: thread.schedule.clone(),
+                            paused: thread.paused,
                         },
                     );
-                    // Re-schedule based on new trigger info
-                    if let Err(e) = self.schedule_thread(state, pubkey, &thread).await {
+                    // Skip re-scheduling paused threads
+                    if thread.paused {
+                        debug!("Refetched thread {} is paused, skipping reschedule", pubkey);
+                    } else if let Err(e) = self.schedule_thread(state, pubkey, &thread).await {
                         warn!("Failed to reschedule thread {} after refetch: {:?}", pubkey, e);
                     } else {
                         info!("Refetched and rescheduled thread {} after cache expiry", pubkey);
@@ -531,6 +567,15 @@ impl StagingActor {
                     }
                 };
 
+                // Skip paused threads
+                if tracked.paused {
+                    trace!(
+                        "Thread {} is paused, skipping",
+                        scheduled.thread_pubkey
+                    );
+                    continue;
+                }
+
                 // Check for stale exec_count
                 if scheduled.exec_count != tracked.exec_count {
                     debug!(
@@ -578,6 +623,42 @@ impl StagingActor {
             } else {
                 // No more ready threads in this queue
                 break;
+            }
+        }
+    }
+
+    /// Compact a priority queue by removing stale entries.
+    /// An entry is stale if its thread is no longer tracked or its exec_count
+    /// doesn't match the current tracked value.
+    async fn compact_queues(&self, state: &StagingState) {
+        let queues = [
+            ("time", &state.time_queue),
+            ("slot", &state.slot_queue),
+            ("epoch", &state.epoch_queue),
+        ];
+
+        for (name, queue) in &queues {
+            let mut lock = queue.lock().await;
+            let before = lock.len();
+            let drained: Vec<Reverse<ScheduledThread>> = lock.drain().collect();
+            for entry in drained {
+                let scheduled = &entry.0;
+                // Keep entry only if thread is still tracked with matching exec_count
+                if let Some(tracked) = state.tracked_threads.get(&scheduled.thread_pubkey) {
+                    if scheduled.exec_count == tracked.exec_count {
+                        lock.push(entry);
+                    }
+                }
+            }
+            let after = lock.len();
+            if before != after {
+                debug!(
+                    "Compacted {} queue: {} -> {} entries ({} stale removed)",
+                    name,
+                    before,
+                    after,
+                    before - after
+                );
             }
         }
     }

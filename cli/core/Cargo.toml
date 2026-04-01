@@ -1,0 +1,44 @@
+[package]
+name = "antegen-cli-core"
+version = "6.0.0"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared library for Antegen CLI binaries"
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+antegen-client = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+log = { workspace = true }
+loa-core = { workspace = true }
+dirs = { workspace = true }
+env_logger = { workspace = true }
+solana-sdk = { workspace = true }
+solana-cli-config = { workspace = true }
+solana-system-interface = { workspace = true }
+reqwest = { workspace = true }
+shellexpand = { workspace = true }
+toml = { workspace = true }
+tar = { workspace = true }
+flate2 = { workspace = true }
+tempfile = { workspace = true }
+service-manager = "0.11"
+self_update = { version = "0.42", default-features = false, features = [
+  "rustls",
+] }
+
+[target.'cfg(unix)'.dependencies]
+file-owner = "0.1"
+libc = "0.2"
+
+[features]
+dev = []
+prod = [] # Production mode - no dev build detection

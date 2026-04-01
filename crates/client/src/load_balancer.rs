@@ -277,6 +277,22 @@ impl LoadBalancer {
             );
         }
     }
+
+    /// Remove tracking entries for threads that are no longer known.
+    /// Call periodically to prevent unbounded growth from deleted threads.
+    pub async fn prune_stale(&self, known_threads: &std::collections::HashSet<Pubkey>) {
+        let mut tracking = self.tracking.write().await;
+        let before = tracking.len();
+        tracking.retain(|k, _| known_threads.contains(k));
+        let pruned = before - tracking.len();
+        if pruned > 0 {
+            info!(
+                "Pruned {} stale entries from load balancer tracking ({} remaining)",
+                pruned,
+                tracking.len()
+            );
+        }
+    }
 }
 
 /// Statistics for monitoring load balancer performance
