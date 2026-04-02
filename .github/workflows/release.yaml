@@ -17,6 +17,8 @@ jobs:
     outputs:
       cron_changed: ${{ steps.check.outputs.cron_changed }}
       cron_version: ${{ steps.check.outputs.cron_version }}
+      fiber_changed: ${{ steps.check.outputs.fiber_changed }}
+      fiber_version: ${{ steps.check.outputs.fiber_version }}
       thread_changed: ${{ steps.check.outputs.thread_changed }}
       thread_version: ${{ steps.check.outputs.thread_version }}
       client_changed: ${{ steps.check.outputs.client_changed }}
@@ -63,6 +65,16 @@ jobs:
           fi
           echo "cron_version=${CRON_VERSION}" >> "$GITHUB_OUTPUT"
           echo "cron_changed=${CRON_CHANGED}" >> "$GITHUB_OUTPUT"
+
+          # --- antegen-fiber-program ---
+          FIBER_VERSION=$(get_version programs/fiber/Cargo.toml)
+          if crate_published antegen-fiber-program "$FIBER_VERSION"; then
+            FIBER_CHANGED=false
+          else
+            FIBER_CHANGED=true
+          fi
+          echo "fiber_version=${FIBER_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "fiber_changed=${FIBER_CHANGED}" >> "$GITHUB_OUTPUT"
 
           # --- antegen-thread-program ---
           THREAD_VERSION=$(get_version programs/thread/Cargo.toml)
@@ -139,6 +151,7 @@ jobs:
           echo "| Crate | Version | Needs Release |" >> "$GITHUB_STEP_SUMMARY"
           echo "|-------|---------|---------------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| antegen-cron | ${CRON_VERSION} | ${CRON_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| antegen-fiber-program | ${FIBER_VERSION} | ${FIBER_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| antegen-thread-program | ${THREAD_VERSION} | ${THREAD_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| antegen-client | ${CLIENT_VERSION} | ${CLIENT_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| antegen-cli-core | ${CLI_CORE_VERSION} | ${CLI_CORE_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
@@ -165,14 +178,32 @@ jobs:
         continue-on-error: true # May already be published
 
   # ---------------------------------------------------------------------------
-  # Job 3: Publish antegen-thread-program to crates.io
+  # Job 3: Publish antegen-fiber-program to crates.io
+  # ---------------------------------------------------------------------------
+  publish-fiber-program:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.fiber_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Publish antegen-fiber-program
+        run: cargo publish -p antegen-fiber-program --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true # May already be published
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Publish antegen-thread-program to crates.io
   # ---------------------------------------------------------------------------
   publish-thread-program:
-    needs: [detect-changes, publish-cron]
+    needs: [detect-changes, publish-cron, publish-fiber-program]
     if: >-
       always() &&
       needs.detect-changes.outputs.thread_changed == 'true' &&
-      needs.publish-cron.result != 'failure'
+      needs.publish-cron.result != 'failure' &&
+      needs.publish-fiber-program.result != 'failure'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -181,7 +212,7 @@ jobs:
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Wait for crates.io indexing
-        if: needs.publish-cron.result == 'success'
+        if: needs.publish-cron.result == 'success' || needs.publish-fiber-program.result == 'success'
         run: sleep 30
       - name: Publish antegen-thread-program
         run: cargo publish -p antegen-thread-program --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -191,11 +222,12 @@ jobs:
   # Job 4: Publish antegen-client to crates.io
   # ---------------------------------------------------------------------------
   publish-client:
-    needs: [detect-changes, publish-cron, publish-thread-program]
+    needs: [detect-changes, publish-cron, publish-fiber-program, publish-thread-program]
     if: >-
       always() &&
       needs.detect-changes.outputs.client_changed == 'true' &&
       needs.publish-cron.result != 'failure' &&
+      needs.publish-fiber-program.result != 'failure' &&
       needs.publish-thread-program.result != 'failure'
     runs-on: ubuntu-latest
     steps:
@@ -216,11 +248,12 @@ jobs:
   # ---------------------------------------------------------------------------
   publish-cli-core:
     needs:
-      [detect-changes, publish-cron, publish-thread-program, publish-client]
+      [detect-changes, publish-cron, publish-fiber-program, publish-thread-program, publish-client]
     if: >-
       always() &&
       needs.detect-changes.outputs.cli_core_changed == 'true' &&
       needs.publish-cron.result != 'failure' &&
+      needs.publish-fiber-program.result != 'failure' &&
       needs.publish-thread-program.result != 'failure' &&
       needs.publish-client.result != 'failure'
     runs-on: ubuntu-latest
@@ -301,6 +334,7 @@ jobs:
         detect-changes,
         build-cli,
         publish-cron,
+        publish-fiber-program,
         publish-thread-program,
         publish-client,
         publish-cli-core,
@@ -310,6 +344,7 @@ jobs:
       needs.detect-changes.outputs.cli_changed == 'true' &&
       needs.build-cli.result == 'success' &&
       needs.publish-cron.result != 'failure' &&
+      needs.publish-fiber-program.result != 'failure' &&
       needs.publish-thread-program.result != 'failure' &&
       needs.publish-client.result != 'failure' &&
       needs.publish-cli-core.result != 'failure'
@@ -441,6 +476,7 @@ jobs:
         detect-changes,
         build-ctl,
         publish-cron,
+        publish-fiber-program,
         publish-thread-program,
         publish-client,
         publish-cli-core,
@@ -450,6 +486,7 @@ jobs:
       needs.detect-changes.outputs.ctl_changed == 'true' &&
       needs.build-ctl.result == 'success' &&
       needs.publish-cron.result != 'failure' &&
+      needs.publish-fiber-program.result != 'failure' &&
       needs.publish-thread-program.result != 'failure' &&
       needs.publish-client.result != 'failure' &&
       needs.publish-cli-core.result != 'failure'
@@ -576,6 +613,7 @@ jobs:
         detect-changes,
         build-node,
         publish-cron,
+        publish-fiber-program,
         publish-thread-program,
         publish-client,
       ]
@@ -584,6 +622,7 @@ jobs:
       needs.detect-changes.outputs.node_changed == 'true' &&
       needs.build-node.result == 'success' &&
       needs.publish-cron.result != 'failure' &&
+      needs.publish-fiber-program.result != 'failure' &&
       needs.publish-thread-program.result != 'failure' &&
       needs.publish-client.result != 'failure'
     runs-on: ubuntu-latest
@@ -706,6 +745,7 @@ jobs:
         detect-changes,
         build-geyser,
         publish-cron,
+        publish-fiber-program,
         publish-thread-program,
         publish-client,
       ]
@@ -714,6 +754,7 @@ jobs:
       needs.detect-changes.outputs.geyser_changed == 'true' &&
       needs.build-geyser.result == 'success' &&
       needs.publish-cron.result != 'failure' &&
+      needs.publish-fiber-program.result != 'failure' &&
       needs.publish-thread-program.result != 'failure' &&
       needs.publish-client.result != 'failure'
     runs-on: ubuntu-latest
