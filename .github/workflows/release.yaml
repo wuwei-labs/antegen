@@ -21,8 +21,12 @@ jobs:
       thread_version: ${{ steps.check.outputs.thread_version }}
       client_changed: ${{ steps.check.outputs.client_changed }}
       client_version: ${{ steps.check.outputs.client_version }}
+      cli_core_changed: ${{ steps.check.outputs.cli_core_changed }}
+      cli_core_version: ${{ steps.check.outputs.cli_core_version }}
       cli_changed: ${{ steps.check.outputs.cli_changed }}
       cli_version: ${{ steps.check.outputs.cli_version }}
+      ctl_changed: ${{ steps.check.outputs.ctl_changed }}
+      ctl_version: ${{ steps.check.outputs.ctl_version }}
       node_changed: ${{ steps.check.outputs.node_changed }}
       node_version: ${{ steps.check.outputs.node_version }}
       geyser_changed: ${{ steps.check.outputs.geyser_changed }}
@@ -80,8 +84,18 @@ jobs:
           echo "client_version=${CLIENT_VERSION}" >> "$GITHUB_OUTPUT"
           echo "client_changed=${CLIENT_CHANGED}" >> "$GITHUB_OUTPUT"
 
+          # --- antegen-cli-core ---
+          CLI_CORE_VERSION=$(get_version cli/core/Cargo.toml)
+          if crate_published antegen-cli-core "$CLI_CORE_VERSION"; then
+            CLI_CORE_CHANGED=false
+          else
+            CLI_CORE_CHANGED=true
+          fi
+          echo "cli_core_version=${CLI_CORE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "cli_core_changed=${CLI_CORE_CHANGED}" >> "$GITHUB_OUTPUT"
+
           # --- antegen-cli (check GitHub release, not crates.io) ---
-          CLI_VERSION=$(get_version crates/cli/Cargo.toml)
+          CLI_VERSION=$(get_version cli/antegen/Cargo.toml)
           if gh release view "v${CLI_VERSION}" &>/dev/null; then
             CLI_CHANGED=false
           else
@@ -89,6 +103,16 @@ jobs:
           fi
           echo "cli_version=${CLI_VERSION}" >> "$GITHUB_OUTPUT"
           echo "cli_changed=${CLI_CHANGED}" >> "$GITHUB_OUTPUT"
+
+          # --- antegenctl (check GitHub release with ctl-v prefix) ---
+          CTL_VERSION=$(get_version cli/antegenctl/Cargo.toml)
+          if gh release view "ctl-v${CTL_VERSION}" &>/dev/null; then
+            CTL_CHANGED=false
+          else
+            CTL_CHANGED=true
+          fi
+          echo "ctl_version=${CTL_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "ctl_changed=${CTL_CHANGED}" >> "$GITHUB_OUTPUT"
 
           # --- antegen-node (check GitHub release with node- prefix) ---
           NODE_VERSION=$(get_version crates/client/Cargo.toml)
@@ -117,7 +141,9 @@ jobs:
           echo "| antegen-cron | ${CRON_VERSION} | ${CRON_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| antegen-thread-program | ${THREAD_VERSION} | ${THREAD_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| antegen-client | ${CLIENT_VERSION} | ${CLIENT_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| antegen-cli-core | ${CLI_CORE_VERSION} | ${CLI_CORE_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| antegen-cli | ${CLI_VERSION} | ${CLI_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| antegenctl | ${CTL_VERSION} | ${CTL_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| antegen-node | ${NODE_VERSION} | ${NODE_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| antegen-geyser-plugin | ${GEYSER_VERSION} | ${GEYSER_CHANGED} |" >> "$GITHUB_STEP_SUMMARY"
 
@@ -186,7 +212,33 @@ jobs:
         continue-on-error: true # May already be published
 
   # ---------------------------------------------------------------------------
-  # Job 5: Build CLI binaries (runs in parallel with library publishing)
+  # Job 5: Publish antegen-cli-core to crates.io
+  # ---------------------------------------------------------------------------
+  publish-cli-core:
+    needs:
+      [detect-changes, publish-cron, publish-thread-program, publish-client]
+    if: >-
+      always() &&
+      needs.detect-changes.outputs.cli_core_changed == 'true' &&
+      needs.publish-cron.result != 'failure' &&
+      needs.publish-thread-program.result != 'failure' &&
+      needs.publish-client.result != 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Wait for crates.io indexing
+        if: needs.publish-client.result == 'success'
+        run: sleep 30
+      - name: Publish antegen-cli-core
+        run: cargo publish -p antegen-cli-core --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true # May already be published
+
+  # ---------------------------------------------------------------------------
+  # Job 6: Build CLI binaries (runs in parallel with library publishing)
   # ---------------------------------------------------------------------------
   build-cli:
     needs: detect-changes
@@ -232,17 +284,26 @@ jobs:
           retention-days: 1
 
   # ---------------------------------------------------------------------------
-  # Job 6: Create CLI GitHub release + publish to crates.io
+  # Job 7: Create CLI GitHub release + publish to crates.io
   # ---------------------------------------------------------------------------
   release-cli:
-    needs: [detect-changes, build-cli, publish-cron, publish-thread-program, publish-client]
+    needs:
+      [
+        detect-changes,
+        build-cli,
+        publish-cron,
+        publish-thread-program,
+        publish-client,
+        publish-cli-core,
+      ]
     if: >-
       always() &&
       needs.detect-changes.outputs.cli_changed == 'true' &&
       needs.build-cli.result == 'success' &&
       needs.publish-cron.result != 'failure' &&
       needs.publish-thread-program.result != 'failure' &&
-      needs.publish-client.result != 'failure'
+      needs.publish-client.result != 'failure' &&
+      needs.publish-cli-core.result != 'failure'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -300,7 +361,7 @@ jobs:
             artifacts/*
 
       - name: Wait for crates.io indexing
-        if: needs.publish-client.result == 'success'
+        if: needs.publish-cli-core.result == 'success' || needs.publish-client.result == 'success'
         run: sleep 30
 
       - name: Publish antegen-cli
@@ -308,7 +369,133 @@ jobs:
         continue-on-error: true # May already be published
 
   # ---------------------------------------------------------------------------
-  # Job 7: Build Node binaries (runs in parallel with library publishing)
+  # Job 8: Build antegenctl binaries (runs in parallel with library publishing)
+  # ---------------------------------------------------------------------------
+  build-ctl:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.ctl_changed == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-14
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Build antegenctl
+        run: cargo build -p antegenctl --release --features prod --target ${{ matrix.target }}
+
+      - name: Package artifact
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/antegenctl \
+            artifacts/antegenctl-v${{ needs.detect-changes.outputs.ctl_version }}-${{ matrix.target }}
+          chmod +x artifacts/*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctl-${{ matrix.target }}
+          path: artifacts/*
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # Job 9: Create antegenctl GitHub release + publish to crates.io
+  # ---------------------------------------------------------------------------
+  release-ctl:
+    needs:
+      [
+        detect-changes,
+        build-ctl,
+        publish-cron,
+        publish-thread-program,
+        publish-client,
+        publish-cli-core,
+      ]
+    if: >-
+      always() &&
+      needs.detect-changes.outputs.ctl_changed == 'true' &&
+      needs.build-ctl.result == 'success' &&
+      needs.publish-cron.result != 'failure' &&
+      needs.publish-thread-program.result != 'failure' &&
+      needs.publish-client.result != 'failure' &&
+      needs.publish-cli-core.result != 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Download antegenctl artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: ctl-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create git tag
+        run: |
+          git tag "ctl-v${{ needs.detect-changes.outputs.ctl_version }}"
+          git push origin "ctl-v${{ needs.detect-changes.outputs.ctl_version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ctl-v${{ needs.detect-changes.outputs.ctl_version }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fail_on_unmatched_files: true
+          body: |
+            ## antegenctl v${{ needs.detect-changes.outputs.ctl_version }}
+
+            ### Installation
+
+            **Via cargo:**
+            ```bash
+            cargo install antegenctl
+            ```
+
+            ---
+            [Documentation](https://docs.antegen.xyz) | [GitHub](https://github.com/wuwei-labs/antegen)
+          files: |
+            artifacts/*
+
+      - name: Wait for crates.io indexing
+        if: needs.publish-cli-core.result == 'success' || needs.publish-client.result == 'success'
+        run: sleep 30
+
+      - name: Publish antegenctl
+        run: cargo publish -p antegenctl --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true # May already be published
+
+  # ---------------------------------------------------------------------------
+  # Job 10: Build Node binaries (runs in parallel with library publishing)
   # ---------------------------------------------------------------------------
   build-node:
     needs: detect-changes
@@ -354,10 +541,17 @@ jobs:
           retention-days: 1
 
   # ---------------------------------------------------------------------------
-  # Job 8: Create Node GitHub release
+  # Job 11: Create Node GitHub release
   # ---------------------------------------------------------------------------
   release-node:
-    needs: [detect-changes, build-node, publish-cron, publish-thread-program, publish-client]
+    needs:
+      [
+        detect-changes,
+        build-node,
+        publish-cron,
+        publish-thread-program,
+        publish-client,
+      ]
     if: >-
       always() &&
       needs.detect-changes.outputs.node_changed == 'true' &&
@@ -398,14 +592,14 @@ jobs:
           body: |
             ## Antegen Node v${{ needs.detect-changes.outputs.node_version }}
 
-            Executor binary for Antegen. Managed by `anm` (Antegen Node Manager).
+            Executor binary for Antegen. Managed by `antegenctl`.
 
             ### Installation
 
-            **Via `anm`:**
+            **Via `antegenctl`:**
             ```bash
-            anm install v${{ needs.detect-changes.outputs.node_version }}
-            anm use v${{ needs.detect-changes.outputs.node_version }}
+            antegenctl install v${{ needs.detect-changes.outputs.node_version }}
+            antegenctl use v${{ needs.detect-changes.outputs.node_version }}
             ```
 
             **Via cargo:**
@@ -419,7 +613,7 @@ jobs:
             artifacts/*
 
   # ---------------------------------------------------------------------------
-  # Job 9: Build Geyser plugin binaries (runs in parallel with library publishing)
+  # Job 12: Build Geyser plugin binaries (runs in parallel with library publishing)
   # ---------------------------------------------------------------------------
   build-geyser:
     needs: detect-changes
@@ -468,10 +662,17 @@ jobs:
           retention-days: 1
 
   # ---------------------------------------------------------------------------
-  # Job 10: Create Geyser plugin GitHub release
+  # Job 13: Create Geyser plugin GitHub release
   # ---------------------------------------------------------------------------
   release-geyser:
-    needs: [detect-changes, build-geyser, publish-cron, publish-thread-program, publish-client]
+    needs:
+      [
+        detect-changes,
+        build-geyser,
+        publish-cron,
+        publish-thread-program,
+        publish-client,
+      ]
     if: >-
       always() &&
       needs.detect-changes.outputs.geyser_changed == 'true' &&

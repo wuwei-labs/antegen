@@ -89,7 +89,7 @@ get_latest_node_version() {
 
     if [ -z "$NODE_VERSION" ]; then
         warn "No node-specific releases found yet. Skipping node binary install."
-        warn "You can install it later with: anm install <version>"
+        warn "You can install it later with: antegenctl install <version>"
         return 1
     fi
 
@@ -130,7 +130,7 @@ install_node_binary() {
     trap "rm -rf $TMP_DIR" EXIT
 
     if ! curl -sSfL "$NODE_URL" -o "$TMP_DIR/$NODE_BINARY"; then
-        warn "Failed to download node binary. You can install it later with: anm install $NODE_VERSION"
+        warn "Failed to download node binary. You can install it later with: antegenctl install $NODE_VERSION"
         return 1
     fi
     chmod +x "$TMP_DIR/$NODE_BINARY"
@@ -198,7 +198,7 @@ main() {
         echo ""
         echo "  Restart your shell or run: source ~/.bashrc"
         echo ""
-        echo "  Node management:  anm --help"
+        echo "  Node management:  antegenctl --help"
         echo "  Developer tools:  antegen --help"
         echo ""
     else
