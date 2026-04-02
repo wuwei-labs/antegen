@@ -266,7 +266,16 @@ jobs:
         with:
           target: ${{ matrix.target }}
 
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: brew install llvm
+
       - name: Build CLI
+        env:
+          CC_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          CC_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          AR_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
+          AR_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
         run: cargo build -p antegen-cli --release --features prod --target ${{ matrix.target }}
 
       - name: Package artifact
@@ -397,7 +406,16 @@ jobs:
         with:
           target: ${{ matrix.target }}
 
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: brew install llvm
+
       - name: Build antegenctl
+        env:
+          CC_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          CC_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          AR_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
+          AR_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
         run: cargo build -p antegenctl --release --features prod --target ${{ matrix.target }}
 
       - name: Package artifact
@@ -523,7 +541,16 @@ jobs:
         with:
           target: ${{ matrix.target }}
 
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: brew install llvm
+
       - name: Build Node
+        env:
+          CC_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          CC_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          AR_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
+          AR_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
         run: cargo build -p antegen-client --release --features node --target ${{ matrix.target }}
 
       - name: Package artifact
@@ -644,7 +671,16 @@ jobs:
         with:
           target: ${{ matrix.target }}
 
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: brew install llvm
+
       - name: Build Geyser plugin
+        env:
+          CC_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          CC_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          AR_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
+          AR_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
         run: cargo build -p antegen-geyser-plugin --release --target ${{ matrix.target }}
 
       - name: Package artifact
