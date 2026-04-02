@@ -305,6 +305,8 @@ jobs:
 
       - name: Build CLI
         env:
+          CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
+          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
           CC_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
           CC_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
           AR_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
@@ -447,6 +449,8 @@ jobs:
 
       - name: Build antegenctl
         env:
+          CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
+          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
           CC_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
           CC_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
           AR_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
@@ -584,6 +588,8 @@ jobs:
 
       - name: Build Node
         env:
+          CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
+          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
           CC_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
           CC_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
           AR_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
@@ -716,6 +722,8 @@ jobs:
 
       - name: Build Geyser plugin
         env:
+          CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
+          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
           CC_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
           CC_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
           AR_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
