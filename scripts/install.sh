@@ -71,9 +71,10 @@ detect_platform() {
     info "Detected platform: $TARGET"
 }
 
-# Get latest CLI version from GitHub (tags without prefix)
+# Get latest CLI version from GitHub (tags matching v{semver} only, no prefix)
 get_latest_cli_version() {
-    VERSION=$(curl -sS "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+    VERSION=$(curl -sS "https://api.github.com/repos/$REPO/releases" | \
+        grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' | grep -E '^v[0-9]' | head -1)
 
     if [ -z "$VERSION" ]; then
         error "Failed to get latest CLI version from GitHub"
