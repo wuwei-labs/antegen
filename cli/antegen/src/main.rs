@@ -1,7 +1,7 @@
 //! Antegen CLI — developer-facing: program, thread, geyser commands
 
+use antegen_cli_core::{dispatch_config, LogLevel, NodeConfigCommands};
 use anyhow::Result;
-use antegen_cli_core::{LogLevel, NodeConfigCommands, dispatch_config};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -58,7 +58,6 @@ enum Commands {
     // =========================================================================
     // Hidden: executor runtime (service invokes versioned binary with `run`)
     // =========================================================================
-
     /// Run the executor directly (no service, blocking)
     #[command(hide = true)]
     Run {
@@ -71,7 +70,6 @@ enum Commands {
     // =========================================================================
     // Hidden backwards-compatibility aliases (deprecated — use `antegenctl` instead)
     // =========================================================================
-
     /// Register locally-built binaries and verify configuration
     Verify,
 
@@ -151,15 +149,11 @@ enum Commands {
 
     /// Fund the executor with SOL
     #[command(hide = true)]
-    Fund {
-        amount: Option<f64>,
-    },
+    Fund { amount: Option<f64> },
 
     /// Withdraw SOL from executor
     #[command(hide = true)]
-    Withdraw {
-        amount: Option<f64>,
-    },
+    Withdraw { amount: Option<f64> },
 
     /// Config file operations
     #[command(hide = true, subcommand)]
@@ -174,12 +168,16 @@ enum Commands {
 enum ProgramCommands {
     /// Deploy the program binary to a Solana cluster
     Deploy {
-        /// Path to the compiled program .so file
-        program_binary: PathBuf,
+        /// Path to a single .so file (omit to deploy both fiber + thread)
+        program_binary: Option<PathBuf>,
 
-        /// Program ID or path to program keypair (defaults to declared program ID)
+        /// Program ID or keypair path (single-program mode only)
         #[arg(long)]
         program_id: Option<String>,
+
+        /// Directory containing program keypair files named {program_id}.json
+        #[arg(long)]
+        keys_dir: Option<PathBuf>,
 
         /// Skip `config init` after deploy
         #[arg(long)]
@@ -395,6 +393,7 @@ async fn run_antegen() -> Result<()> {
             ProgramCommands::Deploy {
                 program_binary,
                 program_id,
+                keys_dir,
                 skip_init,
                 skip_verify,
             } => {
@@ -403,6 +402,7 @@ async fn run_antegen() -> Result<()> {
                     cli.rpc,
                     cli.keypair,
                     program_id,
+                    keys_dir,
                     skip_init,
                     skip_verify,
                 )
@@ -435,9 +435,7 @@ async fn run_antegen() -> Result<()> {
         // Geyser commands
         // =================================================================
         Commands::Geyser(geyser_cmd) => match geyser_cmd {
-            GeyserCommands::Init { output, config } => {
-                commands::geyser::init(output, config).await
-            }
+            GeyserCommands::Init { output, config } => commands::geyser::init(output, config).await,
             GeyserCommands::Extract { output } => commands::geyser::extract(output).await,
         },
 
@@ -467,9 +465,7 @@ async fn run_antegen() -> Result<()> {
             }
             Ok(())
         }
-        Commands::Init { rpc, force } => {
-            antegen_cli_core::commands::service::init(rpc, force)
-        }
+        Commands::Init { rpc, force } => antegen_cli_core::commands::service::init(rpc, force),
         Commands::Start { rpc, version } => {
             deprecation_warning("start", "start");
             antegen_cli_core::commands::service::start(rpc, version).await
@@ -494,12 +490,8 @@ async fn run_antegen() -> Result<()> {
             deprecation_warning("uninstall", "uninstall");
             antegen_cli_core::commands::service::uninstall()
         }
-        Commands::Update { version } => {
-            antegen_cli_core::commands::update::update(version).await
-        }
-        Commands::List { remote } => {
-            antegen_cli_core::commands::update::list_cli(remote).await
-        }
+        Commands::Update { version } => antegen_cli_core::commands::update::update(version).await,
+        Commands::List { remote } => antegen_cli_core::commands::update::list_cli(remote).await,
         Commands::Use { version } => {
             antegen_cli_core::commands::update::use_cli_version(version).await
         }

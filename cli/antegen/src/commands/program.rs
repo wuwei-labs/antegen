@@ -7,128 +7,299 @@ use antegen_client::rpc::RpcPool;
 use antegen_thread_program::state::ThreadConfig;
 use anyhow::{anyhow, Result};
 use solana_sdk::{
-    instruction::Instruction, message::Message, signer::Signer,
+    instruction::Instruction, message::Message, pubkey::Pubkey, signer::Signer,
     transaction::Transaction,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::str::FromStr;
 
 use antegen_cli_core::commands::{get_keypair, get_rpc_url};
+
+// =============================================================================
+// Deploy helpers
+// =============================================================================
+
+/// Which program a binary belongs to
+enum DetectedProgram {
+    Fiber,
+    Thread,
+    Unknown,
+}
+
+/// Try to figure out which program a binary + optional program-id refers to.
+fn detect_program(program_id: &Option<String>, binary_path: &Path) -> DetectedProgram {
+    // Check --program-id against known IDs
+    if let Some(ref id_str) = program_id {
+        // Could be a pubkey string or a keypair file path
+        let pubkey = Pubkey::from_str(id_str).ok().or_else(|| {
+            // Try reading as keypair file → extract pubkey
+            solana_sdk::signature::read_keypair_file(id_str)
+                .ok()
+                .map(|kp| kp.pubkey())
+        });
+        if let Some(pk) = pubkey {
+            if pk == antegen_fiber_program::ID {
+                return DetectedProgram::Fiber;
+            }
+            if pk == antegen_thread_program::ID {
+                return DetectedProgram::Thread;
+            }
+        }
+    }
+
+    // Fallback: check binary filename
+    let name = binary_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if name.contains("fiber") {
+        return DetectedProgram::Fiber;
+    }
+    if name.contains("thread") {
+        return DetectedProgram::Thread;
+    }
+
+    DetectedProgram::Unknown
+}
+
+/// Check solana CLI is available and print its version.
+fn check_solana_cli() -> Result<()> {
+    let output = Command::new("solana")
+        .arg("--version")
+        .output()
+        .map_err(|_| {
+            anyhow!(
+                "'solana' CLI not found. Install it: https://solana.com/docs/intro/installation"
+            )
+        })?;
+    let version = String::from_utf8_lossy(&output.stdout);
+    println!("Solana: {}", version.trim());
+    Ok(())
+}
+
+/// Deploy a single .so binary via `solana program deploy`.
+///
+/// `program_id_arg` is passed as `--program-id` — it can be a pubkey string
+/// or a path to a keypair file.
+fn deploy_single(
+    binary: &Path,
+    program_id_arg: Option<&str>,
+    rpc: &Option<String>,
+    keypair_path: &Option<PathBuf>,
+) -> Result<()> {
+    if !binary.exists() {
+        return Err(anyhow!(
+            "Program binary not found: {}\n\
+             Build your program first, then pass the path to the .so file.",
+            binary.display()
+        ));
+    }
+    println!("Binary: {}", binary.display());
+
+    let mut args: Vec<String> = vec![
+        "program".into(),
+        "deploy".into(),
+        binary.to_string_lossy().to_string(),
+    ];
+
+    if let Some(ref url) = rpc {
+        args.push("--url".into());
+        args.push(url.clone());
+    }
+    if let Some(ref kp) = keypair_path {
+        args.push("--keypair".into());
+        args.push(kp.to_string_lossy().to_string());
+    }
+    if let Some(pid) = program_id_arg {
+        args.push("--program-id".into());
+        args.push(pid.to_string());
+    }
+
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let status = Command::new("solana")
+        .args(&args_ref)
+        .status()
+        .map_err(|e| anyhow!("Failed to run 'solana program deploy': {}", e))?;
+
+    if !status.success() {
+        return Err(anyhow!(
+            "'solana program deploy' failed with status: {}",
+            status
+        ));
+    }
+    println!("Deploy complete.");
+    Ok(())
+}
+
+/// Verify a program is deployed and executable on-chain.
+async fn verify_program(pubkey: Pubkey, rpc_url: &str) -> Result<()> {
+    let client =
+        RpcPool::with_url(rpc_url).map_err(|e| anyhow!("Failed to create RPC client: {}", e))?;
+
+    println!("Program ID: {}", pubkey);
+    match client.get_account(&pubkey).await {
+        Ok(Some(account)) => {
+            if account.executable {
+                println!("Program is deployed and executable.");
+            } else {
+                println!("Warning: Account exists but is not marked executable.");
+            }
+        }
+        Ok(None) => {
+            println!("Warning: Program account not found at {}", pubkey);
+        }
+        Err(e) => {
+            println!("Warning: Failed to verify program: {}", e);
+        }
+    }
+    Ok(())
+}
 
 // =============================================================================
 // Deploy command
 // =============================================================================
 
-/// Deploy the program binary to a Solana cluster using `solana program deploy`
+/// Deploy program(s) to a Solana cluster using `solana program deploy`.
 ///
-/// When `rpc` and `keypair_path` are None, solana CLI reads its own config —
-/// this is the desired default so users' Solana CLI settings are respected.
+/// Two modes:
+/// - **Single-program**: pass a `.so` path → deploys that binary (backwards compat).
+/// - **Full deploy**: omit the binary → auto-discovers fiber + thread from
+///   `target/deploy/`, resolves keypairs from `--keys-dir`, and deploys both
+///   in dependency order (fiber → thread → ThreadConfig init).
 pub async fn deploy(
-    program_binary: PathBuf,
+    program_binary: Option<PathBuf>,
     rpc: Option<String>,
     keypair_path: Option<PathBuf>,
     program_id: Option<String>,
+    keys_dir: Option<PathBuf>,
     skip_init: bool,
     skip_verify: bool,
 ) -> Result<()> {
-    use std::process::Command;
+    check_solana_cli()?;
 
-    // 1. Validate binary exists
-    if !program_binary.exists() {
-        return Err(anyhow!(
-            "Program binary not found: {}\n\
-             Build your program first, then pass the path to the .so file.",
-            program_binary.display()
-        ));
-    }
-    println!("Binary: {}", program_binary.display());
+    if let Some(binary) = program_binary {
+        // ── Single-program mode ──────────────────────────────────────────
+        deploy_single(&binary, program_id.as_deref(), &rpc, &keypair_path)?;
 
-    // 2. Check solana CLI is installed
-    {
-        let output = Command::new("solana")
-            .arg("--version")
-            .output()
-            .map_err(|_| anyhow!("'solana' CLI not found. Install it: https://solana.com/docs/intro/installation"))?;
-        let version = String::from_utf8_lossy(&output.stdout);
-        println!("Solana: {}", version.trim());
-    }
+        let detected = detect_program(&program_id, &binary);
 
-    // 3. Deploy — only pass --url / --keypair when the user explicitly provided them
-    println!("\n--- Deploying ---");
-    let mut deploy_args: Vec<String> = vec![
-        "program".to_string(),
-        "deploy".to_string(),
-        program_binary.to_string_lossy().to_string(),
-    ];
+        let rpc_url = get_rpc_url(rpc.clone())?;
 
-    if let Some(ref url) = rpc {
-        deploy_args.push("--url".to_string());
-        deploy_args.push(url.clone());
-    }
-
-    if let Some(ref kp) = keypair_path {
-        deploy_args.push("--keypair".to_string());
-        deploy_args.push(kp.to_string_lossy().to_string());
-    }
-
-    if let Some(ref pid) = program_id {
-        deploy_args.push("--program-id".to_string());
-        deploy_args.push(pid.clone());
-    }
-
-    let deploy_args_ref: Vec<&str> = deploy_args.iter().map(|s| s.as_str()).collect();
-    let status = Command::new("solana")
-        .args(&deploy_args_ref)
-        .status()
-        .map_err(|e| anyhow!("Failed to run 'solana program deploy': {}", e))?;
-
-    if !status.success() {
-        return Err(anyhow!("'solana program deploy' failed with status: {}", status));
-    }
-    println!("Deploy complete.");
-
-    // 4. Post-deploy: resolve RPC via Solana CLI config fallback for our own calls
-    let rpc_url = get_rpc_url(rpc.clone())?;
-
-    // 5. Init config
-    if !skip_init {
-        println!("\n--- Initializing ThreadConfig ---");
-        match config_init(Some(rpc_url.clone()), keypair_path.clone()).await {
-            Ok(()) => {}
-            Err(e) => {
-                println!("Warning: config init failed: {}", e);
-                println!("You can run it manually: antegen program config init");
-            }
-        }
-    } else {
-        println!("\nSkipping config init (--skip-init)");
-    }
-
-    // 6. Verify
-    if !skip_verify {
-        println!("\n--- Verifying ---");
-        let client = RpcPool::with_url(&rpc_url)
-            .map_err(|e| anyhow!("Failed to create RPC client: {}", e))?;
-
-        let pid = antegen_thread_program::ID;
-        println!("Program ID: {}", pid);
-
-        match client.get_account(&pid).await {
-            Ok(Some(account)) => {
-                if account.executable {
-                    println!("Program is deployed and executable.");
-                } else {
-                    println!("Warning: Account exists but is not marked executable.");
+        // Only run config init for thread program
+        if !skip_init {
+            if let DetectedProgram::Thread = detected {
+                println!("\n--- Initializing ThreadConfig ---");
+                match config_init(Some(rpc_url.clone()), keypair_path.clone()).await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        println!("Warning: config init failed: {}", e);
+                        println!("You can run it manually: antegen program config init");
+                    }
                 }
             }
-            Ok(None) => {
-                println!("Warning: Program account not found at {}", pid);
-            }
-            Err(e) => {
-                println!("Warning: Failed to verify program: {}", e);
-            }
+        } else {
+            println!("\nSkipping config init (--skip-init)");
+        }
+
+        if !skip_verify {
+            println!("\n--- Verifying ---");
+            let pubkey = match detected {
+                DetectedProgram::Fiber => antegen_fiber_program::ID,
+                DetectedProgram::Thread => antegen_thread_program::ID,
+                DetectedProgram::Unknown => antegen_thread_program::ID,
+            };
+            verify_program(pubkey, &rpc_url).await?;
+        } else {
+            println!("\nSkipping verification (--skip-verify)");
         }
     } else {
-        println!("\nSkipping verification (--skip-verify)");
+        // ── Full deploy mode (fiber → thread → init) ────────────────────
+        let keys_dir = keys_dir.ok_or_else(|| {
+            anyhow!(
+                "--keys-dir is required when deploying both programs.\n\
+                 Provide a directory containing program keypair files named {{program_id}}.json."
+            )
+        })?;
+
+        let fiber_so = Path::new("target/deploy/antegen_fiber_program.so");
+        let thread_so = Path::new("target/deploy/antegen_thread_program.so");
+
+        if !fiber_so.exists() {
+            return Err(anyhow!(
+                "Fiber binary not found at {}. Run `cargo build-sbf` first.",
+                fiber_so.display()
+            ));
+        }
+        if !thread_so.exists() {
+            return Err(anyhow!(
+                "Thread binary not found at {}. Run `cargo build-sbf` first.",
+                thread_so.display()
+            ));
+        }
+
+        let fiber_id = antegen_fiber_program::ID;
+        let thread_id = antegen_thread_program::ID;
+
+        let fiber_keypair = keys_dir.join(format!("{}.json", fiber_id));
+        let thread_keypair = keys_dir.join(format!("{}.json", thread_id));
+
+        if !fiber_keypair.exists() {
+            return Err(anyhow!(
+                "Fiber keypair not found: {}\n\
+                 Expected file named {}.json in --keys-dir",
+                fiber_keypair.display(),
+                fiber_id
+            ));
+        }
+        if !thread_keypair.exists() {
+            return Err(anyhow!(
+                "Thread keypair not found: {}\n\
+                 Expected file named {}.json in --keys-dir",
+                thread_keypair.display(),
+                thread_id
+            ));
+        }
+
+        let rpc_url = get_rpc_url(rpc.clone())?;
+
+        // Step 1: fiber
+        println!("\n--- Step 1/3: Deploying fiber program ---");
+        deploy_single(
+            fiber_so,
+            Some(&fiber_keypair.to_string_lossy()),
+            &rpc,
+            &keypair_path,
+        )?;
+        if !skip_verify {
+            verify_program(fiber_id, &rpc_url).await?;
+        }
+
+        // Step 2: thread
+        println!("\n--- Step 2/3: Deploying thread program ---");
+        deploy_single(
+            thread_so,
+            Some(&thread_keypair.to_string_lossy()),
+            &rpc,
+            &keypair_path,
+        )?;
+        if !skip_verify {
+            verify_program(thread_id, &rpc_url).await?;
+        }
+
+        // Step 3: init
+        if !skip_init {
+            println!("\n--- Step 3/3: Initializing ThreadConfig ---");
+            match config_init(Some(rpc_url.clone()), keypair_path.clone()).await {
+                Ok(()) => {}
+                Err(e) => {
+                    println!("Warning: config init failed: {}", e);
+                    println!("You can run it manually: antegen program config init");
+                }
+            }
+        } else {
+            println!("\nSkipping config init (--skip-init)");
+        }
     }
 
     println!("\nDone.");
@@ -147,8 +318,8 @@ pub async fn config_init(rpc: Option<String>, keypair_path: Option<PathBuf>) -> 
     println!("RPC: {}", rpc_url);
     println!("Admin: {}", admin.pubkey());
 
-    let client = RpcPool::with_url(&rpc_url)
-        .map_err(|e| anyhow!("Failed to create RPC client: {}", e))?;
+    let client =
+        RpcPool::with_url(&rpc_url).map_err(|e| anyhow!("Failed to create RPC client: {}", e))?;
 
     // Check if config already exists
     let config_pubkey = ThreadConfig::pubkey();
@@ -207,8 +378,8 @@ pub async fn config_get(rpc: Option<String>) -> Result<()> {
     let rpc_url = get_rpc_url(rpc)?;
     println!("RPC: {}", rpc_url);
 
-    let client = RpcPool::with_url(&rpc_url)
-        .map_err(|e| anyhow!("Failed to create RPC client: {}", e))?;
+    let client =
+        RpcPool::with_url(&rpc_url).map_err(|e| anyhow!("Failed to create RPC client: {}", e))?;
 
     let config_pubkey = ThreadConfig::pubkey();
     println!("Config PDA: {}", config_pubkey);
@@ -217,7 +388,9 @@ pub async fn config_get(rpc: Option<String>) -> Result<()> {
         .get_account(&config_pubkey)
         .await
         .map_err(|e| anyhow!("Failed to fetch config: {}", e))?
-        .ok_or_else(|| anyhow!("ThreadConfig not found. Run 'antegen program config init' to initialize."))?;
+        .ok_or_else(|| {
+            anyhow!("ThreadConfig not found. Run 'antegen program config init' to initialize.")
+        })?;
 
     let data = account
         .decode_data()
@@ -234,13 +407,24 @@ pub async fn config_get(rpc: Option<String>) -> Result<()> {
     println!();
     println!("=== Commission Settings ===");
     println!("Commission Fee: {} lamports", config.commission_fee);
-    println!("Executor Fee: {}% ({}bps)", config.executor_fee_bps / 100, config.executor_fee_bps);
-    println!("Core Team Fee: {}% ({}bps)", config.core_team_bps / 100, config.core_team_bps);
+    println!(
+        "Executor Fee: {}% ({}bps)",
+        config.executor_fee_bps / 100,
+        config.executor_fee_bps
+    );
+    println!(
+        "Core Team Fee: {}% ({}bps)",
+        config.core_team_bps / 100,
+        config.core_team_bps
+    );
     println!();
     println!("=== Timing ===");
     println!("Grace Period: {} seconds", config.grace_period_seconds);
     println!("Fee Decay: {} seconds", config.fee_decay_seconds);
-    println!("Total Window: {} seconds", config.grace_period_seconds + config.fee_decay_seconds);
+    println!(
+        "Total Window: {} seconds",
+        config.grace_period_seconds + config.fee_decay_seconds
+    );
 
     Ok(())
 }
