@@ -807,6 +807,32 @@ pub async fn ensure_node_downloaded(version: &str) -> Result<PathBuf> {
     Ok(versioned_path)
 }
 
+/// Detect a locally-built antegen-node binary in the cargo workspace.
+///
+/// Walks up from CWD to find the workspace root, checks for
+/// `target/release/antegen-node`, and extracts its version.
+///
+/// Returns `Some((binary_path, version))` if found, `None` otherwise.
+fn detect_local_node_build() -> Option<(PathBuf, String)> {
+    let workspace_root = find_workspace_root().ok()?;
+    let built_binary = workspace_root.join("target/release/antegen-node");
+    if !built_binary.exists() {
+        return None;
+    }
+
+    let output = std::process::Command::new(&built_binary)
+        .arg("--version")
+        .output()
+        .ok()?;
+    let version_output = String::from_utf8_lossy(&output.stdout);
+    let version = version_output
+        .split_whitespace()
+        .nth(1)
+        .map(|v| normalize_version(v))?;
+
+    Some((built_binary, version))
+}
+
 /// Build antegen-node from the local workspace and install to ~/.local/bin/
 ///
 /// Returns the version string of the built binary.
@@ -974,6 +1000,41 @@ pub async fn update_node(version: Option<String>, local: bool) -> Result<()> {
 /// Downloads if needed, updates symlink, writes node-version, reinstalls service.
 /// Does NOT touch CLI symlinks.
 pub async fn use_node_version(version: String) -> Result<()> {
+    // Handle "local" keyword — copy workspace build into version manager
+    if version == "local" {
+        let (built_binary, ver) = detect_local_node_build()
+            .context("No local build found. Run `cargo build -p antegen-client --release --features node` first.")?;
+
+        let versioned_path = versioned_node_binary_path(&ver)?;
+        let dest_dir = bin_dir()?;
+        fs::create_dir_all(&dest_dir)?;
+        fs::copy(&built_binary, &versioned_path)
+            .context("Failed to copy local build to install directory")?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&versioned_path, fs::Permissions::from_mode(0o755))?;
+        }
+
+        #[cfg(unix)]
+        {
+            let symlink_path = node_binary_path()?;
+            update_symlink(&symlink_path, &versioned_path)?;
+        }
+
+        write_node_version(&ver)?;
+
+        if super::service::is_installed() {
+            println!("Switching service to local node {}...", ver);
+            super::service::start(None, Some(ver)).await?;
+        } else {
+            println!("Node switched to {} (local build)", ver);
+        }
+
+        return Ok(());
+    }
+
     let version = normalize_version(&version);
 
     if !is_node_version_supported(&version) {
@@ -1173,11 +1234,14 @@ pub async fn download_latest_node() -> Result<()> {
     Ok(())
 }
 
-/// List node versions (for `antegenctllist`)
-/// Shows both installed and available remote versions, filtering out legacy (< v5.0.0).
+/// List node versions (for `antegenctl list`)
+/// Shows installed versions, local cargo build (if detected), and available remote versions.
 pub async fn list_node() -> Result<()> {
     let bin_dir = bin_dir()?;
     let active_version = get_installed_node_version().or_else(|| read_node_version());
+
+    // Detect local cargo build
+    let local_build = detect_local_node_build();
 
     // Collect locally installed versions (>= MIN_NODE_VERSION only)
     let mut installed: Vec<String> = Vec::new();
@@ -1207,7 +1271,7 @@ pub async fn list_node() -> Result<()> {
     };
 
     println!("Installed:");
-    if installed.is_empty() {
+    if installed.is_empty() && local_build.is_none() {
         println!("  (none)");
     } else {
         for ver in &installed {
@@ -1216,6 +1280,18 @@ pub async fn list_node() -> Result<()> {
             } else {
                 println!("  {}", ver);
             }
+        }
+    }
+
+    // Show local cargo build if detected
+    if let Some((path, ver)) = &local_build {
+        let already_installed = installed.contains(ver)
+            && active_version.as_deref() == Some(ver.as_str());
+        if !already_installed {
+            println!();
+            println!("Local build:");
+            println!("  {} ({})", ver, path.display());
+            println!("  Use `antegenctl use local` to switch.");
         }
     }
 

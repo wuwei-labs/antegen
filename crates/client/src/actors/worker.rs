@@ -15,7 +15,11 @@ use crate::load_balancer::{LoadBalancer, ProcessDecision};
 use crate::resources::SharedResources;
 use antegen_thread_program::state::Thread;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
-use solana_sdk::{clock::Clock, message::Message, pubkey::Pubkey, transaction::Transaction};
+use solana_compute_budget_interface::ComputeBudgetInstruction;
+use solana_sdk::{
+    clock::Clock, instruction::Instruction, message::Message, pubkey::Pubkey,
+    signature::Signature, transaction::Transaction,
+};
 use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -298,79 +302,212 @@ async fn execute_thread(
         }
     }
 
-    // Build transaction instructions with retry loop for trigger-not-ready errors
-    // Error 6004 (TriggerConditionFailed) is transient - retry until trigger time is reached
-    let trigger_retry_deadline = Instant::now() + Duration::from_secs(TRIGGER_RETRY_DEADLINE_SECS);
-    let (instructions, _priority_fee) = loop {
-        // Check cancellation
-        if cancelled.load(Ordering::Relaxed) {
-            return ExecutionResult::failed(
-                thread_pubkey,
-                "Cancelled during build".to_string(),
-                0,
-            );
-        }
+    // Build and submit loop.
+    // Each iteration builds one transaction batch, submits it, and confirms it.
+    // If the executor signals continuation (instructions didn't fit in one tx),
+    // we re-fetch the thread from on-chain and build the next batch.
+    let mut thread = thread;
+    let mut batch_num = 0u32;
+    let mut max_priority_fee: u64 = 0;
 
-        // Check deadline
-        if Instant::now() > trigger_retry_deadline {
-            return ExecutionResult::failed(
-                thread_pubkey,
-                "Trigger window expired while waiting for trigger time".to_string(),
-                0,
-            );
-        }
+    loop {
+        batch_num += 1;
 
-        match executor
-            .build_execute_transaction(&thread_pubkey, &thread)
-            .await
-        {
-            Ok(result) => break result,
-            Err(e) => {
-                let error_str = e.to_string();
-                if is_trigger_not_ready_error(&error_str) {
-                    // 6004 = trigger not ready yet, retry after short delay
-                    log::debug!(
-                        "Thread {} trigger not ready (6004), retrying in 500ms",
-                        thread_pubkey
-                    );
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    continue;
-                } else if is_thread_paused_error(&error_str) {
-                    // 6006 = thread is paused, don't retry — will be rescheduled when unpaused
-                    log::debug!(
-                        "Thread {} is paused (6006), skipping execution",
-                        thread_pubkey
-                    );
+        // Build batch — first iteration uses trigger retry, subsequent don't need it
+        let (ixs, priority_fee, needs_continuation) = if batch_num == 1 {
+            let trigger_retry_deadline =
+                Instant::now() + Duration::from_secs(TRIGGER_RETRY_DEADLINE_SECS);
+            loop {
+                if cancelled.load(Ordering::Relaxed) {
                     return ExecutionResult::failed(
                         thread_pubkey,
-                        "Thread is paused".to_string(),
+                        "Cancelled during build".to_string(),
                         0,
                     );
-                } else {
-                    // Other error, fail immediately
-                    log::error!(
-                        "Failed to build transaction for thread {}: {:?}",
+                }
+                if Instant::now() > trigger_retry_deadline {
+                    return ExecutionResult::failed(
                         thread_pubkey,
+                        "Trigger window expired while waiting for trigger time".to_string(),
+                        0,
+                    );
+                }
+                match executor
+                    .build_execute_transaction(&thread_pubkey, &thread)
+                    .await
+                {
+                    Ok(result) => break result,
+                    Err(e) => {
+                        let error_str = e.to_string();
+                        if is_trigger_not_ready_error(&error_str) {
+                            log::debug!(
+                                "Thread {} trigger not ready (6004), retrying in 500ms",
+                                thread_pubkey
+                            );
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            continue;
+                        } else if is_thread_paused_error(&error_str) {
+                            log::debug!(
+                                "Thread {} is paused (6006), skipping execution",
+                                thread_pubkey
+                            );
+                            return ExecutionResult::failed(
+                                thread_pubkey,
+                                "Thread is paused".to_string(),
+                                0,
+                            );
+                        } else {
+                            log::error!(
+                                "Failed to build transaction for thread {}: {:?}",
+                                thread_pubkey,
+                                e
+                            );
+                            return ExecutionResult::failed(
+                                thread_pubkey,
+                                format!("Transaction build failed: {}", e),
+                                0,
+                            );
+                        }
+                    }
+                }
+            }
+        } else {
+            // Continuation batch — build against fresh on-chain state
+            match executor
+                .build_execute_transaction(&thread_pubkey, &thread)
+                .await
+            {
+                Ok(result) => result,
+                Err(e) => {
+                    log::error!(
+                        "{}: continuation batch {} build failed: {:?}",
+                        thread_pubkey,
+                        batch_num,
                         e
                     );
                     return ExecutionResult::failed(
                         thread_pubkey,
-                        format!("Transaction build failed: {}", e),
+                        format!("Continuation batch {} build failed: {}", batch_num, e),
                         0,
                     );
                 }
             }
+        };
+
+        max_priority_fee = max_priority_fee.max(priority_fee);
+
+        log::info!(
+            "{}: batch {} built ({} ix, continuation={})",
+            thread_pubkey,
+            batch_num,
+            ixs.len(),
+            needs_continuation
+        );
+
+        // Simulate for accurate CU estimate
+        let cu_estimate = match executor
+            .estimate_compute_units(&ixs, &thread_pubkey)
+            .await
+        {
+            Ok(units) => units,
+            Err(e) => {
+                log::error!(
+                    "{}: batch {} CU estimation failed: {:?}",
+                    thread_pubkey,
+                    batch_num,
+                    e
+                );
+                return ExecutionResult::failed(
+                    thread_pubkey,
+                    format!("Batch {} CU estimation failed: {}", batch_num, e),
+                    0,
+                );
+            }
+        };
+
+        // Prepend compute budget instructions
+        let compute_units = ((cu_estimate as f64) * 1.1) as u32;
+        let mut final_ixs = vec![
+            ComputeBudgetInstruction::set_compute_unit_limit(compute_units),
+        ];
+        if max_priority_fee > 0 {
+            final_ixs.push(ComputeBudgetInstruction::set_compute_unit_price(max_priority_fee));
         }
-    };
+        final_ixs.extend_from_slice(&ixs);
 
-    log::info!(
-        "{}: built {} instruction(s)",
-        thread_pubkey,
-        instructions.len(),
-    );
+        // Submit and confirm
+        match submit_and_confirm_batch(
+            &final_ixs,
+            executor,
+            resources,
+            cancelled,
+            &thread_pubkey,
+            load_balancer,
+        )
+        .await
+        {
+            Ok(sig) => {
+                log::info!(
+                    "{}: batch {} confirmed ({})",
+                    thread_pubkey,
+                    batch_num,
+                    sig
+                );
+            }
+            Err((error, attempts)) => {
+                return ExecutionResult::failed(
+                    thread_pubkey,
+                    format!("Batch {} failed: {}", batch_num, error),
+                    attempts,
+                );
+            }
+        }
 
-    // Retry loop for submission
-    let mut attempt = 0;
+        if !needs_continuation {
+            break;
+        }
+
+        // Re-fetch thread from on-chain for the next batch
+        // (previous batch changed the thread's fiber_cursor, exec_index, etc.)
+        log::info!(
+            "{}: re-fetching thread for continuation batch",
+            thread_pubkey
+        );
+        thread = match executor.fetch_thread(&thread_pubkey).await {
+            Ok(t) => t,
+            Err(e) => {
+                log::error!(
+                    "{}: failed to re-fetch thread for continuation: {:?}",
+                    thread_pubkey,
+                    e
+                );
+                return ExecutionResult::failed(
+                    thread_pubkey,
+                    format!("Failed to re-fetch thread for continuation: {}", e),
+                    0,
+                );
+            }
+        };
+    }
+
+    ExecutionResult::success(thread_pubkey)
+}
+
+/// Submit a batch of instructions as a transaction, with retries and confirmation.
+///
+/// Handles: get blockhash, build+sign transaction, TPU send + confirmation polling,
+/// RPC fallback, retry up to MAX_ATTEMPTS.
+///
+/// Returns Ok(signature) on success, Err((error_msg, attempts)) on failure.
+async fn submit_and_confirm_batch(
+    instructions: &[Instruction],
+    executor: &ExecutorLogic,
+    resources: &SharedResources,
+    cancelled: &AtomicBool,
+    thread_pubkey: &Pubkey,
+    load_balancer: &LoadBalancer,
+) -> Result<Signature, (String, u32)> {
+    let mut attempt = 0u32;
     let mut last_error = String::new();
 
     while attempt < MAX_ATTEMPTS {
@@ -382,11 +519,7 @@ async fn execute_thread(
                 "Worker cancelled during execution for thread: {}",
                 thread_pubkey
             );
-            return ExecutionResult::failed(
-                thread_pubkey,
-                "Cancelled during execution".to_string(),
-                attempt,
-            );
+            return Err(("Cancelled during execution".to_string(), attempt));
         }
 
         log::debug!(
@@ -416,7 +549,7 @@ async fn execute_thread(
         };
 
         // Build and sign transaction
-        let message = Message::new(&instructions, Some(&executor.pubkey()));
+        let message = Message::new(instructions, Some(&executor.pubkey()));
         let tx = Transaction::new(&[executor.keypair().as_ref()], message, blockhash);
 
         // Compute signature before sending (needed for confirmation polling)
@@ -477,11 +610,7 @@ async fn execute_thread(
                                 "{}: 6006 on-chain (thread paused), skipping",
                                 thread_pubkey
                             );
-                            return ExecutionResult::failed(
-                                thread_pubkey,
-                                "Thread is paused".to_string(),
-                                attempt,
-                            );
+                            return Err(("Thread is paused".to_string(), attempt));
                         }
 
                         // Other on-chain error - don't retry, return failure
@@ -491,11 +620,10 @@ async fn execute_thread(
                             .record_execution_result(&thread_pubkey, false, chrono::Utc::now().timestamp())
                             .await;
 
-                        return ExecutionResult::failed(
-                            thread_pubkey,
+                        return Err((
                             format!("Transaction failed on-chain: {:?}", e),
                             attempt,
-                        );
+                        ));
                     }
                     Ok(None) => {
                         // Not yet confirmed, continue polling
@@ -519,7 +647,7 @@ async fn execute_thread(
                 .record_execution_result(&thread_pubkey, true, chrono::Utc::now().timestamp())
                 .await;
 
-            return ExecutionResult::success(thread_pubkey);
+            return Ok(signature);
         }
 
         // Fall back to RPC if TPU not available or TPU loop timed out
@@ -560,7 +688,7 @@ async fn execute_thread(
                     .record_execution_result(&thread_pubkey, true, chrono::Utc::now().timestamp())
                     .await;
 
-                return ExecutionResult::success(thread_pubkey);
+                return Ok(signature);
             }
             Err(e) => {
                 last_error = format!("Confirmation failed: {}", e);
@@ -576,11 +704,7 @@ async fn execute_thread(
                         "{}: 6006 on RPC confirmation (thread paused), stopping",
                         thread_pubkey
                     );
-                    return ExecutionResult::failed(
-                        thread_pubkey,
-                        "Thread is paused".to_string(),
-                        attempt,
-                    );
+                    return Err(("Thread is paused".to_string(), attempt));
                 } else {
                     log::warn!(
                         "Transaction confirmation failed for thread {} (attempt {}): {:?}",
@@ -614,7 +738,7 @@ async fn execute_thread(
         last_error
     );
 
-    ExecutionResult::failed(thread_pubkey, last_error, attempt)
+    Err((last_error, attempt))
 }
 
 /// Wait for transaction confirmation with timeout

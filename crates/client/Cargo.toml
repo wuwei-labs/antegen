@@ -1,6 +1,6 @@
 [package]
 name = "antegen-client"
-version = "5.0.5"
+version = "5.1.1"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,7 +12,6 @@ keywords = ["solana", "automation", "executor"]
 readme = "../../README.md"
 
 [dependencies]
-antegen-fiber-program = { workspace = true }
 antegen-thread-program = { workspace = true }
 # Internal crates
 solana-sdk = { workspace = true }

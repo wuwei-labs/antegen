@@ -11,8 +11,8 @@
 use crate::resources::SharedResources;
 use crate::rpc::response::decode_account_data;
 use anchor_lang::{AccountDeserialize, AnchorDeserialize, InstructionData, ToAccountMetas};
-use antegen_fiber_program::state::{CompiledInstructionV0, FiberState};
-use antegen_fiber_program::PAYER_PUBKEY;
+use antegen_thread_program::fiber::{CompiledInstructionV0, FiberState};
+use antegen_thread_program::state::PAYER_PUBKEY;
 use antegen_thread_program::{
     accounts::ThreadExec,
     instruction::ExecThread,
@@ -33,6 +33,9 @@ use solana_sdk::{
 use anyhow::{anyhow, Result};
 use log::{debug, info, warn};
 use std::sync::Arc;
+
+/// Maximum serialized transaction size in bytes (Solana's PACKET_DATA_SIZE)
+const MAX_TRANSACTION_SIZE: usize = 1232;
 
 /// Executor logic for building thread execution transactions
 #[derive(Clone)]
@@ -73,50 +76,57 @@ impl ExecutorLogic {
         &self.keypair
     }
 
-    /// Build a transaction to execute a thread with automatic batching
+    /// Build a single transaction batch to execute a thread with automatic batching.
     ///
     /// Simulates to detect chaining signals and estimate CU consumption.
     /// Batching is determined by the Signal returned from the fiber:
     /// - Signal::Chain → batch another exec for next fiber in sequence
     /// - Signal::Close → batch a delete instruction
     ///
-    /// Returns (instructions, priority_fee)
+    /// If chained instructions would exceed Solana's max transaction size, only
+    /// the instructions that fit are returned and `needs_continuation` is set to
+    /// `true`. The caller should submit this batch, confirm it, re-fetch the
+    /// thread, and call this method again to build the next batch.
+    ///
+    /// Returns (instructions, priority_fee, needs_continuation)
     pub async fn build_execute_transaction(
         &self,
         thread_pubkey: &Pubkey,
         thread: &Thread,
-    ) -> Result<(Vec<Instruction>, u64)> {
+    ) -> Result<(Vec<Instruction>, u64, bool)> {
         // Log thread state for debugging
         self.log_thread_debug(thread, thread_pubkey);
 
         const MAX_BATCHED_EXECS: usize = 5;
         let mut priority_fee: u64 = 0;
         let mut ixs: Vec<Instruction> = Vec::new();
+        let mut needs_continuation = false;
 
         // Track fiber_cursor through the chaining loop
         // Signal::Chain tells us to execute next fiber in sequence
         let mut current_fiber_cursor = thread.fiber_cursor;
 
-        // Build and add first instruction
+        // Build first instruction
         debug!(
             "Building first thread_exec instruction for fiber_cursor={}",
             current_fiber_cursor
         );
-        self.build_thread_exec(
-            &mut priority_fee,
-            &mut ixs,
-            thread_pubkey,
-            thread,
-            current_fiber_cursor,
-        )
-        .await?;
+        let first_ix = self
+            .build_thread_exec_ix(&mut priority_fee, thread_pubkey, thread, current_fiber_cursor)
+            .await?;
         debug!(
             "First instruction built successfully, priority_fee: {}",
             priority_fee
         );
 
-        let mut last_units = 0u64;
-        let mut simulated_ix_count = 0usize;
+        // Verify single instruction fits in a transaction
+        if !self.would_fit_in_transaction(&[first_ix.clone()]) {
+            return Err(anyhow!(
+                "Single instruction exceeds max transaction size for thread {}",
+                thread_pubkey
+            ));
+        }
+        ixs.push(first_ix);
 
         loop {
             if ixs.len() >= MAX_BATCHED_EXECS {
@@ -127,19 +137,18 @@ impl ExecutorLogic {
                 break;
             }
 
-            // Simulate to check for batching signals
+            // Simulate current batch to check for batching signals
             debug!(
                 "Simulating transaction with {} instruction(s) to check for batching...",
                 ixs.len()
             );
-            let (signal, units) = self.simulate_transaction(&ixs, thread_pubkey).await?;
-            last_units = units;
-            simulated_ix_count = ixs.len();
+            let (signal, _units) = self
+                .simulate_transaction(&ixs, thread_pubkey)
+                .await?;
             info!(
                 "{}: fiber {} simulation signal={:?}",
                 thread_pubkey, current_fiber_cursor, signal
             );
-            debug!("  units_consumed={}", units);
 
             // Handle signal - only Chain and Close trigger batching
             match signal {
@@ -151,71 +160,122 @@ impl ExecutorLogic {
                         "Batching: Signal::Chain, adding thread_exec for fiber {}",
                         current_fiber_cursor
                     );
-                    self.build_thread_exec(
-                        &mut priority_fee,
-                        &mut ixs,
-                        thread_pubkey,
-                        thread,
-                        current_fiber_cursor,
-                    )
-                    .await?;
+                    let next_ix = self
+                        .build_thread_exec_ix(
+                            &mut priority_fee,
+                            thread_pubkey,
+                            thread,
+                            current_fiber_cursor,
+                        )
+                        .await?;
+
+                    // Check if adding this instruction would exceed transaction size
+                    let mut trial = ixs.clone();
+                    trial.push(next_ix.clone());
+                    if self.would_fit_in_transaction(&trial) {
+                        ixs.push(next_ix);
+                    } else {
+                        // Doesn't fit — return what we have and signal continuation.
+                        // The worker will submit this batch, confirm it, re-fetch
+                        // the thread, and call us again for the next batch.
+                        info!(
+                            "{}: transaction full ({} ix), needs continuation",
+                            thread_pubkey,
+                            ixs.len()
+                        );
+                        needs_continuation = true;
+                        break;
+                    }
                 }
                 Signal::Close => {
                     // Build thread_exec that executes the pre-compiled close_fiber
-                    // The close_fiber CPIs to thread_delete with thread signing as authority
                     info!("Signal::Close detected - building thread_exec with close_fiber");
                     let close_ix = self
                         .build_close_thread_exec(thread_pubkey, thread)
                         .await?;
-                    ixs.push(close_ix);
+
+                    // Check if close instruction fits in current batch
+                    let mut trial = ixs.clone();
+                    trial.push(close_ix.clone());
+                    if self.would_fit_in_transaction(&trial) {
+                        ixs.push(close_ix);
+                    } else {
+                        info!(
+                            "{}: transaction full ({} ix), close deferred to continuation",
+                            thread_pubkey,
+                            ixs.len()
+                        );
+                        needs_continuation = true;
+                    }
                     break;
                 }
                 _ => {
                     // No batching needed for None, Repeat, Next, Update
                     info!(
                         "{}: signal={:?}, no chaining needed ({} exec instruction(s))",
-                        thread_pubkey, signal, ixs.len()
+                        thread_pubkey,
+                        signal,
+                        ixs.len()
                     );
                     break;
                 }
             }
         }
 
-        // Only re-simulate if chaining added more instructions since last sim
-        let units_consumed = if ixs.len() > simulated_ix_count {
-            debug!("Final simulation to get accurate compute units...");
-            let (_, units) = self.simulate_transaction(&ixs, thread_pubkey).await?;
-            debug!("Final simulation: units_consumed={}", units);
-            units
-        } else {
-            debug!("Skipping redundant final simulation (no new instructions since last sim)");
-            last_units
-        };
-
-        // Add compute budget instruction at the beginning with measured CU
-        // Add 10% buffer for safety
-        let compute_units = ((units_consumed as f64) * 1.1) as u32;
-        ixs.insert(
-            0,
-            ComputeBudgetInstruction::set_compute_unit_limit(compute_units),
-        );
-
-        // Add priority fee if specified
-        if priority_fee > 0 {
-            ixs.insert(
-                1,
-                ComputeBudgetInstruction::set_compute_unit_price(priority_fee),
-            );
-        }
-
         info!(
-            "{}: built {} instruction(s), priority_fee={}",
+            "{}: built {} instruction(s), priority_fee={}, continuation={}",
             thread_pubkey,
             ixs.len(),
-            priority_fee
+            priority_fee,
+            needs_continuation
         );
 
-        Ok((ixs, priority_fee))
+        Ok((ixs, priority_fee, needs_continuation))
+    }
+
+    /// Fetch thread account from RPC and deserialize.
+    pub async fn fetch_thread(&self, thread_pubkey: &Pubkey) -> Result<Thread> {
+        // Bypass cache — we need fresh on-chain state after a confirmed transaction
+        let ui_account = self
+            .resources
+            .rpc_client
+            .get_account(thread_pubkey)
+            .await
+            .map_err(|e| anyhow!("Failed to fetch thread {}: {}", thread_pubkey, e))?
+            .ok_or_else(|| anyhow!("Thread {} not found (may have been closed)", thread_pubkey))?;
+
+        let data = crate::rpc::response::decode_account_data(&ui_account.data.0, &ui_account.data.1)
+            .map_err(|e| anyhow!("Failed to decode thread account data: {}", e))?;
+
+        Thread::try_deserialize(&mut data.as_slice())
+            .map_err(|e| anyhow!("Failed to deserialize thread {}: {}", thread_pubkey, e))
+    }
+
+    /// Estimate serialized transaction size for a set of instructions.
+    /// Uses Message::new for accurate account deduplication + bincode size.
+    fn estimate_transaction_size(&self, instructions: &[Instruction]) -> usize {
+        let message = Message::new(instructions, Some(&self.keypair.pubkey()));
+        bincode::serialized_size(&message).unwrap_or(0) as usize + 65 // +64 sig +1 compact-u16
+    }
+
+    /// Check if instructions (plus compute budget overhead) would fit in one transaction.
+    fn would_fit_in_transaction(&self, instructions: &[Instruction]) -> bool {
+        let mut trial = vec![
+            ComputeBudgetInstruction::set_compute_unit_limit(1_400_000),
+            ComputeBudgetInstruction::set_compute_unit_price(1_000_000),
+        ];
+        trial.extend_from_slice(instructions);
+        self.estimate_transaction_size(&trial) <= MAX_TRANSACTION_SIZE
+    }
+
+    /// Estimate compute units for a set of instructions via simulation.
+    pub async fn estimate_compute_units(
+        &self,
+        instructions: &[Instruction],
+        thread_pubkey: &Pubkey,
+    ) -> Result<u64> {
+        let (_, units) = self.simulate_transaction(instructions, thread_pubkey).await?;
+        Ok(units)
     }
 
     /// Log thread state for debugging
@@ -244,19 +304,18 @@ impl ExecutorLogic {
         }
     }
 
-    /// Build thread_exec instruction for a specific fiber
+    /// Build thread_exec instruction for a specific fiber, returning the instruction.
     ///
     /// Fetches the external fiber account to get compiled instruction and priority fee.
-    async fn build_thread_exec(
+    async fn build_thread_exec_ix(
         &self,
         priority_fee: &mut u64,
-        ixs: &mut Vec<Instruction>,
         thread_pubkey: &Pubkey,
         thread: &Thread,
         fiber_cursor: u8,
-    ) -> Result<()> {
+    ) -> Result<Instruction> {
         debug!(
-            "build_thread_exec: fiber_cursor={}",
+            "build_thread_exec_ix: fiber_cursor={}",
             fiber_cursor
         );
 
@@ -288,9 +347,8 @@ impl ExecutorLogic {
             .await?;
 
         *priority_fee = (*priority_fee).max(fiber_state.priority_fee);
-        ixs.push(ix);
 
-        Ok(())
+        Ok(ix)
     }
 
     /// Build base ThreadExec accounts (shared by build_execute_instruction and build_close_thread_exec)
@@ -492,7 +550,7 @@ impl ExecutorLogic {
 
         // 4. Fiber program ID (needed by ThreadClose for CPI to close_fiber)
         accounts.push(AccountMeta {
-            pubkey: antegen_fiber_program::ID,
+            pubkey: antegen_thread_program::fiber::ID,
             is_signer: false,
             is_writable: false,
         });

@@ -10,6 +10,9 @@ pub mod utils;
 pub mod fiber {
     pub use antegen_fiber_program::cpi;
     pub use antegen_fiber_program::program::AntegenFiber;
+    pub use antegen_fiber_program::state::{
+        decompile_instruction, CompiledInstructionV0, FiberState,
+    };
     pub use antegen_fiber_program::ID;
 }
 
