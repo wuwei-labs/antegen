@@ -11,8 +11,9 @@
 use crate::resources::SharedResources;
 use crate::rpc::response::decode_account_data;
 use anchor_lang::{AccountDeserialize, AnchorDeserialize, InstructionData, ToAccountMetas};
-use antegen_thread_program::fiber::{CompiledInstructionV0, FiberState};
+use antegen_thread_program::fiber::{decompile_instruction, CompiledInstructionV0, FiberState};
 use antegen_thread_program::state::PAYER_PUBKEY;
+use std::collections::HashSet;
 use antegen_thread_program::{
     accounts::ThreadExec,
     instruction::ExecThread,
@@ -220,6 +221,27 @@ impl ExecutorLogic {
                     break;
                 }
             }
+        }
+
+        // Transaction-level account audit for batched instructions
+        if ixs.len() > 1 {
+            let mut all_pubkeys: HashSet<Pubkey> = HashSet::new();
+            for (i, ix) in ixs.iter().enumerate() {
+                let ix_pubkeys: HashSet<Pubkey> = ix.accounts.iter().map(|a| a.pubkey).collect();
+                info!(
+                    "{}: ix[{}] has {} accounts ({} unique)",
+                    thread_pubkey, i, ix.accounts.len(), ix_pubkeys.len()
+                );
+                all_pubkeys.extend(ix_pubkeys);
+            }
+            let message = Message::new(&ixs, Some(&self.keypair.pubkey()));
+            info!(
+                "{}: batched transaction: {} instructions, {} unique accounts in message, {} account_keys",
+                thread_pubkey,
+                ixs.len(),
+                all_pubkeys.len(),
+                message.account_keys.len()
+            );
         }
 
         info!(
@@ -453,11 +475,59 @@ impl ExecutorLogic {
         let compiled = CompiledInstructionV0::deserialize(
             &mut fiber.compiled_instruction.as_slice(),
         )?;
-        debug!(
-            "Using fiber: pubkey={}, compiled_accounts={}",
-            fiber_pubkey,
-            compiled.accounts.len()
-        );
+
+        // Diagnostic: decompile and verify all instruction accounts are in compiled.accounts
+        let remaining_pubkeys: HashSet<Pubkey> = compiled
+            .accounts
+            .iter()
+            .map(|pk| if pk.eq(&PAYER_PUBKEY) { self.keypair.pubkey() } else { *pk })
+            .collect();
+
+        match decompile_instruction(&compiled) {
+            Ok(decompiled) => {
+                info!(
+                    "fiber_{} account audit: compiled_table={} unique, decompiled_accounts={}, program_id={}",
+                    fiber_cursor,
+                    compiled.accounts.len(),
+                    decompiled.accounts.len(),
+                    decompiled.program_id
+                );
+
+                let program_id_resolved = if decompiled.program_id.eq(&PAYER_PUBKEY) {
+                    self.keypair.pubkey()
+                } else {
+                    decompiled.program_id
+                };
+                if !remaining_pubkeys.contains(&program_id_resolved) {
+                    warn!(
+                        "MISSING: program_id {} not in compiled.accounts table!",
+                        program_id_resolved
+                    );
+                }
+
+                for (i, acc) in decompiled.accounts.iter().enumerate() {
+                    let resolved = if acc.pubkey.eq(&PAYER_PUBKEY) {
+                        self.keypair.pubkey()
+                    } else {
+                        acc.pubkey
+                    };
+                    if !remaining_pubkeys.contains(&resolved) {
+                        warn!(
+                            "MISSING: account[{}] {} (signer={}, writable={}) not in compiled.accounts table!",
+                            i, resolved, acc.is_signer, acc.is_writable
+                        );
+                    }
+                    debug!(
+                        "  decompiled[{}]: {} signer={} writable={} in_table={}",
+                        i, resolved, acc.is_signer, acc.is_writable,
+                        remaining_pubkeys.contains(&resolved)
+                    );
+                }
+            }
+            Err(e) => {
+                warn!("Failed to decompile instruction for audit: {}", e);
+            }
+        }
 
         // Build base accounts
         let (mut accounts, _config) = self
@@ -474,9 +544,12 @@ impl ExecutorLogic {
         }
         .data();
 
-        debug!(
-            "Instruction built: program={}, total_accounts={}, data_len={}",
+        info!(
+            "fiber_{} instruction: program={}, base_accounts={}, remaining={}, total={}, data_len={}",
+            fiber_cursor,
             self.program_id,
+            accounts.len() - compiled.accounts.len(),
+            compiled.accounts.len(),
             accounts.len(),
             data.len()
         );
@@ -621,8 +694,11 @@ impl ExecutorLogic {
             .map_err(|e| anyhow!("Failed to get blockhash for simulation: {}", e))?;
         debug!("Got blockhash for simulation: {}", blockhash);
 
-        // 2. Build transaction
-        let message = Message::new(instructions, Some(&self.keypair.pubkey()));
+        // 2. Build transaction with generous CU limit for simulation headroom.
+        // The actual CU limit is set precisely later by the worker (cu_estimate * 1.1).
+        let mut sim_ixs = vec![ComputeBudgetInstruction::set_compute_unit_limit(1_400_000)];
+        sim_ixs.extend_from_slice(instructions);
+        let message = Message::new(&sim_ixs, Some(&self.keypair.pubkey()));
         let tx = Transaction::new(&[self.keypair.as_ref()], message, blockhash);
 
         // 3. Simulate via RPC pool (handles failover, returns result with accounts)
