@@ -214,7 +214,13 @@ impl StagingActor {
                         );
                     }
 
-                    if state.queued_threads.contains(&update.pubkey) {
+                    // Only cancel active worker when schedule changes (external mutation).
+                    // Exec count increase is normal progress from our own worker's
+                    // continuation batches — cancelling would cause an infinite
+                    // cancel-restart loop and drain the crank wallet.
+                    if state.queued_threads.contains(&update.pubkey)
+                        && thread.schedule != existing.schedule
+                    {
                         state.queued_threads.remove(&update.pubkey);
                         // Send cancel message to ProcessorFactory
                         if let Some(ref processor_ref) = state.processor_ref {
@@ -222,6 +228,11 @@ impl StagingActor {
                                 .send_message(ProcessorMessage::CancelThread(update.pubkey))
                             {
                                 warn!("Failed to send cancel for thread {}: {:?}", update.pubkey, e);
+                            } else {
+                                info!(
+                                    "Cancelled thread {} due to schedule change: {:?} -> {:?}",
+                                    update.pubkey, existing.schedule, thread.schedule
+                                );
                             }
                         }
                     }
