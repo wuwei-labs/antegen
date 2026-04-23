@@ -398,6 +398,13 @@ fn test_exec_thread_timestamp_ready() {
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
     assert_eq!(thread.exec_count, 1);
+    assert!(thread.paused, "Timestamp thread should auto-pause after firing");
+    match thread.schedule {
+        antegen_thread_program::state::Schedule::Timed { next, .. } => {
+            assert_eq!(next, i64::MAX, "schedule.next should be i64::MAX after timestamp fires");
+        }
+        _ => panic!("Expected Timed schedule"),
+    }
 }
 
 #[test]
@@ -705,6 +712,149 @@ fn test_exec_thread_signal_update_pause() {
 }
 
 #[test]
+fn test_exec_thread_signal_chain() {
+    let (mut svm, admin, _payer) = create_test_env();
+    let authority = Keypair::new();
+    let executor = Keypair::new();
+    let payer = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+    svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
+    svm.airdrop(&payer.pubkey(), DEFAULT_AIRDROP * 2).unwrap();
+
+    let (config_pubkey, _) = config_pda();
+
+    // Create thread with Interval trigger (so it stays alive)
+    let thread_id = ThreadId::Bytes(b"exec-chain".to_vec());
+    let (thread_pubkey, _) = thread_pda(&authority.pubkey(), b"exec-chain");
+    let ix = build_create_thread(
+        &authority.pubkey(),
+        &payer.pubkey(),
+        &thread_pubkey,
+        100_000_000, // extra for 2 fiber creations + rent
+        thread_id,
+        Trigger::Interval {
+            seconds: 10,
+            skippable: false,
+            jitter: 0,
+        },
+        None,
+        None,
+        None,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    svm.send_transaction(tx).expect("create_thread should succeed");
+
+    // Create fiber 0: returns Signal::Chain
+    let (fiber0_pubkey, _) = fiber_pda(&thread_pubkey, 0);
+    let chain_memo_ix = make_memo_instruction("chain-fiber", Some(Signal::Chain));
+    let serializable = make_serializable_instruction(&chain_memo_ix);
+    let ix = build_create_fiber(
+        &authority.pubkey(),
+        &thread_pubkey,
+        &fiber0_pubkey,
+        0,
+        serializable,
+        0,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    svm.send_transaction(tx).expect("create_fiber_0 should succeed");
+
+    // Create fiber 1: returns Signal::None (default memo)
+    let (fiber1_pubkey, _) = fiber_pda(&thread_pubkey, 1);
+    let none_memo_ix = make_memo_instruction("chained-fiber", None);
+    let serializable = make_serializable_instruction(&none_memo_ix);
+    let ix = build_create_fiber(
+        &authority.pubkey(),
+        &thread_pubkey,
+        &fiber1_pubkey,
+        1,
+        serializable,
+        0,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    svm.send_transaction(tx).expect("create_fiber_1 should succeed");
+
+    // Advance past interval
+    advance_clock(&mut svm, 15);
+
+    // Execute fiber 0 → should return Signal::Chain
+    let remaining = build_remaining_accounts(&executor.pubkey());
+    let ix = build_exec_thread(
+        &executor.pubkey(),
+        &thread_pubkey,
+        &fiber0_pubkey,
+        &config_pubkey,
+        &admin.pubkey(),
+        false,
+        0,
+        &remaining,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&executor.pubkey()),
+        &[&executor],
+        blockhash,
+    );
+    svm.send_transaction(tx).expect("exec fiber 0 should succeed");
+
+    let thread = deserialize_thread(&svm, &thread_pubkey);
+    assert_eq!(thread.exec_count, 1);
+    assert_eq!(
+        thread.fiber_signal,
+        Signal::Chain,
+        "fiber_signal should be Chain after fiber 0"
+    );
+
+    // Execute fiber 1 (chained) → should succeed without trigger validation
+    let remaining = build_remaining_accounts(&executor.pubkey());
+    let ix = build_exec_thread(
+        &executor.pubkey(),
+        &thread_pubkey,
+        &fiber1_pubkey,
+        &config_pubkey,
+        &admin.pubkey(),
+        false,
+        1, // fiber_cursor=1 for chained execution
+        &remaining,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&executor.pubkey()),
+        &[&executor],
+        blockhash,
+    );
+    svm.send_transaction(tx).expect("exec fiber 1 (chained) should succeed");
+
+    let thread = deserialize_thread(&svm, &thread_pubkey);
+    assert_eq!(thread.exec_count, 2, "Both fibers should have executed");
+    assert_eq!(
+        thread.fiber_signal,
+        Signal::None,
+        "fiber_signal should be None after chain completes"
+    );
+}
+
+#[test]
 fn test_exec_thread_signal_update_trigger() {
     let (mut svm, admin, payer) = create_test_env();
     let authority = Keypair::new();
@@ -765,4 +915,103 @@ fn test_exec_thread_signal_update_trigger() {
     assert_eq!(thread.exec_count, 1);
     assert!(!thread.paused, "Thread should not be paused");
     assert_eq!(thread.trigger, new_trigger, "Trigger should be updated to Timestamp");
+}
+
+/// Test that exec works when the CPI target program_id also appears as a
+/// regular account in the instruction (simulates Anchor's None-placeholder
+/// collision where Option<UncheckedAccount>::None emits program_id as account).
+#[test]
+fn test_exec_with_program_id_in_accounts() {
+    let (mut svm, admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    let executor = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+    svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let (config_pubkey, _) = config_pda();
+
+    // Build a memo instruction where PROGRAM_ID appears as both the CPI target
+    // AND as an extra readonly account (simulating Anchor's None placeholder).
+    let payer_pubkey = solana_sdk::pubkey!("AntegenPayer1111111111111111111111111111111");
+    let memo_ix = build_thread_memo(&payer_pubkey, "collision-test", None);
+
+    // Add PROGRAM_ID as an extra readonly non-signer account
+    let mut modified_accounts = memo_ix.accounts.clone();
+    modified_accounts.push(AccountMeta::new_readonly(PROGRAM_ID, false));
+
+    let collision_ix = solana_sdk::instruction::Instruction {
+        program_id: memo_ix.program_id, // = PROGRAM_ID
+        accounts: modified_accounts,
+        data: memo_ix.data.clone(),
+    };
+
+    let serializable = make_serializable_instruction(&collision_ix);
+
+    // Create thread + fiber with this collision instruction
+    let thread_id = ThreadId::Bytes(b"exec-collision".to_vec());
+    let (thread_pubkey, _) = thread_pda(&authority.pubkey(), b"exec-collision");
+    let ix = build_create_thread(
+        &authority.pubkey(),
+        &payer.pubkey(),
+        &thread_pubkey,
+        10_000_000,
+        thread_id,
+        Trigger::Immediate { jitter: 0 },
+        None,
+        None,
+        None,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    svm.send_transaction(tx).expect("create_thread should succeed");
+
+    let (fiber_pubkey, _) = fiber_pda(&thread_pubkey, 0);
+    let ix = build_create_fiber(
+        &authority.pubkey(),
+        &thread_pubkey,
+        &fiber_pubkey,
+        0,
+        serializable,
+        0,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    svm.send_transaction(tx).expect("create_fiber should succeed");
+
+    // Build remaining accounts: PROGRAM_ID (CPI target + collision account) + executor
+    let remaining = vec![
+        AccountMeta::new_readonly(PROGRAM_ID, false),
+        AccountMeta::new_readonly(executor.pubkey(), false),
+    ];
+    let ix = build_exec_thread(
+        &executor.pubkey(),
+        &thread_pubkey,
+        &fiber_pubkey,
+        &config_pubkey,
+        &admin.pubkey(),
+        false,
+        0,
+        &remaining,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&executor.pubkey()),
+        &[&executor],
+        blockhash,
+    );
+    svm.send_transaction(tx).expect("exec with program_id-as-account should succeed");
+
+    let thread = deserialize_thread(&svm, &thread_pubkey);
+    assert_eq!(thread.exec_count, 1);
 }

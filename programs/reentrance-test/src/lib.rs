@@ -18,17 +18,17 @@ pub mod reentrance_test {
             data: vec![0xAB, 0xCD], // arbitrary marker data
         };
 
-        fiber::cpi::update_fiber(
+        fiber::cpi::update(
             CpiContext::new(
                 ctx.accounts.fiber_program.key(),
-                fiber::cpi::accounts::FiberUpdate {
+                fiber::cpi::accounts::Update {
                     thread: ctx.accounts.thread.to_account_info(),
                     fiber: ctx.accounts.fiber.to_account_info(),
                     system_program: ctx.accounts.system_program.to_account_info(),
                 },
             ),
             fiber_index,
-            simple_ix,
+            Some(simple_ix),
             Some(42),
         )?;
 
@@ -42,9 +42,9 @@ pub mod reentrance_test {
     /// Called during thread_exec via invoke_signed.
     /// CPIs to fiber_program::close_fiber to prove reentrancy works.
     pub fn cpi_close_fiber(ctx: Context<CpiCloseFiber>) -> Result<()> {
-        fiber::cpi::close_fiber(CpiContext::new(
+        fiber::cpi::close(CpiContext::new(
             ctx.accounts.fiber_program.key(),
-            fiber::cpi::accounts::FiberClose {
+            fiber::cpi::accounts::Close {
                 thread: ctx.accounts.thread.to_account_info(),
                 fiber: ctx.accounts.fiber.to_account_info(),
             },
@@ -59,9 +59,9 @@ pub mod reentrance_test {
     /// Called during thread_exec via invoke_signed.
     /// CPIs to fiber_program::swap_fiber to prove reentrancy works.
     pub fn cpi_swap_fiber(ctx: Context<CpiSwapFiber>) -> Result<()> {
-        fiber::cpi::swap_fiber(CpiContext::new(
+        fiber::cpi::swap(CpiContext::new(
             ctx.accounts.fiber_program.key(),
-            fiber::cpi::accounts::FiberSwap {
+            fiber::cpi::accounts::Swap {
                 thread: ctx.accounts.thread.to_account_info(),
                 target: ctx.accounts.target.to_account_info(),
                 source: ctx.accounts.source.to_account_info(),

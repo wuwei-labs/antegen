@@ -239,7 +239,7 @@ pub fn build_update_fiber(
         .to_account_metas(None),
         data: antegen_thread_program::instruction::UpdateFiber {
             fiber_index,
-            instruction,
+            instruction: Some(instruction),
             priority_fee,
             track,
         }

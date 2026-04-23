@@ -62,10 +62,10 @@ pub fn fiber_create(
     }
 
     thread.sign(|seeds| {
-        antegen_fiber_program::cpi::create_fiber(
+        antegen_fiber_program::cpi::create(
             CpiContext::new_with_signer(
                 ctx.accounts.fiber_program.key(),
-                antegen_fiber_program::cpi::accounts::FiberCreate {
+                antegen_fiber_program::cpi::accounts::Create {
                     thread: thread.to_account_info(),
                     fiber: ctx.accounts.fiber.to_account_info(),
                     system_program: ctx.accounts.system_program.to_account_info(),

@@ -5,7 +5,7 @@ use anchor_lang::prelude::*;
 /// Copies source's instruction into target, closes source.
 /// Thread PDA is signer, receives source's rent back.
 #[derive(Accounts)]
-pub struct FiberSwap<'info> {
+pub struct Swap<'info> {
     /// Thread PDA - signer, receives source's rent back
     #[account(mut)]
     pub thread: Signer<'info>,
@@ -19,7 +19,7 @@ pub struct FiberSwap<'info> {
     pub source: Account<'info, FiberState>,
 }
 
-pub fn fiber_swap(ctx: Context<FiberSwap>) -> Result<()> {
+pub fn swap(ctx: Context<Swap>) -> Result<()> {
     let target = &mut ctx.accounts.target;
     let source = &ctx.accounts.source;
 

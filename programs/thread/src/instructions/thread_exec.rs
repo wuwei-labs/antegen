@@ -62,12 +62,18 @@ pub struct ThreadExec<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn thread_exec(
-    ctx: Context<ThreadExec>,
+pub fn thread_exec<'info>(
+    ctx: Context<'info, ThreadExec<'info>>,
     forgo_commission: bool,
     fiber_cursor: u8,
 ) -> Result<()> {
     // ── Setup ──
+    // Collect all named AccountInfos before taking mutable field borrows.
+    // Avoids Anchor's lifetime-invariance conflict when building CPI account lists.
+    // invoke_signed matches by pubkey, so duplicates with remaining_accounts are harmless.
+    let mut all_account_infos = ctx.accounts.to_account_infos();
+    all_account_infos.extend_from_slice(ctx.remaining_accounts);
+
     let clock: Clock = Clock::get()?;
     let thread: &mut Box<Account<Thread>> = &mut ctx.accounts.thread;
     let config: &Account<ThreadConfig> = &ctx.accounts.config;
@@ -96,7 +102,7 @@ pub fn thread_exec(
 
         msg!("Executing close_fiber to delete thread ({} fibers)", thread.fiber_ids.len());
 
-        thread.sign(|seeds| invoke_signed(&instruction, ctx.remaining_accounts, &[seeds]))?;
+        thread.sign(|seeds| invoke_signed(&instruction, &all_account_infos, &[seeds]))?;
 
         return Ok(());
     }
@@ -136,7 +142,24 @@ pub fn thread_exec(
 
     let instruction = fiber.get_instruction(&executor.key())?;
 
-    thread.sign(|seeds| invoke_signed(&instruction, ctx.remaining_accounts, &[seeds]))?;
+    msg!(
+        "invoke_signed: program={}, ix_accounts={}, remaining_accounts={}",
+        instruction.program_id,
+        instruction.accounts.len(),
+        ctx.remaining_accounts.len()
+    );
+
+    // Audit: check each instruction account is findable in remaining_accounts
+    for (i, acc_meta) in instruction.accounts.iter().enumerate() {
+        if !ctx.remaining_accounts.iter().any(|ai| ai.key.eq(&acc_meta.pubkey)) {
+            msg!("MISSING remaining_account[{}]: {}", i, acc_meta.pubkey);
+        }
+    }
+    if !ctx.remaining_accounts.iter().any(|ai| ai.key.eq(&instruction.program_id)) {
+        msg!("MISSING program_id in remaining_accounts: {}", instruction.program_id);
+    }
+
+    thread.sign(|seeds| invoke_signed(&instruction, &all_account_infos, &[seeds]))?;
 
     // Verify the CPI did not write data to the executor account
     require!(
@@ -191,6 +214,9 @@ pub fn thread_exec(
     }
 
     // ── Apply signal to thread state ──
+    // Capture original trigger before signal processing may change it
+    let fired_trigger = thread.trigger.clone();
+
     // Only persist Chain/Close — the executor needs these between transactions.
     // All other signals are consumed inline and fiber_signal resets to None.
     thread.fiber_signal = Signal::None;
@@ -208,6 +234,10 @@ pub fn thread_exec(
             if let Some(trigger) = trigger {
                 thread.trigger = trigger.clone();
             }
+            // Auto-unpause if trigger changed but paused wasn't explicitly set
+            if trigger.is_some() && paused.is_none() {
+                thread.paused = false;
+            }
             if let Some(index) = index {
                 thread.fiber_cursor = *index;
             } else {
@@ -223,8 +253,13 @@ pub fn thread_exec(
     }
 
     // Immediate triggers: auto-close after fiber completes (unless chaining)
-    if matches!(thread.trigger, Trigger::Immediate { .. }) && signal != Signal::Chain {
+    if matches!(fired_trigger, Trigger::Immediate { .. }) && signal != Signal::Chain {
         thread.fiber_signal = Signal::Close;
+    }
+
+    // Timestamp triggers: auto-pause after firing (unless chaining)
+    if matches!(fired_trigger, Trigger::Timestamp { .. }) && signal != Signal::Chain {
+        thread.paused = true;
     }
 
     // ── Finalize ──

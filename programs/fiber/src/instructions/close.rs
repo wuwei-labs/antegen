@@ -4,7 +4,7 @@ use anchor_lang::prelude::*;
 /// Accounts required by the `close_fiber` instruction.
 /// Thread PDA is signer, receives rent back.
 #[derive(Accounts)]
-pub struct FiberClose<'info> {
+pub struct Close<'info> {
     /// Thread PDA - signer, receives rent back
     #[account(mut)]
     pub thread: Signer<'info>,
@@ -14,6 +14,6 @@ pub struct FiberClose<'info> {
     pub fiber: Account<'info, FiberState>,
 }
 
-pub fn fiber_close(_ctx: Context<FiberClose>) -> Result<()> {
+pub fn close(_ctx: Context<Close>) -> Result<()> {
     Ok(())
 }

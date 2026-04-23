@@ -49,9 +49,9 @@ pub fn fiber_swap(ctx: Context<FiberSwap>, source_fiber_index: u8) -> Result<()>
 
     // CPI to Fiber Program's swap_fiber
     thread.sign(|seeds| {
-        antegen_fiber_program::cpi::swap_fiber(CpiContext::new_with_signer(
+        antegen_fiber_program::cpi::swap(CpiContext::new_with_signer(
             ctx.accounts.fiber_program.key(),
-            antegen_fiber_program::cpi::accounts::FiberSwap {
+            antegen_fiber_program::cpi::accounts::Swap {
                 thread: thread.to_account_info(),
                 target: ctx.accounts.target.to_account_info(),
                 source: ctx.accounts.source.to_account_info(),

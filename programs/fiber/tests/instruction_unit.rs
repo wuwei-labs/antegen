@@ -167,6 +167,44 @@ fn test_decompile_empty_instructions_vec() {
 }
 
 // ============================================================================
+// sentinel permission pollution tests
+// ============================================================================
+
+#[test]
+fn test_sentinel_does_not_promote_program_id() {
+    let program_id = Pubkey::new_unique();
+    let real_account = Pubkey::new_unique();
+
+    // Simulate Anchor optional None: program_id used as sentinel with mut flag
+    let ix = Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(real_account, false),    // real rw account
+            AccountMeta::new(program_id, true),       // sentinel: writable + signer
+        ],
+        data: vec![1],
+    };
+
+    let compiled = compile_instruction(ix).unwrap();
+
+    // program_id must stay ro non-signer (priority 3), not get promoted
+    assert_eq!(compiled.num_rw_signers, 0, "sentinel should not create rw_signer");
+    assert_eq!(compiled.num_ro_signers, 0, "sentinel should not create ro_signer");
+    assert_eq!(compiled.num_rw, 1, "only real_account should be rw");
+
+    // Accounts: [real_account (rw), program_id (ro)]
+    assert_eq!(compiled.accounts.len(), 2);
+    assert_eq!(compiled.accounts[0], real_account);
+    assert_eq!(compiled.accounts[1], program_id);
+
+    // Roundtrip: real_account keeps its permissions
+    let decompiled = decompile_instruction(&compiled).unwrap();
+    let real_meta = decompiled.accounts.iter().find(|a| a.pubkey == real_account).unwrap();
+    assert!(real_meta.is_writable);
+    assert!(!real_meta.is_signer);
+}
+
+// ============================================================================
 // get_instruction tests (PAYER_PUBKEY replacement)
 // ============================================================================
 

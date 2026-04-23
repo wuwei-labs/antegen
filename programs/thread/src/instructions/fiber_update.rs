@@ -38,16 +38,18 @@ pub struct FiberUpdate<'info> {
 pub fn fiber_update(
     ctx: Context<FiberUpdate>,
     fiber_index: u8,
-    instruction: SerializableInstruction,
+    instruction: Option<SerializableInstruction>,
     priority_fee: Option<u64>,
     track: bool,
 ) -> Result<()> {
     // Prevent thread_delete instructions in fibers
-    if instruction.program_id.eq(&crate::ID)
-        && instruction.data.len() >= 8
-        && instruction.data[..8].eq(crate::instruction::DeleteThread::DISCRIMINATOR)
-    {
-        return Err(AntegenThreadError::InvalidInstruction.into());
+    if let Some(ref ix) = instruction {
+        if ix.program_id.eq(&crate::ID)
+            && ix.data.len().ge(&8)
+            && ix.data[..8].eq(crate::instruction::DeleteThread::DISCRIMINATOR)
+        {
+            return Err(AntegenThreadError::InvalidInstruction.into());
+        }
     }
 
     let thread = &mut ctx.accounts.thread;
@@ -56,14 +58,14 @@ pub fn fiber_update(
     if track && !thread.fiber_ids.contains(&fiber_index) {
         thread.fiber_ids.push(fiber_index);
         thread.fiber_ids.sort();
-        if fiber_index >= thread.fiber_next_id {
+        if fiber_index.ge(&thread.fiber_next_id) {
             thread.fiber_next_id = fiber_index.saturating_add(1);
         }
     }
 
     // Pre-fund fiber account from thread PDA if not yet initialized
     let fiber_info = ctx.accounts.fiber.to_account_info();
-    if fiber_info.data_len() == 0 {
+    if fiber_info.data_len().eq(&0) {
         let space = 8 + antegen_fiber_program::state::FiberState::INIT_SPACE;
         let rent_lamports = Rent::get()?.minimum_balance(space);
         **thread.to_account_info().try_borrow_mut_lamports()? -= rent_lamports;
@@ -72,10 +74,10 @@ pub fn fiber_update(
 
     // CPI to Fiber Program's update_fiber
     thread.sign(|signer| {
-        antegen_fiber_program::cpi::update_fiber(
+        antegen_fiber_program::cpi::update(
             CpiContext::new_with_signer(
                 ctx.accounts.fiber_program.key(),
-                antegen_fiber_program::cpi::accounts::FiberUpdate {
+                antegen_fiber_program::cpi::accounts::Update {
                     thread: thread.to_account_info(),
                     fiber: ctx.accounts.fiber.to_account_info(),
                     system_program: ctx.accounts.system_program.to_account_info(),

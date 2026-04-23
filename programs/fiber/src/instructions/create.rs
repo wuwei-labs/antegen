@@ -10,7 +10,7 @@ use anchor_lang::solana_program::system_instruction;
 /// Thread PDA is the signer (authority). Fiber must be pre-funded with rent lamports.
 #[derive(Accounts)]
 #[instruction(fiber_index: u8)]
-pub struct FiberCreate<'info> {
+pub struct Create<'info> {
     /// Thread PDA - signer (via invoke_signed from Thread Program)
     pub thread: Signer<'info>,
 
@@ -21,8 +21,8 @@ pub struct FiberCreate<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn fiber_create(
-    ctx: Context<FiberCreate>,
+pub fn create(
+    ctx: Context<Create>,
     fiber_index: u8,
     instruction: Instruction,
     priority_fee: u64,

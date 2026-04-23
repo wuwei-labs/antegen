@@ -18,36 +18,37 @@ pub mod antegen_fiber {
 
     /// Creates a fiber (instruction account) for a thread.
     /// Thread PDA must be signer and payer.
-    pub fn create_fiber(
-        ctx: Context<FiberCreate>,
+    pub fn create(
+        ctx: Context<Create>,
         fiber_index: u8,
         instruction: SerializableInstruction,
         priority_fee: u64,
     ) -> Result<()> {
         let instruction: Instruction = instruction.into();
-        instructions::fiber_create::fiber_create(ctx, fiber_index, instruction, priority_fee)
+        instructions::create::create(ctx, fiber_index, instruction, priority_fee)
     }
 
     /// Updates a fiber's instruction content (or initializes if it doesn't exist).
     /// Thread PDA must be signer and payer. Resets execution stats.
-    pub fn update_fiber(
-        ctx: Context<FiberUpdate>,
+    /// Pass `None` to wipe the compiled instruction (idle fiber).
+    pub fn update(
+        ctx: Context<Update>,
         fiber_index: u8,
-        instruction: SerializableInstruction,
+        instruction: Option<SerializableInstruction>,
         priority_fee: Option<u64>,
     ) -> Result<()> {
-        let instruction: Instruction = instruction.into();
-        instructions::fiber_update::fiber_update(ctx, fiber_index, instruction, priority_fee)
+        let instruction = instruction.map(|i| i.into());
+        instructions::update::update(ctx, fiber_index, instruction, priority_fee)
     }
 
     /// Closes a fiber account, returns rent to thread PDA.
-    pub fn close_fiber(ctx: Context<FiberClose>) -> Result<()> {
-        instructions::fiber_close::fiber_close(ctx)
+    pub fn close(ctx: Context<Close>) -> Result<()> {
+        instructions::close::close(ctx)
     }
 
     /// Copies source fiber's instruction into target, closes source.
     /// Target keeps its PDA/index, source is deleted.
-    pub fn swap_fiber(ctx: Context<FiberSwap>) -> Result<()> {
-        instructions::fiber_swap::fiber_swap(ctx)
+    pub fn swap(ctx: Context<Swap>) -> Result<()> {
+        instructions::swap::swap(ctx)
     }
 }

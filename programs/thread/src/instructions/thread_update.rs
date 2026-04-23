@@ -40,7 +40,7 @@ pub fn thread_update(ctx: Context<ThreadUpdate>, params: ThreadUpdateParams) -> 
     }
 
     // Update the trigger if provided
-    if let Some(trigger) = params.trigger {
+    if let Some(ref trigger) = params.trigger {
         let clock = Clock::get()?;
         let current_timestamp = clock.unix_timestamp;
         let thread_pubkey = thread.key();
@@ -90,6 +90,12 @@ pub fn thread_update(ctx: Context<ThreadUpdate>, params: ThreadUpdateParams) -> 
                 next: *unix_ts,
             },
         };
+    }
+
+    // If trigger was updated but paused was NOT explicitly set, auto-unpause.
+    // Changing the trigger implies the user wants the thread running.
+    if params.trigger.is_some() && params.paused.is_none() {
+        thread.paused = false;
     }
 
     Ok(())

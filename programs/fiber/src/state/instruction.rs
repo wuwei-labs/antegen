@@ -97,8 +97,13 @@ pub fn compile_instruction(
                 is_signer: false,
                 is_writable: false,
             });
-        entry.is_signer |= acc.is_signer;
-        entry.is_writable |= acc.is_writable;
+        // Don't merge permissions from sentinel accounts (Anchor uses program_id
+        // as pubkey for None optional accounts). Merging would pollute the
+        // program_id entry's permissions and misclassify its sort bucket.
+        if acc.pubkey != instruction.program_id {
+            entry.is_signer |= acc.is_signer;
+            entry.is_writable |= acc.is_writable;
+        }
     }
 
     // Sort accounts by priority

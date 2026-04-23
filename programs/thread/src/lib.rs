@@ -116,10 +116,11 @@ pub mod antegen_thread {
     /// Updates a fiber's instruction via CPI to Fiber Program.
     /// Initializes the fiber if it doesn't exist (thread PDA pays rent).
     /// If `track` is true, adds the fiber_index to thread.fiber_ids.
+    /// Pass `None` to wipe the compiled instruction (idle fiber).
     pub fn update_fiber(
         ctx: Context<FiberUpdate>,
         fiber_index: u8,
-        instruction: SerializableInstruction,
+        instruction: Option<SerializableInstruction>,
         priority_fee: Option<u64>,
         track: bool,
     ) -> Result<()> {
@@ -157,8 +158,8 @@ pub mod antegen_thread {
 
     /// Executes a thread fiber with trigger validation and fee distribution.
     /// Respects builder claim priority windows from registry configuration.
-    pub fn exec_thread(
-        ctx: Context<ThreadExec>,
+    pub fn exec_thread<'info>(
+        ctx: Context<'info, ThreadExec<'info>>,
         forgo_commission: bool,
         fiber_cursor: u8,
     ) -> Result<()> {

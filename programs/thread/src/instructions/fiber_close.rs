@@ -50,9 +50,9 @@ pub fn fiber_close(ctx: Context<FiberClose>, fiber_index: u8) -> Result<()> {
     }
 
     thread.sign(|seeds| {
-        antegen_fiber_program::cpi::close_fiber(CpiContext::new_with_signer(
+        antegen_fiber_program::cpi::close(CpiContext::new_with_signer(
             ctx.accounts.fiber_program.key(),
-            antegen_fiber_program::cpi::accounts::FiberClose {
+            antegen_fiber_program::cpi::accounts::Close {
                 thread: thread.to_account_info(),
                 fiber: ctx.accounts.fiber.to_account_info(),
             },

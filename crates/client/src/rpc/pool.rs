@@ -345,8 +345,13 @@ impl RpcPool {
 
         let response: RpcResponse<SafeSimulationResult> = self.execute_with_failover(&body, true).await?;
 
-        // Check for simulation error
+        // Check for simulation error — surface program logs before returning
         if let Some(err) = &response.result.value.err {
+            if let Some(logs) = &response.result.value.logs {
+                for log in logs {
+                    log::warn!("  SIM LOG: {}", log);
+                }
+            }
             return Err(anyhow!("Simulation error: {:?}", err));
         }
 

@@ -263,3 +263,47 @@ fn test_thread_update_both_params() {
         _ => panic!("Expected Interval trigger"),
     }
 }
+
+#[test]
+fn test_thread_update_trigger_auto_unpauses() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let thread_pubkey =
+        create_thread_for_update(&mut svm, &authority, &payer, "tu-auto-unpause", Trigger::Immediate { jitter: 0 });
+
+    // First, pause the thread
+    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams {
+        paused: Some(true),
+        ..Default::default()
+    }).unwrap();
+    let thread = deserialize_thread(&svm, &thread_pubkey);
+    assert!(thread.paused, "Thread should be paused");
+
+    // Update trigger without explicit paused → should auto-unpause
+    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams {
+        trigger: Some(Trigger::Timestamp { unix_ts: 1900000000, jitter: 0 }),
+        ..Default::default()
+    }).unwrap();
+    let thread = deserialize_thread(&svm, &thread_pubkey);
+    assert!(!thread.paused, "Thread should auto-unpause when trigger is updated");
+}
+
+#[test]
+fn test_thread_update_trigger_with_explicit_pause_stays_paused() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let thread_pubkey =
+        create_thread_for_update(&mut svm, &authority, &payer, "tu-stay-paused", Trigger::Immediate { jitter: 0 });
+
+    // Update trigger AND explicitly set paused: true → should stay paused
+    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams {
+        paused: Some(true),
+        trigger: Some(Trigger::Timestamp { unix_ts: 1900000000, jitter: 0 }),
+    }).unwrap();
+    let thread = deserialize_thread(&svm, &thread_pubkey);
+    assert!(thread.paused, "Thread should stay paused when paused is explicitly set");
+}

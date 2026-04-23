@@ -306,15 +306,26 @@ async fn execute_thread(
     // Each iteration builds one transaction batch, submits it, and confirms it.
     // If the executor signals continuation (instructions didn't fit in one tx),
     // we re-fetch the thread from on-chain and build the next batch.
+    const MAX_CONTINUATION_BATCHES: u32 = 20;
     let mut thread = thread;
     let mut batch_num = 0u32;
     let mut max_priority_fee: u64 = 0;
+    let mut pending_fiber_cursor: Option<u8> = None;
 
     loop {
         batch_num += 1;
 
+        if batch_num > MAX_CONTINUATION_BATCHES {
+            log::warn!(
+                "{}: hit max continuation batches ({}), stopping",
+                thread_pubkey,
+                MAX_CONTINUATION_BATCHES
+            );
+            break;
+        }
+
         // Build batch — first iteration uses trigger retry, subsequent don't need it
-        let (ixs, priority_fee, needs_continuation) = if batch_num == 1 {
+        let (ixs, priority_fee, needs_continuation, next_cursor) = if batch_num == 1 {
             let trigger_retry_deadline =
                 Instant::now() + Duration::from_secs(TRIGGER_RETRY_DEADLINE_SECS);
             loop {
@@ -333,7 +344,7 @@ async fn execute_thread(
                     );
                 }
                 match executor
-                    .build_execute_transaction(&thread_pubkey, &thread)
+                    .build_execute_transaction(&thread_pubkey, &thread, pending_fiber_cursor)
                     .await
                 {
                     Ok(result) => break result,
@@ -374,7 +385,7 @@ async fn execute_thread(
         } else {
             // Continuation batch — build against fresh on-chain state
             match executor
-                .build_execute_transaction(&thread_pubkey, &thread)
+                .build_execute_transaction(&thread_pubkey, &thread, pending_fiber_cursor)
                 .await
             {
                 Ok(result) => result,
@@ -395,6 +406,17 @@ async fn execute_thread(
         };
 
         max_priority_fee = max_priority_fee.max(priority_fee);
+        pending_fiber_cursor = next_cursor;
+
+        // Empty fiber — nothing to submit
+        if ixs.is_empty() {
+            log::info!(
+                "{}: batch {} has no instructions (empty fiber), skipping",
+                thread_pubkey,
+                batch_num
+            );
+            return ExecutionResult::skipped(thread_pubkey);
+        }
 
         log::info!(
             "{}: batch {} built ({} ix, continuation={})",

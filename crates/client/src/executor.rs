@@ -90,11 +90,18 @@ impl ExecutorLogic {
     /// thread, and call this method again to build the next batch.
     ///
     /// Returns (instructions, priority_fee, needs_continuation)
+    /// Build a single transaction batch to execute a thread.
+    ///
+    /// Returns (instructions, priority_fee, needs_continuation, next_fiber_cursor).
+    /// When `needs_continuation` is true, `next_fiber_cursor` holds the cursor
+    /// that the next batch should start from (needed because on-chain Chain
+    /// signal doesn't advance `fiber_cursor`).
     pub async fn build_execute_transaction(
         &self,
         thread_pubkey: &Pubkey,
         thread: &Thread,
-    ) -> Result<(Vec<Instruction>, u64, bool)> {
+        override_fiber_cursor: Option<u8>,
+    ) -> Result<(Vec<Instruction>, u64, bool, Option<u8>)> {
         // Log thread state for debugging
         self.log_thread_debug(thread, thread_pubkey);
 
@@ -102,10 +109,11 @@ impl ExecutorLogic {
         let mut priority_fee: u64 = 0;
         let mut ixs: Vec<Instruction> = Vec::new();
         let mut needs_continuation = false;
+        let mut next_fiber_cursor: Option<u8> = None;
 
         // Track fiber_cursor through the chaining loop
         // Signal::Chain tells us to execute next fiber in sequence
-        let mut current_fiber_cursor = thread.fiber_cursor;
+        let mut current_fiber_cursor = override_fiber_cursor.unwrap_or(thread.fiber_cursor);
 
         // Build first instruction
         debug!(
@@ -115,6 +123,16 @@ impl ExecutorLogic {
         let first_ix = self
             .build_thread_exec_ix(&mut priority_fee, thread_pubkey, thread, current_fiber_cursor)
             .await?;
+
+        // Empty fiber — nothing to submit
+        let Some(first_ix) = first_ix else {
+            info!(
+                "{}: first fiber is empty, nothing to submit",
+                thread_pubkey
+            );
+            return Ok((vec![], 0, false, None));
+        };
+
         debug!(
             "First instruction built successfully, priority_fee: {}",
             priority_fee
@@ -170,21 +188,37 @@ impl ExecutorLogic {
                         )
                         .await?;
 
+                    // Empty fiber — stop chaining
+                    let Some(next_ix) = next_ix else {
+                        info!(
+                            "{}: chained fiber {} is empty, stopping chain",
+                            thread_pubkey, current_fiber_cursor
+                        );
+                        break;
+                    };
+
                     // Check if adding this instruction would exceed transaction size
                     let mut trial = ixs.clone();
                     trial.push(next_ix.clone());
-                    if self.would_fit_in_transaction(&trial) {
+                    let trial_size = self.estimate_transaction_size_with_budget(&trial);
+                    if trial_size <= MAX_TRANSACTION_SIZE {
                         ixs.push(next_ix);
                     } else {
                         // Doesn't fit — return what we have and signal continuation.
                         // The worker will submit this batch, confirm it, re-fetch
                         // the thread, and call us again for the next batch.
+                        let current_size = self.estimate_transaction_size_with_budget(&ixs);
                         info!(
-                            "{}: transaction full ({} ix), needs continuation",
+                            "{}: transaction full ({} ix, {} bytes), adding fiber {} would be {} bytes (max {}), needs continuation",
                             thread_pubkey,
-                            ixs.len()
+                            ixs.len(),
+                            current_size,
+                            current_fiber_cursor,
+                            trial_size,
+                            MAX_TRANSACTION_SIZE
                         );
                         needs_continuation = true;
+                        next_fiber_cursor = Some(current_fiber_cursor);
                         break;
                     }
                 }
@@ -252,7 +286,7 @@ impl ExecutorLogic {
             needs_continuation
         );
 
-        Ok((ixs, priority_fee, needs_continuation))
+        Ok((ixs, priority_fee, needs_continuation, next_fiber_cursor))
     }
 
     /// Fetch thread account from RPC and deserialize.
@@ -280,14 +314,19 @@ impl ExecutorLogic {
         bincode::serialized_size(&message).unwrap_or(0) as usize + 65 // +64 sig +1 compact-u16
     }
 
-    /// Check if instructions (plus compute budget overhead) would fit in one transaction.
-    fn would_fit_in_transaction(&self, instructions: &[Instruction]) -> bool {
+    /// Estimate transaction size including compute budget instructions.
+    fn estimate_transaction_size_with_budget(&self, instructions: &[Instruction]) -> usize {
         let mut trial = vec![
             ComputeBudgetInstruction::set_compute_unit_limit(1_400_000),
             ComputeBudgetInstruction::set_compute_unit_price(1_000_000),
         ];
         trial.extend_from_slice(instructions);
-        self.estimate_transaction_size(&trial) <= MAX_TRANSACTION_SIZE
+        self.estimate_transaction_size(&trial)
+    }
+
+    /// Check if instructions (plus compute budget overhead) would fit in one transaction.
+    fn would_fit_in_transaction(&self, instructions: &[Instruction]) -> bool {
+        self.estimate_transaction_size_with_budget(instructions) <= MAX_TRANSACTION_SIZE
     }
 
     /// Estimate compute units for a set of instructions via simulation.
@@ -335,7 +374,7 @@ impl ExecutorLogic {
         thread_pubkey: &Pubkey,
         thread: &Thread,
         fiber_cursor: u8,
-    ) -> Result<Instruction> {
+    ) -> Result<Option<Instruction>> {
         debug!(
             "build_thread_exec_ix: fiber_cursor={}",
             fiber_cursor
@@ -349,9 +388,18 @@ impl ExecutorLogic {
             fiber_pubkey, fiber_cursor
         );
 
-        let account = self.fetch_account(&fiber_pubkey).await?;
+        let account = self.fetch_fiber_account(&fiber_pubkey).await?;
         let fiber_state = FiberState::try_deserialize(&mut account.data.as_slice())
             .map_err(|e| anyhow!("Failed to deserialize fiber {}: {}", fiber_pubkey, e))?;
+
+        // Empty compiled_instruction = cleared fiber (e.g. after close). Skip.
+        if fiber_state.compiled_instruction.is_empty() {
+            info!(
+                "fiber_{} has empty compiled_instruction, skipping",
+                fiber_cursor
+            );
+            return Ok(None);
+        }
 
         debug!(
             "Fiber fetched, priority_fee={}",
@@ -370,7 +418,7 @@ impl ExecutorLogic {
 
         *priority_fee = (*priority_fee).max(fiber_state.priority_fee);
 
-        Ok(ix)
+        Ok(Some(ix))
     }
 
     /// Build base ThreadExec accounts (shared by build_execute_instruction and build_close_thread_exec)
@@ -702,11 +750,24 @@ impl ExecutorLogic {
         let tx = Transaction::new(&[self.keypair.as_ref()], message, blockhash);
 
         // 3. Simulate via RPC pool (handles failover, returns result with accounts)
-        let result = self
+        let result = match self
             .resources
             .rpc_client
             .simulate_transaction(&tx, &[*thread_pubkey])
-            .await?;
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                // Log each instruction's accounts for diagnosis on simulation error
+                for (i, ix) in instructions.iter().enumerate() {
+                    warn!("  IX[{}] program={}, {} accounts:", i, ix.program_id, ix.accounts.len());
+                    for (j, acc) in ix.accounts.iter().enumerate() {
+                        warn!("    [{}]: {} signer={} writable={}", j, acc.pubkey, acc.is_signer, acc.is_writable);
+                    }
+                }
+                return Err(e);
+            }
+        };
 
         // Log simulation logs
         if let Some(logs) = &result.value.logs {
@@ -767,41 +828,24 @@ impl ExecutorLogic {
         Ok((signal, units_consumed))
     }
 
-    /// Fetch an account from RPC (with cache check)
-    async fn fetch_account(&self, pubkey: &Pubkey) -> Result<Account> {
-        // Check cache first
-        if let Some(cached) = self.resources.cache.get(pubkey).await {
-            return Ok(Account {
-                lamports: 0, // Not stored in cache
-                data: cached.data,
-                owner: Pubkey::default(), // Not stored in cache
-                executable: false,
-                rent_epoch: 0,
-            });
-        }
-
-        // Fetch from RPC using custom client
+    /// Fetch fiber account directly from RPC, bypassing cache.
+    /// Fiber compiled_instruction may change via fiber_update; stale cache
+    /// causes MissingAccount when remaining_accounts diverge from on-chain state.
+    async fn fetch_fiber_account(&self, pubkey: &Pubkey) -> Result<Account> {
         let ui_account = self
             .resources
             .rpc_client
             .get_account(pubkey)
             .await
-            .map_err(|e| anyhow!("Failed to fetch account {}: {}", pubkey, e))?
-            .ok_or_else(|| anyhow!("Account {} not found", pubkey))?;
+            .map_err(|e| anyhow!("Failed to fetch fiber {}: {}", pubkey, e))?
+            .ok_or_else(|| anyhow!("Fiber {} not found", pubkey))?;
 
-        // Decode account data (supports base64 and base64+zstd)
-        let account_data = decode_account_data(&ui_account.data.0, &ui_account.data.1)
-            .map_err(|e| anyhow!("Failed to decode account data: {}", e))?;
+        let data = decode_account_data(&ui_account.data.0, &ui_account.data.1)
+            .map_err(|e| anyhow!("Failed to decode fiber account data: {}", e))?;
 
-        // Cache the result (unknown trigger type for generic account fetch)
-        self.resources
-            .cache
-            .put_simple(*pubkey, account_data.clone(), 0)
-            .await;
-
-        Ok(solana_sdk::account::Account {
+        Ok(Account {
             lamports: ui_account.lamports,
-            data: account_data,
+            data,
             owner: ui_account.owner.parse().unwrap_or_default(),
             executable: ui_account.executable,
             rent_epoch: ui_account.rent_epoch,

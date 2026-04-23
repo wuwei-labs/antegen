@@ -132,9 +132,10 @@ impl Actor for ProcessorFactory {
             }
             ProcessorMessage::WorkerCompleted(result) => {
                 log::debug!(
-                    "Worker completed for thread {}: success={}",
+                    "Worker completed for thread {}: success={} skipped={}",
                     result.thread_pubkey,
-                    result.success
+                    result.success,
+                    result.skipped
                 );
 
                 // Remove from active workers and stop the actor
@@ -374,7 +375,12 @@ impl ProcessorFactory {
             .unwrap_or(false);
 
         // Log the result
-        if result.success {
+        if result.skipped {
+            log::debug!(
+                "Thread {} skipped: empty fiber",
+                result.thread_pubkey
+            );
+        } else if result.success {
             log::info!("Thread {} execution succeeded", result.thread_pubkey);
         } else if is_lb_skip {
             log::debug!(

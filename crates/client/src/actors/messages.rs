@@ -124,6 +124,7 @@ pub struct ReadyThread {
 pub struct ExecutionResult {
     pub thread_pubkey: Pubkey,
     pub success: bool,
+    pub skipped: bool,
     pub error: Option<String>,
     pub attempt_count: u32,
 }
@@ -133,6 +134,7 @@ impl ExecutionResult {
         Self {
             thread_pubkey,
             success: true,
+            skipped: false,
             error: None,
             attempt_count: 0,
         }
@@ -142,8 +144,19 @@ impl ExecutionResult {
         Self {
             thread_pubkey,
             success: false,
+            skipped: false,
             error: Some(error),
             attempt_count,
+        }
+    }
+
+    pub fn skipped(thread_pubkey: Pubkey) -> Self {
+        Self {
+            thread_pubkey,
+            success: true,
+            skipped: true,
+            error: None,
+            attempt_count: 0,
         }
     }
 }

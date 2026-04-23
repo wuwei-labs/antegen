@@ -1,7 +1,7 @@
 use {
     crate::{errors::AntegenThreadError, *},
     anchor_lang::prelude::*,
-    antegen_fiber_program::{cpi::close_fiber, state::FiberState},
+    antegen_fiber_program::{cpi::close, state::FiberState},
 };
 
 /// Accounts required by the `thread_close` instruction.
@@ -69,9 +69,9 @@ pub fn thread_close<'info>(ctx: Context<'info, ThreadClose<'info>>) -> Result<()
             .ok_or(AntegenThreadError::MissingFiberAccounts)?;
 
         thread.sign(|seeds| {
-            close_fiber(CpiContext::new_with_signer(
+            close(CpiContext::new_with_signer(
                 fiber_program.key(),
-                antegen_fiber_program::cpi::accounts::FiberClose {
+                antegen_fiber_program::cpi::accounts::Close {
                     thread: thread.to_account_info(),
                     fiber: account.to_account_info(),
                 },
