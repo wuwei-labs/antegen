@@ -635,7 +635,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-thread-program"
-version = "5.0.11"
+version = "5.0.12"
 dependencies = [
  "anchor-lang",
  "antegen-cron",
