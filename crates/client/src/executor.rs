@@ -116,9 +116,9 @@ impl ExecutorLogic {
         let mut current_fiber_cursor = override_fiber_cursor.unwrap_or(thread.fiber_cursor);
 
         // Build first instruction
-        debug!(
-            "Building first thread_exec instruction for fiber_cursor={}",
-            current_fiber_cursor
+        info!(
+            "{}: starting build: thread.fiber_cursor={}, override={:?}, using={}",
+            thread_pubkey, thread.fiber_cursor, override_fiber_cursor, current_fiber_cursor
         );
         let first_ix = self
             .build_thread_exec_ix(&mut priority_fee, thread_pubkey, thread, current_fiber_cursor)
