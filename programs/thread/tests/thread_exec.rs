@@ -401,7 +401,7 @@ fn test_exec_thread_timestamp_ready() {
     assert!(thread.paused, "Timestamp thread should auto-pause after firing");
     match thread.schedule {
         antegen_thread_program::state::Schedule::Timed { next, .. } => {
-            assert_eq!(next, i64::MAX, "schedule.next should be i64::MAX after timestamp fires");
+            assert_eq!(next, target_ts, "schedule.next should be the original unix_ts after timestamp fires");
         }
         _ => panic!("Expected Timed schedule"),
     }

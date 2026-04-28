@@ -532,9 +532,9 @@ impl TriggerProcessor for Thread {
                     next: next_trigger_time,
                 }
             }
-            Trigger::Timestamp { .. } => Schedule::Timed {
+            Trigger::Timestamp { unix_ts, .. } => Schedule::Timed {
                 prev: current_timestamp,
-                next: i64::MAX,
+                next: *unix_ts,
             },
         };
 
