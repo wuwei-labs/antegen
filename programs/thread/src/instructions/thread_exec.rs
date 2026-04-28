@@ -257,9 +257,14 @@ pub fn thread_exec<'info>(
         thread.fiber_signal = Signal::Close;
     }
 
-    // Timestamp triggers: auto-pause after firing (unless chaining)
+    // Timestamp triggers: auto-pause after firing (unless chaining or signal
+    // explicitly set paused to false — e.g. rental_close activating a queued
+    // rental needs the thread to stay alive).
     if matches!(fired_trigger, Trigger::Timestamp { .. }) && signal != Signal::Chain {
-        thread.paused = true;
+        let signal_unpaused = matches!(&signal, Signal::Update { paused: Some(false), .. });
+        if !signal_unpaused {
+            thread.paused = true;
+        }
     }
 
     // ── Finalize ──

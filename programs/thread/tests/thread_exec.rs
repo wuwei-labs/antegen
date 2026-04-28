@@ -1015,3 +1015,162 @@ fn test_exec_with_program_id_in_accounts() {
     let thread = deserialize_thread(&svm, &thread_pubkey);
     assert_eq!(thread.exec_count, 1);
 }
+
+/// Simulates the srsly rental_close inline-activation flow:
+/// Timestamp fires -> fiber 0 chains -> fiber 1 returns Signal::Update { paused: false, trigger: Interval }
+/// Thread should NOT be auto-paused because fiber 1 explicitly set paused: false.
+#[test]
+fn test_exec_timestamp_chain_then_update_unpause() {
+    let (mut svm, admin, _payer) = create_test_env();
+    let authority = Keypair::new();
+    let executor = Keypair::new();
+    let payer = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+    svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
+    svm.airdrop(&payer.pubkey(), DEFAULT_AIRDROP * 2).unwrap();
+
+    let clock = get_clock(&svm);
+    let target_ts = clock.unix_timestamp + 10;
+    let (config_pubkey, _) = config_pda();
+
+    // Create thread with Timestamp trigger (simulates contract_process switching to Timestamp)
+    let thread_id = ThreadId::Bytes(b"ts-chain-unpause".to_vec());
+    let (thread_pubkey, _) = thread_pda(&authority.pubkey(), b"ts-chain-unpause");
+    let ix = build_create_thread(
+        &authority.pubkey(),
+        &payer.pubkey(),
+        &thread_pubkey,
+        100_000_000,
+        thread_id,
+        Trigger::Timestamp {
+            unix_ts: target_ts,
+            jitter: 0,
+        },
+        None,
+        None,
+        None,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    svm.send_transaction(tx).expect("create_thread should succeed");
+
+    // Fiber 0: returns Signal::Chain (simulates contract_process seeing expired rental)
+    let (fiber0_pubkey, _) = fiber_pda(&thread_pubkey, 0);
+    let chain_ix = make_memo_instruction("controller", Some(Signal::Chain));
+    let serializable = make_serializable_instruction(&chain_ix);
+    let ix = build_create_fiber(
+        &authority.pubkey(),
+        &thread_pubkey,
+        &fiber0_pubkey,
+        0,
+        serializable,
+        0,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    svm.send_transaction(tx).expect("create_fiber_0 should succeed");
+
+    // Fiber 1: returns Signal::Update { paused: false, trigger: Interval }
+    // (simulates rental_close activating queued rental and restaging with cron/interval trigger)
+    let new_trigger = Trigger::Interval {
+        seconds: 60,
+        skippable: false,
+        jitter: 0,
+    };
+    let (fiber1_pubkey, _) = fiber_pda(&thread_pubkey, 1);
+    let update_ix = make_memo_instruction(
+        "close-activate",
+        Some(Signal::Update {
+            paused: Some(false),
+            trigger: Some(new_trigger.clone()),
+            index: Some(0),
+        }),
+    );
+    let serializable = make_serializable_instruction(&update_ix);
+    let ix = build_create_fiber(
+        &authority.pubkey(),
+        &thread_pubkey,
+        &fiber1_pubkey,
+        1,
+        serializable,
+        0,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    svm.send_transaction(tx).expect("create_fiber_1 should succeed");
+
+    // Advance past Timestamp target
+    advance_clock(&mut svm, 15);
+
+    // Execute fiber 0 -> Signal::Chain
+    let remaining = build_remaining_accounts(&executor.pubkey());
+    let ix = build_exec_thread(
+        &executor.pubkey(),
+        &thread_pubkey,
+        &fiber0_pubkey,
+        &config_pubkey,
+        &admin.pubkey(),
+        false,
+        0,
+        &remaining,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&executor.pubkey()),
+        &[&executor],
+        blockhash,
+    );
+    svm.send_transaction(tx).expect("exec fiber 0 should succeed");
+
+    let thread = deserialize_thread(&svm, &thread_pubkey);
+    assert_eq!(thread.fiber_signal, Signal::Chain);
+
+    // Execute fiber 1 (chained) -> Signal::Update { paused: false, trigger: Interval }
+    let remaining = build_remaining_accounts(&executor.pubkey());
+    let ix = build_exec_thread(
+        &executor.pubkey(),
+        &thread_pubkey,
+        &fiber1_pubkey,
+        &config_pubkey,
+        &admin.pubkey(),
+        false,
+        1,
+        &remaining,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&executor.pubkey()),
+        &[&executor],
+        blockhash,
+    );
+    svm.send_transaction(tx).expect("exec fiber 1 (chained) should succeed");
+
+    let thread = deserialize_thread(&svm, &thread_pubkey);
+    assert_eq!(thread.exec_count, 2);
+    assert!(
+        !thread.paused,
+        "Thread must NOT be auto-paused when chained fiber explicitly set paused: false"
+    );
+    assert_eq!(
+        thread.trigger, new_trigger,
+        "Trigger should be updated to Interval"
+    );
+    assert_eq!(thread.fiber_cursor, 0, "Cursor should be reset to 0");
+}
