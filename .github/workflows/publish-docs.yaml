@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "**.md"
+      - retype.yml
+      - .github/workflows/publish-docs.yaml
 
 jobs:
   publish:
