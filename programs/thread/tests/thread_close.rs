@@ -1,4 +1,8 @@
-use solana_sdk::{pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+    transaction::Transaction,
+};
 
 mod common;
 use common::*;
@@ -71,7 +75,12 @@ fn test_thread_close_no_fibers() {
     let thread_pubkey = create_thread_no_fiber(&mut svm, &authority, &payer, "tc-empty");
     let close_to_before = get_balance(&svm, &authority.pubkey());
 
-    let ix = build_close_thread(&authority.pubkey(), &authority.pubkey(), &thread_pubkey, &[]);
+    let ix = build_close_thread(
+        &authority.pubkey(),
+        &authority.pubkey(),
+        &thread_pubkey,
+        &[],
+    );
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
         &[ix],

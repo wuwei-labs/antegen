@@ -175,7 +175,7 @@ mod tests {
     #[tokio::test]
     async fn test_async_acquire() {
         let limiter = RateLimiter::new(RateLimitConfig {
-            requests_per_second: 100.0,  // Fast for testing
+            requests_per_second: 100.0, // Fast for testing
             burst_capacity: 2,
         });
 

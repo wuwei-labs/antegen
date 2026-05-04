@@ -1,4 +1,7 @@
-use solana_sdk::{signature::{Keypair, Signer}, transaction::Transaction};
+use solana_sdk::{
+    signature::{Keypair, Signer},
+    transaction::Transaction,
+};
 
 mod common;
 use common::*;

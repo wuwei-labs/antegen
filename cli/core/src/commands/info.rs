@@ -299,7 +299,10 @@ fn print_info(info: &InfoOutput) {
         println!("CLI update available: {} -> Run `antegen update`", version);
     }
     if let Some(version) = &info.node_update_available {
-        println!("Node update available: {} -> Run `antegenctl update`", version);
+        println!(
+            "Node update available: {} -> Run `antegenctl update`",
+            version
+        );
     }
 }
 

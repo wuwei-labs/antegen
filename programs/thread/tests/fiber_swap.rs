@@ -41,14 +41,7 @@ fn setup_thread_with_two_fibers(
     let (fiber_0, _) = fiber_pda(&thread_pubkey, 0);
     let memo_ix_0 = make_memo_instruction("target-fiber", None);
     let ser_0 = make_serializable_instruction(&memo_ix_0);
-    let ix = build_create_fiber(
-        &authority.pubkey(),
-        &thread_pubkey,
-        &fiber_0,
-        0,
-        ser_0,
-        0,
-    );
+    let ix = build_create_fiber(&authority.pubkey(), &thread_pubkey, &fiber_0, 0, ser_0, 0);
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -125,13 +118,7 @@ fn test_fiber_swap_priority_fee_copied() {
     let (thread_pubkey, target, source) =
         setup_thread_with_two_fibers(&mut svm, &authority, &payer, "fswap-pf", 99999);
 
-    let ix = build_swap_fiber(
-        &authority.pubkey(),
-        &thread_pubkey,
-        &target,
-        &source,
-        1,
-    );
+    let ix = build_swap_fiber(&authority.pubkey(), &thread_pubkey, &target, &source, 1);
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -154,13 +141,7 @@ fn test_fiber_swap_target_stats_reset() {
     let (thread_pubkey, target, source) =
         setup_thread_with_two_fibers(&mut svm, &authority, &payer, "fswap-stats", 0);
 
-    let ix = build_swap_fiber(
-        &authority.pubkey(),
-        &thread_pubkey,
-        &target,
-        &source,
-        1,
-    );
+    let ix = build_swap_fiber(&authority.pubkey(), &thread_pubkey, &target, &source, 1);
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -184,13 +165,7 @@ fn test_fiber_swap_source_closed() {
     let (thread_pubkey, target, source) =
         setup_thread_with_two_fibers(&mut svm, &authority, &payer, "fswap-close", 0);
 
-    let ix = build_swap_fiber(
-        &authority.pubkey(),
-        &thread_pubkey,
-        &target,
-        &source,
-        1,
-    );
+    let ix = build_swap_fiber(&authority.pubkey(), &thread_pubkey, &target, &source, 1);
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -215,13 +190,7 @@ fn test_fiber_swap_source_rent_returned() {
 
     let thread_balance_before = get_balance(&svm, &thread_pubkey);
 
-    let ix = build_swap_fiber(
-        &authority.pubkey(),
-        &thread_pubkey,
-        &target,
-        &source,
-        1,
-    );
+    let ix = build_swap_fiber(&authority.pubkey(), &thread_pubkey, &target, &source, 1);
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -248,13 +217,7 @@ fn test_fiber_swap_wrong_authority() {
     let (thread_pubkey, target, source) =
         setup_thread_with_two_fibers(&mut svm, &authority, &payer, "fswap-auth", 0);
 
-    let ix = build_swap_fiber(
-        &bad_authority.pubkey(),
-        &thread_pubkey,
-        &target,
-        &source,
-        1,
-    );
+    let ix = build_swap_fiber(&bad_authority.pubkey(), &thread_pubkey, &target, &source, 1);
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -279,13 +242,7 @@ fn test_fiber_swap_fiber_ids_updated() {
     let thread_before = deserialize_thread(&svm, &thread_pubkey);
     assert_eq!(thread_before.fiber_ids, vec![0, 1]);
 
-    let ix = build_swap_fiber(
-        &authority.pubkey(),
-        &thread_pubkey,
-        &target,
-        &source,
-        1,
-    );
+    let ix = build_swap_fiber(&authority.pubkey(), &thread_pubkey, &target, &source, 1);
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
         &[ix],

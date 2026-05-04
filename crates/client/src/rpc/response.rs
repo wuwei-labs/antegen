@@ -135,7 +135,9 @@ impl SafeUiAccount {
 
     /// Parse the owner as a Pubkey
     pub fn owner_pubkey(&self) -> Result<solana_sdk::pubkey::Pubkey, String> {
-        self.owner.parse().map_err(|e| format!("Invalid owner pubkey: {}", e))
+        self.owner
+            .parse()
+            .map_err(|e| format!("Invalid owner pubkey: {}", e))
     }
 }
 

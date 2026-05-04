@@ -82,7 +82,10 @@ pub fn get(config_path: PathBuf) -> Result<()> {
     // Executor
     println!("[executor]");
     println!("  keypair_path       = {}", config.executor.keypair_path);
-    println!("  forgo_commission   = {}", config.executor.forgo_commission);
+    println!(
+        "  forgo_commission   = {}",
+        config.executor.forgo_commission
+    );
     println!();
 
     // RPC endpoints
@@ -119,8 +122,14 @@ pub fn get(config_path: PathBuf) -> Result<()> {
 
     // Load balancer
     println!("[load_balancer]");
-    println!("  grace_period         = {}s", config.load_balancer.grace_period);
-    println!("  eviction_buffer      = {}s", config.load_balancer.eviction_buffer);
+    println!(
+        "  grace_period         = {}s",
+        config.load_balancer.grace_period
+    );
+    println!(
+        "  eviction_buffer      = {}s",
+        config.load_balancer.eviction_buffer
+    );
     println!(
         "  thread_process_delay = {}s",
         config.load_balancer.thread_process_delay

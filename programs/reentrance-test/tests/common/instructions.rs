@@ -7,8 +7,8 @@ use solana_sdk::{
 use super::setup::{FIBER_PROGRAM_ID, PROGRAM_ID};
 
 // Re-export program types used by tests
-pub use antegen_thread_program::state::{Signal, Trigger};
 use antegen_thread_program::state::{SerializableAccountMeta, SerializableInstruction};
+pub use antegen_thread_program::state::{Signal, Trigger};
 pub use antegen_thread_program::ThreadId;
 
 // ============================================================================

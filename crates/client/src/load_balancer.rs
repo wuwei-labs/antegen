@@ -262,7 +262,10 @@ impl LoadBalancer {
         LoadBalancerStats {
             total_tracked: tracking.len(),
             owned_threads: tracking.values().filter(|t| t.owned).count(),
-            threads_with_losses: tracking.values().filter(|t| t.consecutive_losses > 0).count(),
+            threads_with_losses: tracking
+                .values()
+                .filter(|t| t.consecutive_losses > 0)
+                .count(),
             at_capacity,
         }
     }
@@ -338,7 +341,9 @@ mod tests {
         let thread = Pubkey::new_unique();
 
         // Record successful execution to claim ownership
-        lb.record_execution_result(&thread, true, 1000).await.unwrap();
+        lb.record_execution_result(&thread, true, 1000)
+            .await
+            .unwrap();
 
         // Should process owned thread even if someone else executed last
         let other_executor = Pubkey::new_unique();
@@ -362,7 +367,9 @@ mod tests {
         let thread = Pubkey::new_unique();
 
         // Claim ownership
-        lb.record_execution_result(&thread, true, 1000).await.unwrap();
+        lb.record_execution_result(&thread, true, 1000)
+            .await
+            .unwrap();
 
         let other_executor = Pubkey::new_unique();
 

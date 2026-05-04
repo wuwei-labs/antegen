@@ -8,15 +8,14 @@
 //! The cache is the single source of truth for account data.
 
 use crate::actors::messages::{
-    CompletionReason, ProcessorMessage, ReadyThread, ScheduledThread, StagingMessage,
-    StagingStatus,
+    CompletionReason, ProcessorMessage, ReadyThread, ScheduledThread, StagingMessage, StagingStatus,
 };
 use crate::config::ClientConfig;
 use crate::load_balancer::LoadBalancer;
 use crate::resources::SharedResources;
-use anyhow::Result;
 use anchor_lang::AccountDeserialize;
 use antegen_thread_program::state::{Schedule, Thread, Trigger};
+use anyhow::Result;
 use dashmap::DashSet;
 use log::{debug, info, trace, warn};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
@@ -71,7 +70,12 @@ pub struct StagingState {
 impl Actor for StagingActor {
     type Msg = StagingMessage;
     type State = StagingState;
-    type Arguments = (ClientConfig, SharedResources, Arc<LoadBalancer>, mpsc::UnboundedReceiver<Pubkey>);
+    type Arguments = (
+        ClientConfig,
+        SharedResources,
+        Arc<LoadBalancer>,
+        mpsc::UnboundedReceiver<Pubkey>,
+    );
 
     async fn pre_start(
         &self,
@@ -127,8 +131,7 @@ impl Actor for StagingActor {
 
                         // Fetch from cache and re-add to priority queue
                         if let Some(cached) = state.resources.cache.get(&thread_pubkey).await {
-                            if let Ok(thread) =
-                                Thread::try_deserialize(&mut cached.data.as_slice())
+                            if let Ok(thread) = Thread::try_deserialize(&mut cached.data.as_slice())
                             {
                                 self.schedule_thread(state, thread_pubkey, &thread).await?;
                             }
@@ -227,7 +230,10 @@ impl StagingActor {
                             if let Err(e) = processor_ref
                                 .send_message(ProcessorMessage::CancelThread(update.pubkey))
                             {
-                                warn!("Failed to send cancel for thread {}: {:?}", update.pubkey, e);
+                                warn!(
+                                    "Failed to send cancel for thread {}: {:?}",
+                                    update.pubkey, e
+                                );
                             } else {
                                 info!(
                                     "Cancelled thread {} due to schedule change: {:?} -> {:?}",
@@ -237,7 +243,10 @@ impl StagingActor {
                         }
                     }
                 } else {
-                    info!("Thread {} discovered (exec_count={})", update.pubkey, thread.exec_count);
+                    info!(
+                        "Thread {} discovered (exec_count={})",
+                        update.pubkey, thread.exec_count
+                    );
                 }
 
                 // Track exec_count, schedule, and paused state (cache has full data)
@@ -317,8 +326,12 @@ impl StagingActor {
             self.compact_queues(state).await;
         }
 
-        trace!("ClockTick: slot={}, epoch={}, timestamp={}",
-            clock.slot, clock.epoch, clock.unix_timestamp);
+        trace!(
+            "ClockTick: slot={}, epoch={}, timestamp={}",
+            clock.slot,
+            clock.epoch,
+            clock.unix_timestamp
+        );
 
         // Process cache eviction refetches (batch-limited to prevent blocking)
         // These are threads whose cache entries expired (trigger_time + grace_period)
@@ -352,9 +365,15 @@ impl StagingActor {
                     if thread.paused {
                         debug!("Refetched thread {} is paused, skipping reschedule", pubkey);
                     } else if let Err(e) = self.schedule_thread(state, pubkey, &thread).await {
-                        warn!("Failed to reschedule thread {} after refetch: {:?}", pubkey, e);
+                        warn!(
+                            "Failed to reschedule thread {} after refetch: {:?}",
+                            pubkey, e
+                        );
                     } else {
-                        info!("Refetched and rescheduled thread {} after cache expiry", pubkey);
+                        info!(
+                            "Refetched and rescheduled thread {} after cache expiry",
+                            pubkey
+                        );
                     }
                 }
                 Err(e) => {
@@ -435,7 +454,10 @@ impl StagingActor {
                 if let Schedule::Timed { next, .. } = thread.schedule {
                     ("timestamp", next.max(0) as u64)
                 } else {
-                    warn!("Time-based trigger with non-Timed schedule for thread {}", thread_pubkey);
+                    warn!(
+                        "Time-based trigger with non-Timed schedule for thread {}",
+                        thread_pubkey
+                    );
                     return Ok(());
                 }
             }
@@ -443,7 +465,10 @@ impl StagingActor {
                 if let Schedule::Block { next, .. } = thread.schedule {
                     ("slot", next)
                 } else {
-                    warn!("Slot trigger with non-Block schedule for thread {}", thread_pubkey);
+                    warn!(
+                        "Slot trigger with non-Block schedule for thread {}",
+                        thread_pubkey
+                    );
                     return Ok(());
                 }
             }
@@ -451,12 +476,18 @@ impl StagingActor {
                 if let Schedule::Block { next, .. } = thread.schedule {
                     ("epoch", next)
                 } else {
-                    warn!("Epoch trigger with non-Block schedule for thread {}", thread_pubkey);
+                    warn!(
+                        "Epoch trigger with non-Block schedule for thread {}",
+                        thread_pubkey
+                    );
                     return Ok(());
                 }
             }
             Trigger::Account { .. } => {
-                warn!("Account triggers not yet supported for thread {}", thread_pubkey);
+                warn!(
+                    "Account triggers not yet supported for thread {}",
+                    thread_pubkey
+                );
                 return Ok(());
             }
         };
@@ -580,10 +611,7 @@ impl StagingActor {
 
                 // Skip paused threads
                 if tracked.paused {
-                    trace!(
-                        "Thread {} is paused, skipping",
-                        scheduled.thread_pubkey
-                    );
+                    trace!("Thread {} is paused, skipping", scheduled.thread_pubkey);
                     continue;
                 }
 

@@ -83,37 +83,37 @@ pub enum AntegenThreadError {
 
     #[msg("This instruction must be called via CPI")]
     MustBeCalledViaCPI,
-    
+
     #[msg("Fiber already claimed by another observer")]
     AlreadyClaimed,
-    
+
     #[msg("Wrong fiber index for current execution")]
     WrongFiberIndex,
-    
+
     #[msg("Observer priority window is still active")]
     ObserverPriorityActive,
-    
+
     #[msg("Trigger is not ready yet")]
     TriggerNotReady,
-    
+
     #[msg("Nonce account is required for all threads")]
     NonceRequired,
-    
+
     #[msg("Invalid observer account provided")]
     InvalidObserverAccount,
-    
+
     #[msg("Invalid config admin")]
     InvalidConfigAdmin,
-    
+
     #[msg("Global pause is active")]
     GlobalPauseActive,
-    
+
     #[msg("Invalid authority for this operation")]
     InvalidAuthority,
-    
+
     #[msg("Invalid fee percentage (must be 0-10000)")]
     InvalidFeePercentage,
-    
+
     #[msg("Initial instruction provided but fiber account is missing")]
     MissingFiberAccount,
 
@@ -143,7 +143,6 @@ pub enum AntegenThreadError {
 
     #[msg("Thread has not signaled close - fiber_signal must be Signal::Close")]
     CloseNotSignaled,
-
 }
 
 /// Alias for AntegenThreadError

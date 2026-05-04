@@ -1,4 +1,8 @@
-use solana_sdk::{pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+    transaction::Transaction,
+};
 
 mod common;
 use common::*;
@@ -170,8 +174,7 @@ fn test_fiber_update_wrong_thread() {
 
     let (_thread1, _fiber1) =
         setup_thread_with_fiber_account(&mut svm, &authority, &payer, "fu-t1");
-    let (thread2, _fiber2) =
-        setup_thread_with_fiber_account(&mut svm, &authority, &payer, "fu-t2");
+    let (thread2, _fiber2) = setup_thread_with_fiber_account(&mut svm, &authority, &payer, "fu-t2");
 
     // Try to update fiber at index 0 but with thread2 — PDA seeds won't match
     let (fiber1_pda, _) = fiber_pda(&_thread1, 0);

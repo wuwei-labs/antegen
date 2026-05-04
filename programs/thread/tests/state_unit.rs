@@ -1,9 +1,9 @@
 use antegen_thread_program::{
     constants::*,
     state::{
-        compile_instruction, decompile_instruction, CommissionCalculator,
-        FiberState, PaymentProcessor, Schedule, Signal, Thread, ThreadConfig, Trigger,
-        CURRENT_THREAD_VERSION, SEED_THREAD_FIBER,
+        compile_instruction, decompile_instruction, CommissionCalculator, FiberState,
+        PaymentProcessor, Schedule, Signal, Thread, ThreadConfig, Trigger, CURRENT_THREAD_VERSION,
+        SEED_THREAD_FIBER,
     },
     utils::{calculate_jitter_offset, next_timestamp},
 };
@@ -351,8 +351,10 @@ fn test_fiber_pda_derivation() {
     let thread = Pubkey::new_unique();
     let index = 3u8;
     // FiberState PDAs use the Fiber Program ID
-    let (expected, _bump) =
-        Pubkey::find_program_address(&[SEED_THREAD_FIBER, thread.as_ref(), &[index]], &FIBER_PROGRAM_ID);
+    let (expected, _bump) = Pubkey::find_program_address(
+        &[SEED_THREAD_FIBER, thread.as_ref(), &[index]],
+        &FIBER_PROGRAM_ID,
+    );
     let derived = FiberState::pubkey(thread, index);
     assert_eq!(derived, expected);
 }

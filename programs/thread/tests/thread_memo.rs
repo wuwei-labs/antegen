@@ -1,4 +1,7 @@
-use solana_sdk::{signature::{Keypair, Signer}, transaction::Transaction};
+use solana_sdk::{
+    signature::{Keypair, Signer},
+    transaction::Transaction,
+};
 
 mod common;
 use common::*;
@@ -14,12 +17,8 @@ fn send_memo(
 ) -> Result<(), litesvm::types::FailedTransactionMetadata> {
     let ix = build_thread_memo(&signer.pubkey(), memo, signal);
     let blockhash = svm.latest_blockhash();
-    let tx = Transaction::new_signed_with_payer(
-        &[ix],
-        Some(&signer.pubkey()),
-        &[signer],
-        blockhash,
-    );
+    let tx =
+        Transaction::new_signed_with_payer(&[ix], Some(&signer.pubkey()), &[signer], blockhash);
     svm.send_transaction(tx).map(|_| ())
 }
 
@@ -56,7 +55,13 @@ fn test_thread_memo_signal_repeat() {
 #[test]
 fn test_thread_memo_signal_next() {
     let (mut svm, _admin, payer) = create_test_env();
-    send_memo(&mut svm, &payer, "signal-next", Some(Signal::Next { index: 3 })).unwrap();
+    send_memo(
+        &mut svm,
+        &payer,
+        "signal-next",
+        Some(Signal::Next { index: 3 }),
+    )
+    .unwrap();
 }
 
 #[test]

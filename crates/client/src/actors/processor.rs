@@ -210,7 +210,10 @@ impl ProcessorFactory {
         };
 
         // Guard against duplicate active workers
-        if state.active_workers.contains_key(&ready_thread.thread_pubkey) {
+        if state
+            .active_workers
+            .contains_key(&ready_thread.thread_pubkey)
+        {
             log::debug!(
                 "Thread {} already has active worker, re-queuing",
                 ready_thread.thread_pubkey
@@ -376,10 +379,7 @@ impl ProcessorFactory {
 
         // Log the result
         if result.skipped {
-            log::debug!(
-                "Thread {} skipped: empty fiber",
-                result.thread_pubkey
-            );
+            log::debug!("Thread {} skipped: empty fiber", result.thread_pubkey);
         } else if result.success {
             log::info!("Thread {} execution succeeded", result.thread_pubkey);
         } else if is_lb_skip {

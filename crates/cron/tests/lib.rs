@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use chrono::*;
     use antegen_cron::{Schedule, TimeUnitSpec};
+    use chrono::*;
     use std::str::FromStr;
 
     #[test]
@@ -40,9 +40,18 @@ mod tests {
         let schedule = Schedule::from_str(expression).expect("Failed to parse @yearly.");
         let starting_date = Utc.with_ymd_and_hms(2017, 6, 15, 14, 29, 36).unwrap();
         let mut events = schedule.after(&starting_date);
-        assert_eq!(Utc.with_ymd_and_hms(2018, 1, 1, 0, 0, 0).unwrap(), events.next().unwrap());
-        assert_eq!(Utc.with_ymd_and_hms(2019, 1, 1, 0, 0, 0).unwrap(), events.next().unwrap());
-        assert_eq!(Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(), events.next().unwrap());
+        assert_eq!(
+            Utc.with_ymd_and_hms(2018, 1, 1, 0, 0, 0).unwrap(),
+            events.next().unwrap()
+        );
+        assert_eq!(
+            Utc.with_ymd_and_hms(2019, 1, 1, 0, 0, 0).unwrap(),
+            events.next().unwrap()
+        );
+        assert_eq!(
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+            events.next().unwrap()
+        );
     }
 
     #[test]
@@ -59,7 +68,10 @@ mod tests {
             Utc.with_ymd_and_hms(2017, 12, 1, 0, 0, 0).unwrap(),
             events.next().unwrap()
         );
-        assert_eq!(Utc.with_ymd_and_hms(2018, 1, 1, 0, 0, 0).unwrap(), events.next().unwrap());
+        assert_eq!(
+            Utc.with_ymd_and_hms(2018, 1, 1, 0, 0, 0).unwrap(),
+            events.next().unwrap()
+        );
     }
 
     #[test]
@@ -92,8 +104,14 @@ mod tests {
             Utc.with_ymd_and_hms(2016, 12, 25, 0, 0, 0).unwrap(),
             events.next().unwrap()
         );
-        assert_eq!(Utc.with_ymd_and_hms(2017, 1, 1, 0, 0, 0).unwrap(), events.next().unwrap());
-        assert_eq!(Utc.with_ymd_and_hms(2017, 1, 8, 0, 0, 0).unwrap(), events.next().unwrap());
+        assert_eq!(
+            Utc.with_ymd_and_hms(2017, 1, 1, 0, 0, 0).unwrap(),
+            events.next().unwrap()
+        );
+        assert_eq!(
+            Utc.with_ymd_and_hms(2017, 1, 8, 0, 0, 0).unwrap(),
+            events.next().unwrap()
+        );
     }
 
     #[test]
@@ -110,7 +128,10 @@ mod tests {
             Utc.with_ymd_and_hms(2016, 12, 31, 0, 0, 0).unwrap(),
             events.next().unwrap()
         );
-        assert_eq!(Utc.with_ymd_and_hms(2017, 1, 1, 0, 0, 0).unwrap(), events.next().unwrap());
+        assert_eq!(
+            Utc.with_ymd_and_hms(2017, 1, 1, 0, 0, 0).unwrap(),
+            events.next().unwrap()
+        );
     }
 
     #[test]
@@ -140,17 +161,44 @@ mod tests {
         let starting_date = Utc.with_ymd_and_hms(2017, 6, 15, 14, 29, 36).unwrap();
         let mut events = schedule.after(&starting_date);
 
-        assert_eq!(Utc.with_ymd_and_hms(2018, 1, 1, 0, 0, 0).unwrap(), events.next().unwrap());
-        assert_eq!(Utc.with_ymd_and_hms(2018, 1, 1, 0, 0, 20).unwrap(),events.next().unwrap());
-        assert_eq!(Utc.with_ymd_and_hms(2018, 1, 1, 0, 0, 40).unwrap(),events.next().unwrap());
+        assert_eq!(
+            Utc.with_ymd_and_hms(2018, 1, 1, 0, 0, 0).unwrap(),
+            events.next().unwrap()
+        );
+        assert_eq!(
+            Utc.with_ymd_and_hms(2018, 1, 1, 0, 0, 20).unwrap(),
+            events.next().unwrap()
+        );
+        assert_eq!(
+            Utc.with_ymd_and_hms(2018, 1, 1, 0, 0, 40).unwrap(),
+            events.next().unwrap()
+        );
 
-        assert_eq!(Utc.with_ymd_and_hms(2018, 1, 1, 0, 5, 0).unwrap(), events.next().unwrap());
-        assert_eq!(Utc.with_ymd_and_hms(2018, 1, 1, 0, 5, 20).unwrap(), events.next().unwrap());
-        assert_eq!(Utc.with_ymd_and_hms(2018, 1, 1, 0, 5, 40).unwrap(), events.next().unwrap());
+        assert_eq!(
+            Utc.with_ymd_and_hms(2018, 1, 1, 0, 5, 0).unwrap(),
+            events.next().unwrap()
+        );
+        assert_eq!(
+            Utc.with_ymd_and_hms(2018, 1, 1, 0, 5, 20).unwrap(),
+            events.next().unwrap()
+        );
+        assert_eq!(
+            Utc.with_ymd_and_hms(2018, 1, 1, 0, 5, 40).unwrap(),
+            events.next().unwrap()
+        );
 
-        assert_eq!(Utc.with_ymd_and_hms(2018, 1, 1, 0, 10, 0).unwrap(), events.next().unwrap());
-        assert_eq!(Utc.with_ymd_and_hms(2018, 1, 1, 0, 10, 20).unwrap(), events.next().unwrap());
-        assert_eq!(Utc.with_ymd_and_hms(2018, 1, 1, 0, 10, 40).unwrap(), events.next().unwrap());
+        assert_eq!(
+            Utc.with_ymd_and_hms(2018, 1, 1, 0, 10, 0).unwrap(),
+            events.next().unwrap()
+        );
+        assert_eq!(
+            Utc.with_ymd_and_hms(2018, 1, 1, 0, 10, 20).unwrap(),
+            events.next().unwrap()
+        );
+        assert_eq!(
+            Utc.with_ymd_and_hms(2018, 1, 1, 0, 10, 40).unwrap(),
+            events.next().unwrap()
+        );
     }
 
     #[test]

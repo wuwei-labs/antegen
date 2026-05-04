@@ -1,4 +1,8 @@
-use solana_sdk::{pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+    transaction::Transaction,
+};
 
 mod common;
 use common::*;
@@ -65,12 +69,7 @@ fn test_fiber_close_external_fiber() {
     let (thread_pubkey, fiber_pubkey) =
         setup_thread_external(&mut svm, &authority, &payer, "fclose-ext");
 
-    let ix = build_close_fiber(
-        &authority.pubkey(),
-        &thread_pubkey,
-        &fiber_pubkey,
-        0,
-    );
+    let ix = build_close_fiber(&authority.pubkey(), &thread_pubkey, &fiber_pubkey, 0);
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -98,12 +97,7 @@ fn test_fiber_close_authority_check() {
     let (thread_pubkey, fiber_pubkey) =
         setup_thread_external(&mut svm, &authority, &payer, "fclose-auth");
 
-    let ix = build_close_fiber(
-        &bad_authority.pubkey(),
-        &thread_pubkey,
-        &fiber_pubkey,
-        0,
-    );
+    let ix = build_close_fiber(&bad_authority.pubkey(), &thread_pubkey, &fiber_pubkey, 0);
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -127,12 +121,7 @@ fn test_fiber_close_rent_returned() {
     // Rent returns to thread PDA (via Fiber Program close = thread)
     let thread_before = get_balance(&svm, &thread_pubkey);
 
-    let ix = build_close_fiber(
-        &authority.pubkey(),
-        &thread_pubkey,
-        &fiber_pubkey,
-        0,
-    );
+    let ix = build_close_fiber(&authority.pubkey(), &thread_pubkey, &fiber_pubkey, 0);
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -156,12 +145,7 @@ fn test_fiber_close_last_fiber_resets_cursor() {
     let (thread_pubkey, fiber_pubkey) =
         setup_thread_external(&mut svm, &authority, &payer, "fclose-last");
 
-    let ix = build_close_fiber(
-        &authority.pubkey(),
-        &thread_pubkey,
-        &fiber_pubkey,
-        0,
-    );
+    let ix = build_close_fiber(&authority.pubkey(), &thread_pubkey, &fiber_pubkey, 0);
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -231,12 +215,7 @@ fn test_fiber_close_middle_of_sequence() {
     }
 
     // Close fiber at index 1 (middle)
-    let ix = build_close_fiber(
-        &authority.pubkey(),
-        &thread_pubkey,
-        &fiber_pubkeys[1],
-        1,
-    );
+    let ix = build_close_fiber(&authority.pubkey(), &thread_pubkey, &fiber_pubkeys[1], 1);
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -304,12 +283,7 @@ fn test_fiber_close_advances_cursor() {
 
     // fiber_cursor starts at 0. Close fiber 0 -> should advance to 1.
     let (fiber0_pubkey, _) = fiber_pda(&thread_pubkey, 0);
-    let ix = build_close_fiber(
-        &authority.pubkey(),
-        &thread_pubkey,
-        &fiber0_pubkey,
-        0,
-    );
+    let ix = build_close_fiber(&authority.pubkey(), &thread_pubkey, &fiber0_pubkey, 0);
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(
         &[ix],

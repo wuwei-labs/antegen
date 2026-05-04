@@ -20,9 +20,9 @@ fn make_cpi_update_fiber_instruction(
     Instruction {
         program_id: TEST_PROCESSOR_ID,
         accounts: vec![
-            AccountMeta::new(*thread, true),                    // thread as signer
-            AccountMeta::new(*target_fiber, false),              // fiber to update
-            AccountMeta::new_readonly(fiber::ID, false),         // fiber program
+            AccountMeta::new(*thread, true),             // thread as signer
+            AccountMeta::new(*target_fiber, false),      // fiber to update
+            AccountMeta::new_readonly(fiber::ID, false), // fiber program
             AccountMeta::new_readonly(solana_system_interface::program::ID, false), // system program
         ],
         data: antegen_reentrance_test::instruction::CpiUpdateFiber { fiber_index }.data(),
@@ -30,16 +30,13 @@ fn make_cpi_update_fiber_instruction(
 }
 
 /// Build an instruction that calls test_processor::cpi_close_fiber.
-fn make_cpi_close_fiber_instruction(
-    thread: &Pubkey,
-    target_fiber: &Pubkey,
-) -> Instruction {
+fn make_cpi_close_fiber_instruction(thread: &Pubkey, target_fiber: &Pubkey) -> Instruction {
     Instruction {
         program_id: TEST_PROCESSOR_ID,
         accounts: vec![
-            AccountMeta::new(*thread, true),                    // thread as signer
-            AccountMeta::new(*target_fiber, false),              // fiber to close
-            AccountMeta::new_readonly(fiber::ID, false),         // fiber program
+            AccountMeta::new(*thread, true),             // thread as signer
+            AccountMeta::new(*target_fiber, false),      // fiber to close
+            AccountMeta::new_readonly(fiber::ID, false), // fiber program
         ],
         data: antegen_reentrance_test::instruction::CpiCloseFiber {}.data(),
     }
@@ -54,10 +51,10 @@ fn make_cpi_swap_fiber_instruction(
     Instruction {
         program_id: TEST_PROCESSOR_ID,
         accounts: vec![
-            AccountMeta::new(*thread, true),                    // thread as signer
-            AccountMeta::new(*target_fiber, false),              // target fiber
-            AccountMeta::new(*source_fiber, false),              // source fiber
-            AccountMeta::new_readonly(fiber::ID, false),         // fiber program
+            AccountMeta::new(*thread, true),             // thread as signer
+            AccountMeta::new(*target_fiber, false),      // target fiber
+            AccountMeta::new(*source_fiber, false),      // source fiber
+            AccountMeta::new_readonly(fiber::ID, false), // fiber program
         ],
         data: antegen_reentrance_test::instruction::CpiSwapFiber {}.data(),
     }
@@ -206,9 +203,18 @@ fn test_reentrancy_update_fiber_during_exec() {
         fiber_1_after.compiled_instruction, compiled_before,
         "fiber_1's compiled instruction should be changed by the inner CPI update"
     );
-    assert_eq!(fiber_1_after.priority_fee, 42, "priority_fee should be set to 42 by test_processor");
-    assert_eq!(fiber_1_after.last_executed, 0, "execution stats should be reset");
-    assert_eq!(fiber_1_after.exec_count, 0, "execution stats should be reset");
+    assert_eq!(
+        fiber_1_after.priority_fee, 42,
+        "priority_fee should be set to 42 by test_processor"
+    );
+    assert_eq!(
+        fiber_1_after.last_executed, 0,
+        "execution stats should be reset"
+    );
+    assert_eq!(
+        fiber_1_after.exec_count, 0,
+        "execution stats should be reset"
+    );
 
     // Verify thread exec_count incremented
     let thread = deserialize_thread(&svm, &thread_pubkey);
@@ -410,8 +416,7 @@ fn test_reentrancy_swap_fiber_during_exec() {
 
     // fiber_2: CPI instruction that swaps fiber_1 -> fiber_0
     let (fiber_2_pubkey, _) = fiber_pda(&thread_pubkey, 2);
-    let cpi_ix =
-        make_cpi_swap_fiber_instruction(&thread_pubkey, &fiber_0_pubkey, &fiber_1_pubkey);
+    let cpi_ix = make_cpi_swap_fiber_instruction(&thread_pubkey, &fiber_0_pubkey, &fiber_1_pubkey);
     let ser_cpi = make_serializable_instruction(&cpi_ix);
     let ix = build_create_fiber(
         &authority.pubkey(),

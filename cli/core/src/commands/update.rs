@@ -211,9 +211,7 @@ pub async fn fetch_latest_node_version() -> Result<String> {
                 let v = r.version.strip_prefix("node-").unwrap_or(&r.version);
                 normalize_version(v)
             })
-            .ok_or_else(|| anyhow::anyhow!(
-                "No node releases found on GitHub yet"
-            ))
+            .ok_or_else(|| anyhow::anyhow!("No node releases found on GitHub yet"))
     })
     .await
     .context("Task failed")?
@@ -250,24 +248,21 @@ pub fn import_node_binary() -> Result<()> {
     let current_exe = std::env::current_exe().context("Failed to resolve current exe")?;
 
     // Search for antegen-node next to current exe, then in workspace target/release/
-    let candidates = [
-        current_exe.with_file_name("antegen-node"),
-        {
-            // Walk up from current exe to find workspace root target/release/
-            let mut dir = current_exe.parent().map(|p| p.to_path_buf());
-            loop {
-                match dir {
-                    Some(ref d) if d.file_name().map_or(false, |n| n == "target") => {
-                        break d.join("release/antegen-node");
-                    }
-                    Some(ref d) if d.parent().is_some() => {
-                        dir = d.parent().map(|p| p.to_path_buf());
-                    }
-                    _ => break PathBuf::from("/nonexistent"),
+    let candidates = [current_exe.with_file_name("antegen-node"), {
+        // Walk up from current exe to find workspace root target/release/
+        let mut dir = current_exe.parent().map(|p| p.to_path_buf());
+        loop {
+            match dir {
+                Some(ref d) if d.file_name().map_or(false, |n| n == "target") => {
+                    break d.join("release/antegen-node");
                 }
+                Some(ref d) if d.parent().is_some() => {
+                    dir = d.parent().map(|p| p.to_path_buf());
+                }
+                _ => break PathBuf::from("/nonexistent"),
             }
-        },
-    ];
+        }
+    }];
 
     let node_binary = match candidates.iter().find(|p| p.exists()) {
         Some(p) => p,
@@ -388,13 +383,7 @@ fn ensure_path_configured() {
         return;
     }
 
-    let rc_files = [
-        ".zshenv",
-        ".zshrc",
-        ".bashrc",
-        ".bash_profile",
-        ".profile",
-    ];
+    let rc_files = [".zshenv", ".zshrc", ".bashrc", ".bash_profile", ".profile"];
 
     for rc_name in rc_files {
         let rc_path = home.join(rc_name);
@@ -700,7 +689,10 @@ pub async fn install_cli_version(version: String) -> Result<()> {
     let temp_path = download_binary(&url, "antegen-update").await?;
     install_binary_to(&temp_path, &versioned_path)?;
 
-    println!("Downloaded CLI {}. Use `antegen use {}` to switch.", version, version);
+    println!(
+        "Downloaded CLI {}. Use `antegen use {}` to switch.",
+        version, version
+    );
     Ok(())
 }
 
@@ -765,7 +757,9 @@ fn get_installed_node_version() -> Option<String> {
     }
     let target = std::fs::read_link(&symlink_path).ok()?;
     let filename = target.file_name()?.to_str()?;
-    filename.strip_prefix("antegen-node-").map(|v| v.to_string())
+    filename
+        .strip_prefix("antegen-node-")
+        .map(|v| v.to_string())
 }
 
 /// Ensure a specific node version is downloaded. Returns the versioned path.
@@ -784,7 +778,8 @@ pub async fn ensure_node_downloaded(version: &str) -> Result<PathBuf> {
                     println!("Dev mode: using {} ...", dev_node.display());
                     let bin_dir = bin_dir()?;
                     fs::create_dir_all(&bin_dir)?;
-                    fs::copy(&dev_node, &versioned_path).context("Failed to copy dev node binary")?;
+                    fs::copy(&dev_node, &versioned_path)
+                        .context("Failed to copy dev node binary")?;
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
@@ -845,8 +840,10 @@ pub fn cargo_build_and_install_node() -> Result<String> {
         .args([
             "build",
             "--release",
-            "-p", "antegen-client",
-            "--features", "node",
+            "-p",
+            "antegen-client",
+            "--features",
+            "node",
         ])
         .current_dir(&workspace_root)
         .status()
@@ -858,10 +855,7 @@ pub fn cargo_build_and_install_node() -> Result<String> {
 
     let built_binary = workspace_root.join("target/release/antegen-node");
     if !built_binary.exists() {
-        anyhow::bail!(
-            "Expected binary not found at {}.",
-            built_binary.display()
-        );
+        anyhow::bail!("Expected binary not found at {}.", built_binary.display());
     }
 
     let output = std::process::Command::new(&built_binary)
@@ -1096,7 +1090,10 @@ pub async fn install_node_version(version: Option<String>, local: bool) -> Resul
     let temp_path = download_binary(&url, "antegen-node-update").await?;
     install_binary_to(&temp_path, &versioned_path)?;
 
-    println!("Downloaded node {}. Use `antegenctl use {}` to switch.", version, version);
+    println!(
+        "Downloaded node {}. Use `antegenctl use {}` to switch.",
+        version, version
+    );
     Ok(())
 }
 
@@ -1110,22 +1107,17 @@ pub async fn list_cli(remote: bool) -> Result<()> {
 
     // Detect cargo-installed version
     let cargo_bin = dirs::home_dir().map(|p| p.join(".cargo/bin/antegen"));
-    let cargo_version: Option<String> = cargo_bin
-        .as_ref()
-        .filter(|p| p.exists())
-        .and_then(|p| {
-            std::process::Command::new(p)
-                .arg("--version")
-                .output()
-                .ok()
-                .and_then(|o| {
-                    let out = String::from_utf8_lossy(&o.stdout);
-                    // Parse "antegen 5.0.1" → "v5.0.1"
-                    out.split_whitespace()
-                        .nth(1)
-                        .map(|v| format!("v{}", v))
-                })
-        });
+    let cargo_version: Option<String> = cargo_bin.as_ref().filter(|p| p.exists()).and_then(|p| {
+        std::process::Command::new(p)
+            .arg("--version")
+            .output()
+            .ok()
+            .and_then(|o| {
+                let out = String::from_utf8_lossy(&o.stdout);
+                // Parse "antegen 5.0.1" → "v5.0.1"
+                out.split_whitespace().nth(1).map(|v| format!("v{}", v))
+            })
+    });
 
     // Determine active version from symlink target
     let symlink_path = binary_path()?;
@@ -1141,9 +1133,12 @@ pub async fn list_cli(remote: bool) -> Result<()> {
         .as_ref()
         .map_or(false, |t| t.to_string_lossy().contains(".cargo/bin/"));
     let managed_active = if !cargo_is_active {
-        symlink_target
-            .as_ref()
-            .and_then(|t| t.file_name()?.to_str()?.strip_prefix("antegen-").map(String::from))
+        symlink_target.as_ref().and_then(|t| {
+            t.file_name()?
+                .to_str()?
+                .strip_prefix("antegen-")
+                .map(String::from)
+        })
     } else {
         None
     };
@@ -1285,8 +1280,8 @@ pub async fn list_node() -> Result<()> {
 
     // Show local cargo build if detected
     if let Some((path, ver)) = &local_build {
-        let already_installed = installed.contains(ver)
-            && active_version.as_deref() == Some(ver.as_str());
+        let already_installed =
+            installed.contains(ver) && active_version.as_deref() == Some(ver.as_str());
         if !already_installed {
             println!();
             println!("Local build:");

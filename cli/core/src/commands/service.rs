@@ -115,8 +115,12 @@ fn do_init(rpc: Option<String>, force: bool) -> Result<PathBuf> {
     };
 
     // Create directories
-    std::fs::create_dir_all(&config_dir)
-        .with_context(|| format!("Failed to create config directory: {}", config_dir.display()))?;
+    std::fs::create_dir_all(&config_dir).with_context(|| {
+        format!(
+            "Failed to create config directory: {}",
+            config_dir.display()
+        )
+    })?;
     std::fs::create_dir_all(&data_dir)
         .with_context(|| format!("Failed to create data directory: {}", data_dir.display()))?;
 
@@ -198,7 +202,9 @@ async fn install_service(config_path: &PathBuf, version: Option<&str>) -> Result
             working_directory: None,
             environment: None,
             autostart: true,
-            restart_policy: service_manager::RestartPolicy::OnFailure { delay_secs: Some(5) },
+            restart_policy: service_manager::RestartPolicy::OnFailure {
+                delay_secs: Some(5),
+            },
         })
         .context("Failed to install service")?;
 
@@ -534,6 +540,9 @@ async fn print_update_notices() {
         println!("CLI update available: {} -> Run `antegen update`", latest);
     }
     if let Some(latest) = node_update {
-        println!("Node update available: {} -> Run `antegenctl update`", latest);
+        println!(
+            "Node update available: {} -> Run `antegenctl update`",
+            latest
+        );
     }
 }

@@ -11,12 +11,7 @@ use anyhow::{anyhow, Result};
 use base64::prelude::*;
 use reqwest::Client;
 use serde_json::json;
-use solana_sdk::{
-    hash::Hash,
-    pubkey::Pubkey,
-    signature::Signature,
-    transaction::Transaction,
-};
+use solana_sdk::{hash::Hash, pubkey::Pubkey, signature::Signature, transaction::Transaction};
 
 use super::config::{EndpointConfig, LoadBalanceStrategy, RpcPoolConfig};
 use super::endpoint::{EndpointHealth, EndpointState};
@@ -66,7 +61,6 @@ struct BlockhashValue {
     #[serde(rename = "lastValidBlockHeight")]
     last_valid_block_height: u64,
 }
-
 
 /// Account response wrapper
 #[derive(Debug, serde::Deserialize)]
@@ -124,10 +118,7 @@ impl RpcPool {
 
     /// Create a pool with a single endpoint URL
     pub fn with_url(url: impl Into<String>) -> Result<Self> {
-        Self::new(
-            vec![EndpointConfig::new(url)],
-            RpcPoolConfig::default(),
-        )
+        Self::new(vec![EndpointConfig::new(url)], RpcPoolConfig::default())
     }
 
     /// Get the latest blockhash
@@ -141,15 +132,18 @@ impl RpcPool {
             }]
         });
 
-        let response: JsonRpcResponse<BlockhashResponse> = self.execute_with_failover(&body, true).await?;
+        let response: JsonRpcResponse<BlockhashResponse> =
+            self.execute_with_failover(&body, true).await?;
 
-        let result = response.result.ok_or_else(|| {
-            anyhow!("No result in blockhash response")
-        })?;
+        let result = response
+            .result
+            .ok_or_else(|| anyhow!("No result in blockhash response"))?;
 
-        let hash = result.value.blockhash.parse().map_err(|e| {
-            anyhow!("Failed to parse blockhash: {}", e)
-        })?;
+        let hash = result
+            .value
+            .blockhash
+            .parse()
+            .map_err(|e| anyhow!("Failed to parse blockhash: {}", e))?;
 
         Ok((hash, result.value.last_valid_block_height))
     }
@@ -173,19 +167,22 @@ impl RpcPool {
 
         let response: JsonRpcResponse<String> = self.execute_with_failover(&body, false).await?;
 
-        let signature_str = response.result.ok_or_else(|| {
-            anyhow!("No result in send transaction response")
-        })?;
+        let signature_str = response
+            .result
+            .ok_or_else(|| anyhow!("No result in send transaction response"))?;
 
-        signature_str.parse().map_err(|e| {
-            anyhow!("Failed to parse signature: {}", e)
-        })
+        signature_str
+            .parse()
+            .map_err(|e| anyhow!("Failed to parse signature: {}", e))
     }
 
     /// Send a transaction and wait for confirmation
     ///
     /// Polls signature status until confirmed or timeout (30 seconds).
-    pub async fn send_and_confirm_transaction(&self, transaction: &Transaction) -> Result<Signature> {
+    pub async fn send_and_confirm_transaction(
+        &self,
+        transaction: &Transaction,
+    ) -> Result<Signature> {
         let signature = self.send_transaction(transaction).await?;
 
         // Poll for confirmation with timeout
@@ -227,7 +224,8 @@ impl RpcPool {
             }]
         });
 
-        let response: JsonRpcResponse<AccountResponse> = self.execute_with_failover(&body, true).await?;
+        let response: JsonRpcResponse<AccountResponse> =
+            self.execute_with_failover(&body, true).await?;
 
         Ok(response.result.and_then(|r| r.value))
     }
@@ -248,15 +246,20 @@ impl RpcPool {
             value: u64,
         }
 
-        let response: JsonRpcResponse<BalanceResponse> = self.execute_with_failover(&body, true).await?;
+        let response: JsonRpcResponse<BalanceResponse> =
+            self.execute_with_failover(&body, true).await?;
 
-        response.result
+        response
+            .result
             .map(|r| r.value)
             .ok_or_else(|| anyhow!("No result in balance response"))
     }
 
     /// Get multiple accounts
-    pub async fn get_multiple_accounts(&self, pubkeys: &[Pubkey]) -> Result<Vec<Option<SafeUiAccount>>> {
+    pub async fn get_multiple_accounts(
+        &self,
+        pubkeys: &[Pubkey],
+    ) -> Result<Vec<Option<SafeUiAccount>>> {
         let addresses: Vec<String> = pubkeys.iter().map(|p| p.to_string()).collect();
 
         let body = json!({
@@ -274,7 +277,8 @@ impl RpcPool {
             value: Vec<Option<SafeUiAccount>>,
         }
 
-        let response: JsonRpcResponse<MultipleAccountsResponse> = self.execute_with_failover(&body, true).await?;
+        let response: JsonRpcResponse<MultipleAccountsResponse> =
+            self.execute_with_failover(&body, true).await?;
 
         Ok(response.result.map(|r| r.value).unwrap_or_default())
     }
@@ -301,15 +305,17 @@ impl RpcPool {
             "params": [program_id.to_string(), params]
         });
 
-        let response: JsonRpcResponse<Vec<ProgramAccountsItem>> = self.execute_with_failover(&body, true).await?;
+        let response: JsonRpcResponse<Vec<ProgramAccountsItem>> =
+            self.execute_with_failover(&body, true).await?;
 
         let items = response.result.unwrap_or_default();
         let mut accounts = Vec::with_capacity(items.len());
 
         for item in items {
-            let pubkey: Pubkey = item.pubkey.parse().map_err(|e| {
-                anyhow!("Failed to parse pubkey: {}", e)
-            })?;
+            let pubkey: Pubkey = item
+                .pubkey
+                .parse()
+                .map_err(|e| anyhow!("Failed to parse pubkey: {}", e))?;
             accounts.push((pubkey, item.account));
         }
 
@@ -343,7 +349,8 @@ impl RpcPool {
             }]
         });
 
-        let response: RpcResponse<SafeSimulationResult> = self.execute_with_failover(&body, true).await?;
+        let response: RpcResponse<SafeSimulationResult> =
+            self.execute_with_failover(&body, true).await?;
 
         // Check for simulation error — surface program logs before returning
         if let Some(err) = &response.result.value.err {
@@ -445,11 +452,7 @@ impl RpcPool {
                 }
                 Err(e) => {
                     endpoint.record_failure();
-                    log::warn!(
-                        "RPC request failed for {}: {}",
-                        endpoint.url(),
-                        e
-                    );
+                    log::warn!("RPC request failed for {}: {}", endpoint.url(), e);
                     last_error = Some(e);
                 }
             }
@@ -485,7 +488,9 @@ impl RpcPool {
         let text = response.text().await?;
 
         // Try to parse as JSON-RPC error first
-        if let Ok(error_response) = serde_json::from_str::<JsonRpcResponse<serde_json::Value>>(&text) {
+        if let Ok(error_response) =
+            serde_json::from_str::<JsonRpcResponse<serde_json::Value>>(&text)
+        {
             if let Some(error) = error_response.error {
                 return Err(anyhow!(RpcError::RpcError(format!(
                     "code {}: {}",
@@ -495,7 +500,11 @@ impl RpcPool {
         }
 
         serde_json::from_str(&text).map_err(|e| {
-            anyhow!("JSON parse error: {} - Response: {}", e, &text[..text.len().min(500)])
+            anyhow!(
+                "JSON parse error: {} - Response: {}",
+                e,
+                &text[..text.len().min(500)]
+            )
         })
     }
 

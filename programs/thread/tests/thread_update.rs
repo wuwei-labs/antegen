@@ -1,4 +1,8 @@
-use solana_sdk::{pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+    transaction::Transaction,
+};
 
 mod common;
 use common::*;
@@ -58,12 +62,24 @@ fn test_thread_update_pause() {
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let thread_pubkey =
-        create_thread_for_update(&mut svm, &authority, &payer, "tu-pause", Trigger::Immediate { jitter: 0 });
-    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams {
-        paused: Some(true),
-        ..Default::default()
-    }).unwrap();
+    let thread_pubkey = create_thread_for_update(
+        &mut svm,
+        &authority,
+        &payer,
+        "tu-pause",
+        Trigger::Immediate { jitter: 0 },
+    );
+    send_update(
+        &mut svm,
+        &authority,
+        &payer,
+        &thread_pubkey,
+        ThreadUpdateParams {
+            paused: Some(true),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
     assert!(thread.paused);
@@ -75,21 +91,40 @@ fn test_thread_update_unpause() {
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let thread_pubkey =
-        create_thread_for_update(&mut svm, &authority, &payer, "tu-unpause", Trigger::Immediate { jitter: 0 });
+    let thread_pubkey = create_thread_for_update(
+        &mut svm,
+        &authority,
+        &payer,
+        "tu-unpause",
+        Trigger::Immediate { jitter: 0 },
+    );
 
     // Pause
-    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams {
-        paused: Some(true),
-        ..Default::default()
-    }).unwrap();
+    send_update(
+        &mut svm,
+        &authority,
+        &payer,
+        &thread_pubkey,
+        ThreadUpdateParams {
+            paused: Some(true),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert!(deserialize_thread(&svm, &thread_pubkey).paused);
 
     // Unpause
-    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams {
-        paused: Some(false),
-        ..Default::default()
-    }).unwrap();
+    send_update(
+        &mut svm,
+        &authority,
+        &payer,
+        &thread_pubkey,
+        ThreadUpdateParams {
+            paused: Some(false),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert!(!deserialize_thread(&svm, &thread_pubkey).paused);
 }
 
@@ -99,12 +134,28 @@ fn test_thread_update_trigger_immediate() {
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let thread_pubkey =
-        create_thread_for_update(&mut svm, &authority, &payer, "tu-imm", Trigger::Interval { seconds: 60, skippable: false, jitter: 0 });
-    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams {
-        trigger: Some(Trigger::Immediate { jitter: 0 }),
-        ..Default::default()
-    }).unwrap();
+    let thread_pubkey = create_thread_for_update(
+        &mut svm,
+        &authority,
+        &payer,
+        "tu-imm",
+        Trigger::Interval {
+            seconds: 60,
+            skippable: false,
+            jitter: 0,
+        },
+    );
+    send_update(
+        &mut svm,
+        &authority,
+        &payer,
+        &thread_pubkey,
+        ThreadUpdateParams {
+            trigger: Some(Trigger::Immediate { jitter: 0 }),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
     match thread.trigger {
@@ -120,12 +171,28 @@ fn test_thread_update_trigger_interval() {
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let clock = get_clock(&svm);
-    let thread_pubkey =
-        create_thread_for_update(&mut svm, &authority, &payer, "tu-int", Trigger::Immediate { jitter: 0 });
-    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams {
-        trigger: Some(Trigger::Interval { seconds: 120, skippable: false, jitter: 0 }),
-        ..Default::default()
-    }).unwrap();
+    let thread_pubkey = create_thread_for_update(
+        &mut svm,
+        &authority,
+        &payer,
+        "tu-int",
+        Trigger::Immediate { jitter: 0 },
+    );
+    send_update(
+        &mut svm,
+        &authority,
+        &payer,
+        &thread_pubkey,
+        ThreadUpdateParams {
+            trigger: Some(Trigger::Interval {
+                seconds: 120,
+                skippable: false,
+                jitter: 0,
+            }),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
     match thread.schedule {
@@ -143,12 +210,27 @@ fn test_thread_update_trigger_timestamp() {
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let target_ts = 1800000000i64;
-    let thread_pubkey =
-        create_thread_for_update(&mut svm, &authority, &payer, "tu-ts", Trigger::Immediate { jitter: 0 });
-    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams {
-        trigger: Some(Trigger::Timestamp { unix_ts: target_ts, jitter: 0 }),
-        ..Default::default()
-    }).unwrap();
+    let thread_pubkey = create_thread_for_update(
+        &mut svm,
+        &authority,
+        &payer,
+        "tu-ts",
+        Trigger::Immediate { jitter: 0 },
+    );
+    send_update(
+        &mut svm,
+        &authority,
+        &payer,
+        &thread_pubkey,
+        ThreadUpdateParams {
+            trigger: Some(Trigger::Timestamp {
+                unix_ts: target_ts,
+                jitter: 0,
+            }),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
     match thread.schedule {
@@ -166,16 +248,28 @@ fn test_thread_update_trigger_cron() {
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let clock = get_clock(&svm);
-    let thread_pubkey =
-        create_thread_for_update(&mut svm, &authority, &payer, "tu-cron", Trigger::Immediate { jitter: 0 });
-    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams {
-        trigger: Some(Trigger::Cron {
-            schedule: "0 * * * * * *".to_string(),
-            skippable: false,
-            jitter: 0,
-        }),
-        ..Default::default()
-    }).unwrap();
+    let thread_pubkey = create_thread_for_update(
+        &mut svm,
+        &authority,
+        &payer,
+        "tu-cron",
+        Trigger::Immediate { jitter: 0 },
+    );
+    send_update(
+        &mut svm,
+        &authority,
+        &payer,
+        &thread_pubkey,
+        ThreadUpdateParams {
+            trigger: Some(Trigger::Cron {
+                schedule: "0 * * * * * *".to_string(),
+                skippable: false,
+                jitter: 0,
+            }),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
     match thread.schedule {
@@ -192,12 +286,24 @@ fn test_thread_update_trigger_slot() {
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let thread_pubkey =
-        create_thread_for_update(&mut svm, &authority, &payer, "tu-slot", Trigger::Immediate { jitter: 0 });
-    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams {
-        trigger: Some(Trigger::Slot { slot: 1000 }),
-        ..Default::default()
-    }).unwrap();
+    let thread_pubkey = create_thread_for_update(
+        &mut svm,
+        &authority,
+        &payer,
+        "tu-slot",
+        Trigger::Immediate { jitter: 0 },
+    );
+    send_update(
+        &mut svm,
+        &authority,
+        &payer,
+        &thread_pubkey,
+        ThreadUpdateParams {
+            trigger: Some(Trigger::Slot { slot: 1000 }),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
     match thread.schedule {
@@ -214,14 +320,26 @@ fn test_thread_update_authority_only() {
     let authority = Keypair::new();
     let bad_authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
-    svm.airdrop(&bad_authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+    svm.airdrop(&bad_authority.pubkey(), DEFAULT_AIRDROP)
+        .unwrap();
 
-    let thread_pubkey =
-        create_thread_for_update(&mut svm, &authority, &payer, "tu-auth", Trigger::Immediate { jitter: 0 });
-    let result = send_update(&mut svm, &bad_authority, &payer, &thread_pubkey, ThreadUpdateParams {
-        paused: Some(true),
-        ..Default::default()
-    });
+    let thread_pubkey = create_thread_for_update(
+        &mut svm,
+        &authority,
+        &payer,
+        "tu-auth",
+        Trigger::Immediate { jitter: 0 },
+    );
+    let result = send_update(
+        &mut svm,
+        &bad_authority,
+        &payer,
+        &thread_pubkey,
+        ThreadUpdateParams {
+            paused: Some(true),
+            ..Default::default()
+        },
+    );
     assert!(result.is_err());
 }
 
@@ -231,11 +349,23 @@ fn test_thread_update_no_params() {
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let thread_pubkey =
-        create_thread_for_update(&mut svm, &authority, &payer, "tu-noop", Trigger::Immediate { jitter: 0 });
+    let thread_pubkey = create_thread_for_update(
+        &mut svm,
+        &authority,
+        &payer,
+        "tu-noop",
+        Trigger::Immediate { jitter: 0 },
+    );
     let thread_before = deserialize_thread(&svm, &thread_pubkey);
 
-    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams::default()).unwrap();
+    send_update(
+        &mut svm,
+        &authority,
+        &payer,
+        &thread_pubkey,
+        ThreadUpdateParams::default(),
+    )
+    .unwrap();
 
     let thread_after = deserialize_thread(&svm, &thread_pubkey);
     assert_eq!(thread_before.paused, thread_after.paused);
@@ -247,12 +377,28 @@ fn test_thread_update_both_params() {
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let thread_pubkey =
-        create_thread_for_update(&mut svm, &authority, &payer, "tu-both", Trigger::Immediate { jitter: 0 });
-    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams {
-        paused: Some(true),
-        trigger: Some(Trigger::Interval { seconds: 30, skippable: false, jitter: 0 }),
-    }).unwrap();
+    let thread_pubkey = create_thread_for_update(
+        &mut svm,
+        &authority,
+        &payer,
+        "tu-both",
+        Trigger::Immediate { jitter: 0 },
+    );
+    send_update(
+        &mut svm,
+        &authority,
+        &payer,
+        &thread_pubkey,
+        ThreadUpdateParams {
+            paused: Some(true),
+            trigger: Some(Trigger::Interval {
+                seconds: 30,
+                skippable: false,
+                jitter: 0,
+            }),
+        },
+    )
+    .unwrap();
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
     assert!(thread.paused);
@@ -270,24 +416,49 @@ fn test_thread_update_trigger_auto_unpauses() {
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let thread_pubkey =
-        create_thread_for_update(&mut svm, &authority, &payer, "tu-auto-unpause", Trigger::Immediate { jitter: 0 });
+    let thread_pubkey = create_thread_for_update(
+        &mut svm,
+        &authority,
+        &payer,
+        "tu-auto-unpause",
+        Trigger::Immediate { jitter: 0 },
+    );
 
     // First, pause the thread
-    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams {
-        paused: Some(true),
-        ..Default::default()
-    }).unwrap();
+    send_update(
+        &mut svm,
+        &authority,
+        &payer,
+        &thread_pubkey,
+        ThreadUpdateParams {
+            paused: Some(true),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let thread = deserialize_thread(&svm, &thread_pubkey);
     assert!(thread.paused, "Thread should be paused");
 
     // Update trigger without explicit paused → should auto-unpause
-    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams {
-        trigger: Some(Trigger::Timestamp { unix_ts: 1900000000, jitter: 0 }),
-        ..Default::default()
-    }).unwrap();
+    send_update(
+        &mut svm,
+        &authority,
+        &payer,
+        &thread_pubkey,
+        ThreadUpdateParams {
+            trigger: Some(Trigger::Timestamp {
+                unix_ts: 1900000000,
+                jitter: 0,
+            }),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let thread = deserialize_thread(&svm, &thread_pubkey);
-    assert!(!thread.paused, "Thread should auto-unpause when trigger is updated");
+    assert!(
+        !thread.paused,
+        "Thread should auto-unpause when trigger is updated"
+    );
 }
 
 #[test]
@@ -296,14 +467,32 @@ fn test_thread_update_trigger_with_explicit_pause_stays_paused() {
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let thread_pubkey =
-        create_thread_for_update(&mut svm, &authority, &payer, "tu-stay-paused", Trigger::Immediate { jitter: 0 });
+    let thread_pubkey = create_thread_for_update(
+        &mut svm,
+        &authority,
+        &payer,
+        "tu-stay-paused",
+        Trigger::Immediate { jitter: 0 },
+    );
 
     // Update trigger AND explicitly set paused: true → should stay paused
-    send_update(&mut svm, &authority, &payer, &thread_pubkey, ThreadUpdateParams {
-        paused: Some(true),
-        trigger: Some(Trigger::Timestamp { unix_ts: 1900000000, jitter: 0 }),
-    }).unwrap();
+    send_update(
+        &mut svm,
+        &authority,
+        &payer,
+        &thread_pubkey,
+        ThreadUpdateParams {
+            paused: Some(true),
+            trigger: Some(Trigger::Timestamp {
+                unix_ts: 1900000000,
+                jitter: 0,
+            }),
+        },
+    )
+    .unwrap();
     let thread = deserialize_thread(&svm, &thread_pubkey);
-    assert!(thread.paused, "Thread should stay paused when paused is explicitly set");
+    assert!(
+        thread.paused,
+        "Thread should stay paused when paused is explicitly set"
+    );
 }

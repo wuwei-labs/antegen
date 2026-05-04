@@ -9,7 +9,7 @@
 
 mod cache;
 
-pub use cache::{AccountCache, CachedAccount, CacheTriggerType};
+pub use cache::{AccountCache, CacheTriggerType, CachedAccount};
 
 use crate::config::{ClientConfig, EndpointRole};
 use crate::rpc::{EndpointConfig, RpcPool, RpcPoolConfig};

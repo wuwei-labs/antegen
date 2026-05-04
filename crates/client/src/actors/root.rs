@@ -52,8 +52,12 @@ impl Actor for RootSupervisor {
         // Load executor keypair
         let keypair_path = shellexpand::tilde(&config.executor.keypair_path).to_string();
         log::debug!("Loading executor keypair from: {}", keypair_path);
-        let keypair = read_keypair_file(&keypair_path)
-            .map_err(|e| format!("Failed to load executor keypair from {}: {}", keypair_path, e))?;
+        let keypair = read_keypair_file(&keypair_path).map_err(|e| {
+            format!(
+                "Failed to load executor keypair from {}: {}",
+                keypair_path, e
+            )
+        })?;
         let executor_pubkey = keypair.pubkey();
         log::info!("Executor pubkey: {}", executor_pubkey);
 
@@ -80,7 +84,12 @@ impl Actor for RootSupervisor {
         let (staging_ref, _staging_handle) = Actor::spawn_linked(
             Some("staging-actor".to_string()),
             StagingActor,
-            (config.clone(), resources.clone(), load_balancer.clone(), eviction_rx),
+            (
+                config.clone(),
+                resources.clone(),
+                load_balancer.clone(),
+                eviction_rx,
+            ),
             supervisor.clone(),
         )
         .await
@@ -146,9 +155,7 @@ impl Actor for RootSupervisor {
 
         log::info!("System ready. Press Ctrl+C to shutdown.");
 
-        Ok(RootState {
-            observability_ref,
-        })
+        Ok(RootState { observability_ref })
     }
 
     async fn handle(
@@ -225,7 +232,10 @@ fn spawn_signal_handler(root: ActorRef<RootMessage>) {
                 SIGTERM => "SIGTERM",
                 _ => "Unknown",
             };
-            log::warn!("Received {} signal, initiating graceful shutdown...", signal_name);
+            log::warn!(
+                "Received {} signal, initiating graceful shutdown...",
+                signal_name
+            );
 
             if let Err(e) = root.send_message(RootMessage::Shutdown) {
                 log::error!("Failed to send shutdown message: {:?}", e);

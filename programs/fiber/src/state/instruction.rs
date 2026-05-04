@@ -73,9 +73,7 @@ pub struct CompiledInstructionV0 {
 }
 
 /// Compile an instruction into a space-efficient format
-pub fn compile_instruction(
-    instruction: Instruction,
-) -> Result<CompiledInstructionV0> {
+pub fn compile_instruction(instruction: Instruction) -> Result<CompiledInstructionV0> {
     let mut pubkeys_to_metadata: HashMap<Pubkey, AccountMeta> = HashMap::new();
 
     // Add program ID

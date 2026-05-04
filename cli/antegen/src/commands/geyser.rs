@@ -61,8 +61,8 @@ pub async fn init(output: PathBuf, config_path: PathBuf) -> Result<()> {
     }
 
     // Convert config path to absolute path for validator config
-    let absolute_config_path = std::fs::canonicalize(&final_config_path)
-        .unwrap_or_else(|_| final_config_path.clone());
+    let absolute_config_path =
+        std::fs::canonicalize(&final_config_path).unwrap_or_else(|_| final_config_path.clone());
 
     // Generate validator plugin config with config file path
     let plugin_config = serde_json::json!({

@@ -338,8 +338,7 @@ impl ClientConfig {
 
     /// Save configuration to a TOML file
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
-        let content = toml::to_string_pretty(self)
-            .context("Failed to serialize config")?;
+        let content = toml::to_string_pretty(self).context("Failed to serialize config")?;
 
         fs::write(path.as_ref(), content)
             .with_context(|| format!("Failed to write config file: {}", path.as_ref().display()))?;
@@ -361,15 +360,23 @@ impl ClientConfig {
 
         // Ensure at least one RPC datasource endpoint for standalone mode
         // (Plugin mode will use Geyser instead, but config should be valid for standalone)
-        let has_rpc_datasource = self.rpc.endpoints.iter()
+        let has_rpc_datasource = self
+            .rpc
+            .endpoints
+            .iter()
             .any(|e| matches!(e.role, EndpointRole::Datasource | EndpointRole::Both));
 
         if !has_rpc_datasource {
-            anyhow::bail!("At least one RPC datasource endpoint must be configured for standalone mode");
+            anyhow::bail!(
+                "At least one RPC datasource endpoint must be configured for standalone mode"
+            );
         }
 
         // Ensure at least one submission endpoint (required for both modes)
-        let has_submission_endpoint = self.rpc.endpoints.iter()
+        let has_submission_endpoint = self
+            .rpc
+            .endpoints
+            .iter()
             .any(|e| matches!(e.role, EndpointRole::Submission | EndpointRole::Both));
 
         if !has_submission_endpoint {
@@ -384,7 +391,10 @@ impl ClientConfig {
 
             // Basic URL validation
             if !endpoint.url.starts_with("http://") && !endpoint.url.starts_with("https://") {
-                anyhow::bail!("RPC endpoint URL must start with http:// or https://: {}", endpoint.url);
+                anyhow::bail!(
+                    "RPC endpoint URL must start with http:// or https://: {}",
+                    endpoint.url
+                );
             }
         }
 
@@ -415,14 +425,12 @@ impl Default for ClientConfig {
                 forgo_commission: false,
             },
             rpc: RpcConfig {
-                endpoints: vec![
-                    RpcEndpoint {
-                        url: "http://localhost:8899".to_string(),
-                        ws_url: None,
-                        role: EndpointRole::Both,
-                        priority: 1,
-                    },
-                ],
+                endpoints: vec![RpcEndpoint {
+                    url: "http://localhost:8899".to_string(),
+                    ws_url: None,
+                    role: EndpointRole::Both,
+                    priority: 1,
+                }],
             },
             datasources: DatasourceConfig {
                 commitment: "confirmed".to_string(),

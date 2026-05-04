@@ -76,7 +76,10 @@ impl CircuitBreaker {
                     *self.last_state_change.write() = Instant::now();
                     *self.failure_count.write() = 0;
                     *success_count = 0;
-                    log::info!("Circuit breaker closed after {} successes", self.config.success_threshold);
+                    log::info!(
+                        "Circuit breaker closed after {} successes",
+                        self.config.success_threshold
+                    );
                 }
             }
             CircuitState::Closed => {

@@ -1,11 +1,11 @@
 //! Client commands - executor fund and withdraw operations
 
-use anyhow::{Context, Result};
-use antegen_client::ClientConfig;
 use antegen_client::rpc::RpcPool;
+use antegen_client::ClientConfig;
+use anyhow::{Context, Result};
+use solana_sdk::message::Message;
 use solana_sdk::native_token::LAMPORTS_PER_SOL;
 use solana_sdk::signature::{read_keypair_file, Signer};
-use solana_sdk::message::Message;
 use solana_sdk::transaction::Transaction;
 use std::path::PathBuf;
 
@@ -54,8 +54,7 @@ pub async fn fund(
 
     // RPC: flag → Solana CLI config
     let rpc_url = super::get_rpc_url(rpc_override)?;
-    let client = RpcPool::with_url(&rpc_url)
-        .context("Failed to create RPC client")?;
+    let client = RpcPool::with_url(&rpc_url).context("Failed to create RPC client")?;
 
     // Determine lamports to transfer
     let lamports = if let Some(sol) = amount {
@@ -70,12 +69,18 @@ pub async fn fund(
         if balance >= MIN_BALANCE_LAMPORTS {
             let sol = balance as f64 / LAMPORTS_PER_SOL as f64;
             println!("Executor balance: {:.9} SOL ({} lamports)", sol, balance);
-            println!("Already at or above minimum ({} lamports). No funding needed.", MIN_BALANCE_LAMPORTS);
+            println!(
+                "Already at or above minimum ({} lamports). No funding needed.",
+                MIN_BALANCE_LAMPORTS
+            );
             return Ok(());
         }
 
         let deficit = MIN_BALANCE_LAMPORTS - balance;
-        println!("Executor balance: {} lamports (below minimum {})", balance, MIN_BALANCE_LAMPORTS);
+        println!(
+            "Executor balance: {} lamports (below minimum {})",
+            balance, MIN_BALANCE_LAMPORTS
+        );
         deficit
     };
 
@@ -86,7 +91,8 @@ pub async fn fund(
     println!("  To (executor):     {}", destination);
 
     // Create and send transfer
-    let (recent_blockhash, _) = client.get_latest_blockhash()
+    let (recent_blockhash, _) = client
+        .get_latest_blockhash()
         .await
         .context("Failed to get recent blockhash")?;
 
@@ -99,11 +105,13 @@ pub async fn fund(
     let message = Message::new(&[transfer_ix], Some(&funding_keypair.pubkey()));
     let tx = Transaction::new(&[&funding_keypair], message, recent_blockhash);
 
-    let signature = client.send_and_confirm_transaction(&tx)
+    let signature = client
+        .send_and_confirm_transaction(&tx)
         .await
         .context("Failed to send transaction")?;
 
-    let new_balance = client.get_balance(&destination)
+    let new_balance = client
+        .get_balance(&destination)
         .await
         .context("Failed to get new balance")?;
     let new_sol = new_balance as f64 / LAMPORTS_PER_SOL as f64;
@@ -151,8 +159,7 @@ pub async fn withdraw(
     // RPC: flag → Solana CLI config
     let rpc_url = super::get_rpc_url(rpc_override)?;
 
-    let client = RpcPool::with_url(&rpc_url)
-        .context("Failed to create RPC client")?;
+    let client = RpcPool::with_url(&rpc_url).context("Failed to create RPC client")?;
 
     // Get current balance
     let balance = client
@@ -194,28 +201,29 @@ pub async fn withdraw(
     println!("  To (CLI wallet): {}", destination);
 
     // Create and send transfer
-    let (recent_blockhash, _) = client.get_latest_blockhash()
+    let (recent_blockhash, _) = client
+        .get_latest_blockhash()
         .await
         .context("Failed to get recent blockhash")?;
 
-    let transfer_ix = solana_system_interface::instruction::transfer(
-        &executor_pubkey,
-        &destination,
-        lamports,
-    );
+    let transfer_ix =
+        solana_system_interface::instruction::transfer(&executor_pubkey, &destination, lamports);
 
     let message = Message::new(&[transfer_ix], Some(&executor_pubkey));
     let tx = Transaction::new(&[&executor_keypair], message, recent_blockhash);
 
-    let signature = client.send_and_confirm_transaction(&tx)
+    let signature = client
+        .send_and_confirm_transaction(&tx)
         .await
         .context("Failed to send transaction")?;
 
     // Get new balances
-    let new_executor_balance = client.get_balance(&executor_pubkey)
+    let new_executor_balance = client
+        .get_balance(&executor_pubkey)
         .await
         .context("Failed to get executor balance")?;
-    let new_destination_balance = client.get_balance(&destination)
+    let new_destination_balance = client
+        .get_balance(&destination)
         .await
         .context("Failed to get destination balance")?;
 
@@ -223,8 +231,14 @@ pub async fn withdraw(
     println!("Transaction: {}", signature);
     println!();
     println!("New balances:");
-    println!("  Executor:   {:.9} SOL", new_executor_balance as f64 / LAMPORTS_PER_SOL as f64);
-    println!("  CLI wallet: {:.9} SOL", new_destination_balance as f64 / LAMPORTS_PER_SOL as f64);
+    println!(
+        "  Executor:   {:.9} SOL",
+        new_executor_balance as f64 / LAMPORTS_PER_SOL as f64
+    );
+    println!(
+        "  CLI wallet: {:.9} SOL",
+        new_destination_balance as f64 / LAMPORTS_PER_SOL as f64
+    );
 
     Ok(())
 }

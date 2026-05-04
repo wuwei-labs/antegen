@@ -1,7 +1,7 @@
 //! antegenctl — Antegen system controller: node version management and service control
 
+use antegen_cli_core::{dispatch_config, LogLevel, NodeConfigCommands};
 use anyhow::Result;
-use antegen_cli_core::{LogLevel, NodeConfigCommands, dispatch_config};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -11,7 +11,10 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "antegenctl")]
-#[command(about = "Antegen system controller — node version management and service control", version)]
+#[command(
+    about = "Antegen system controller — node version management and service control",
+    version
+)]
 struct AntegenctlCli {
     /// Set the logging level (overrides RUST_LOG environment variable)
     #[arg(long, global = true, value_name = "LEVEL")]
@@ -159,8 +162,12 @@ async fn run_antegenctl() -> Result<()> {
             };
             antegen_cli_core::commands::run::execute(cfg, cli.rpc, cli.log_level, version).await
         }
-        AntegenctlCommands::Init { rpc, force } => antegen_cli_core::commands::service::init(rpc, force),
-        AntegenctlCommands::Start { rpc, version } => antegen_cli_core::commands::service::start(rpc, version).await,
+        AntegenctlCommands::Init { rpc, force } => {
+            antegen_cli_core::commands::service::init(rpc, force)
+        }
+        AntegenctlCommands::Start { rpc, version } => {
+            antegen_cli_core::commands::service::start(rpc, version).await
+        }
         AntegenctlCommands::Stop => antegen_cli_core::commands::service::stop(),
         AntegenctlCommands::Restart => antegen_cli_core::commands::service::restart(),
         AntegenctlCommands::Status => antegen_cli_core::commands::service::status(),
@@ -175,10 +182,16 @@ async fn run_antegenctl() -> Result<()> {
             let config = antegen_cli_core::commands::default_config_path()?;
             antegen_cli_core::commands::client::withdraw(config, amount, cli.rpc).await
         }
-        AntegenctlCommands::Update { version, local } => antegen_cli_core::commands::update::update_node(version, local).await,
+        AntegenctlCommands::Update { version, local } => {
+            antegen_cli_core::commands::update::update_node(version, local).await
+        }
         AntegenctlCommands::List => antegen_cli_core::commands::update::list_node().await,
-        AntegenctlCommands::Use { version } => antegen_cli_core::commands::update::use_node_version(version).await,
-        AntegenctlCommands::Install { version, local } => antegen_cli_core::commands::update::install_node_version(version, local).await,
+        AntegenctlCommands::Use { version } => {
+            antegen_cli_core::commands::update::use_node_version(version).await
+        }
+        AntegenctlCommands::Install { version, local } => {
+            antegen_cli_core::commands::update::install_node_version(version, local).await
+        }
         AntegenctlCommands::Config(config_cmd) => dispatch_config(config_cmd, cli.rpc),
     }
 }

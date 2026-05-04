@@ -11,9 +11,9 @@ use solana_sdk::signature::{read_keypair_file, Keypair};
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use antegen_cli_core::commands::get_rpc_url;
 #[cfg(feature = "dev")]
 use antegen_cli_core::commands::get_keypair;
+use antegen_cli_core::commands::get_rpc_url;
 
 // =============================================================================
 // Thread inspection commands (always available)
@@ -29,8 +29,8 @@ pub async fn get(address: String, rpc_url: Option<String>) -> Result<()> {
     let rpc_url = get_rpc_url(rpc_url)?;
     println!("Fetching thread {} from {}", thread_pubkey, rpc_url);
 
-    let client = RpcPool::with_url(&rpc_url)
-        .map_err(|e| anyhow!("Failed to create RPC client: {}", e))?;
+    let client =
+        RpcPool::with_url(&rpc_url).map_err(|e| anyhow!("Failed to create RPC client: {}", e))?;
 
     // Fetch the account
     let account = client
@@ -40,9 +40,11 @@ pub async fn get(address: String, rpc_url: Option<String>) -> Result<()> {
         .ok_or_else(|| anyhow!("Account not found: {}", thread_pubkey))?;
 
     // Decode account data
-    let data = account.decode_data()
+    let data = account
+        .decode_data()
         .map_err(|e| anyhow!("Failed to decode account data: {}", e))?;
-    let owner = account.owner_pubkey()
+    let owner = account
+        .owner_pubkey()
         .map_err(|e| anyhow!("Failed to parse owner: {}", e))?;
 
     println!("\n=== Account Info ===");
@@ -131,7 +133,9 @@ pub async fn admin_delete(
     keypair_path: Option<std::path::PathBuf>,
 ) -> Result<()> {
     use anchor_lang::{InstructionData, ToAccountMetas};
-    use solana_sdk::{instruction::Instruction, message::Message, signer::Signer, transaction::Transaction};
+    use solana_sdk::{
+        instruction::Instruction, message::Message, signer::Signer, transaction::Transaction,
+    };
 
     let thread_pubkey =
         Pubkey::from_str(&address).map_err(|e| anyhow!("Invalid pubkey '{}': {}", address, e))?;
@@ -143,8 +147,8 @@ pub async fn admin_delete(
     println!("Admin: {}", admin.pubkey());
     println!("RPC: {}", rpc_url);
 
-    let client = RpcPool::with_url(&rpc_url)
-        .map_err(|e| anyhow!("Failed to create RPC client: {}", e))?;
+    let client =
+        RpcPool::with_url(&rpc_url).map_err(|e| anyhow!("Failed to create RPC client: {}", e))?;
 
     // Get config PDA
     let (config_pubkey, _) = Pubkey::find_program_address(
@@ -553,7 +557,8 @@ mod test_commands {
         signal: Option<Signal>,
     ) -> Instruction {
         // Derive fiber PDA
-        let fiber_pubkey = antegen_fiber_program::state::FiberState::pubkey(thread_pubkey, fiber_index);
+        let fiber_pubkey =
+            antegen_fiber_program::state::FiberState::pubkey(thread_pubkey, fiber_index);
 
         // Build thread_memo instruction for this fiber
         let memo_ix = build_thread_memo_instruction(
@@ -596,7 +601,8 @@ mod test_commands {
         fiber_index: u8,
         signal: Option<Signal>,
     ) -> Result<()> {
-        let ix = build_fiber_create_instruction(payer, authority, thread_pubkey, fiber_index, signal);
+        let ix =
+            build_fiber_create_instruction(payer, authority, thread_pubkey, fiber_index, signal);
 
         // Send transaction
         let (blockhash, _) = client.get_latest_blockhash().await?;
@@ -965,7 +971,8 @@ mod test_commands {
         // Add fiber_create instructions for additional fibers
         for i in 1..fiber_count {
             let fiber_signal = signal_config.per_fiber_signals.get(&i).cloned();
-            let fiber_ix = build_fiber_create_instruction(payer, authority, thread_pubkey, i, fiber_signal);
+            let fiber_ix =
+                build_fiber_create_instruction(payer, authority, thread_pubkey, i, fiber_signal);
             instructions.push(fiber_ix);
         }
 
@@ -974,7 +981,10 @@ mod test_commands {
         let message = Message::new(&instructions, Some(&payer.pubkey()));
         let tx = Transaction::new(&[payer, authority], message, blockhash);
 
-        println!("Sending transaction with {} instructions...", instructions.len());
+        println!(
+            "Sending transaction with {} instructions...",
+            instructions.len()
+        );
         let sig = client
             .send_and_confirm_transaction(&tx)
             .await
@@ -1002,7 +1012,8 @@ mod test_commands {
             .await
             .map_err(|e| anyhow!("Failed to fetch thread: {}", e))?
             .ok_or_else(|| anyhow!("Thread account not found"))?;
-        let data = account.decode_data()
+        let data = account
+            .decode_data()
             .map_err(|e| anyhow!("Failed to decode account data: {}", e))?;
         let thread = Thread::try_deserialize(&mut data.as_slice())
             .map_err(|e| anyhow!("Failed to deserialize thread: {:?}", e))?;
@@ -1025,7 +1036,8 @@ mod test_commands {
 
         // Add fiber accounts to remaining_accounts so they can be closed
         for fiber_id in &thread.fiber_ids {
-            let fiber_pubkey = antegen_fiber_program::state::FiberState::pubkey(thread_pubkey, *fiber_id);
+            let fiber_pubkey =
+                antegen_fiber_program::state::FiberState::pubkey(thread_pubkey, *fiber_id);
             accounts.push(AccountMeta::new(fiber_pubkey, false));
         }
 
@@ -1353,7 +1365,10 @@ mod test_commands {
         let thread_pubkey = Pubkey::from_str(&entry.pubkey)
             .map_err(|e| anyhow!("Invalid pubkey in registry: {}", e))?;
 
-        println!("Adding fiber to thread '{}' ({})...", thread_id, thread_pubkey);
+        println!(
+            "Adding fiber to thread '{}' ({})...",
+            thread_id, thread_pubkey
+        );
 
         // Fetch thread to get fiber_next_id
         let account = client
@@ -1361,7 +1376,8 @@ mod test_commands {
             .await
             .map_err(|e| anyhow!("Failed to fetch thread: {}", e))?
             .ok_or_else(|| anyhow!("Thread account not found"))?;
-        let data = account.decode_data()
+        let data = account
+            .decode_data()
             .map_err(|e| anyhow!("Failed to decode account data: {}", e))?;
         let thread = Thread::try_deserialize(&mut data.as_slice())
             .map_err(|e| anyhow!("Failed to deserialize thread: {:?}", e))?;
@@ -1403,7 +1419,8 @@ mod test_commands {
             .await
             .map_err(|e| anyhow!("Failed to fetch thread: {}", e))?
             .ok_or_else(|| anyhow!("Thread account not found"))?;
-        let data = account.decode_data()
+        let data = account
+            .decode_data()
             .map_err(|e| anyhow!("Failed to decode account data: {}", e))?;
         let thread = Thread::try_deserialize(&mut data.as_slice())
             .map_err(|e| anyhow!("Failed to deserialize thread: {:?}", e))?;
@@ -1418,18 +1435,15 @@ mod test_commands {
         // Try to fetch individual fiber accounts
         println!("\nFiber accounts:");
         for &fiber_id in &thread.fiber_ids {
-            let fiber_pubkey = antegen_fiber_program::state::FiberState::pubkey(thread_pubkey, fiber_id);
+            let fiber_pubkey =
+                antegen_fiber_program::state::FiberState::pubkey(thread_pubkey, fiber_id);
 
             match client.get_account(&fiber_pubkey).await {
                 Ok(Some(fiber_account)) => {
-                    let data_len = fiber_account.decode_data()
-                        .map(|d| d.len())
-                        .unwrap_or(0);
+                    let data_len = fiber_account.decode_data().map(|d| d.len()).unwrap_or(0);
                     println!(
                         "  Fiber {}: {} ({} bytes)",
-                        fiber_id,
-                        fiber_pubkey,
-                        data_len
+                        fiber_id, fiber_pubkey, data_len
                     );
                 }
                 Ok(None) | Err(_) => {
@@ -1463,7 +1477,8 @@ mod test_commands {
         );
 
         // Derive fiber PDA
-        let fiber_pubkey = antegen_fiber_program::state::FiberState::pubkey(thread_pubkey, fiber_index);
+        let fiber_pubkey =
+            antegen_fiber_program::state::FiberState::pubkey(thread_pubkey, fiber_index);
 
         // Build fiber_close instruction
         let accounts = antegen_thread_program::accounts::FiberClose {

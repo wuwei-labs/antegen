@@ -95,7 +95,9 @@ impl HealthChecker {
                     // Parse response to check for RPC-level health
                     match response.text().await {
                         Ok(text) => {
-                            if text.contains("\"result\":\"ok\"") || text.contains("\"result\": \"ok\"") {
+                            if text.contains("\"result\":\"ok\"")
+                                || text.contains("\"result\": \"ok\"")
+                            {
                                 endpoint.record_success(start.elapsed());
                                 log::trace!("Health check passed for {}", endpoint.url());
                             } else if text.contains("\"error\"") {
@@ -131,7 +133,11 @@ impl HealthChecker {
             }
             Err(e) => {
                 endpoint.record_failure();
-                log::warn!("Health check failed for {} (request error): {}", endpoint.url(), e);
+                log::warn!(
+                    "Health check failed for {} (request error): {}",
+                    endpoint.url(),
+                    e
+                );
             }
         }
     }
@@ -181,7 +187,7 @@ mod tests {
         )));
 
         let config = HealthCheckConfig {
-            interval: Duration::from_secs(60),  // Long interval so it doesn't run
+            interval: Duration::from_secs(60), // Long interval so it doesn't run
             timeout: Duration::from_secs(5),
             unhealthy_threshold: 3,
         };

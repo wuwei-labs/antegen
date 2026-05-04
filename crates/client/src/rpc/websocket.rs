@@ -91,11 +91,7 @@ impl WsClient {
     ///     |acc| acc.lamports >= 500_000
     /// ).await?;
     /// ```
-    pub async fn wait_until<F>(
-        ws_url: &str,
-        pubkey: &Pubkey,
-        predicate: F,
-    ) -> Result<SafeUiAccount>
+    pub async fn wait_until<F>(ws_url: &str, pubkey: &Pubkey, predicate: F) -> Result<SafeUiAccount>
     where
         F: Fn(&SafeUiAccount) -> bool,
     {
@@ -164,7 +160,9 @@ impl WsClient {
     ) -> Result<(WsHandle, mpsc::Receiver<WsAccountUpdate>)> {
         let mut client = Self::new(ws_url);
         client.connect().await?;
-        client.subscribe_program_with_filters(program_id, commitment, filters).await?;
+        client
+            .subscribe_program_with_filters(program_id, commitment, filters)
+            .await?;
 
         let (tx, rx) = mpsc::channel(32);
         // programNotification includes pubkey in the response, so pass None
@@ -220,10 +218,7 @@ impl WsClient {
     }
 
     /// Build an account subscription request JSON
-    pub fn build_account_subscribe_request(
-        pubkey: &Pubkey,
-        commitment: &str,
-    ) -> (u64, String) {
+    pub fn build_account_subscribe_request(pubkey: &Pubkey, commitment: &str) -> (u64, String) {
         let subscription_id = SUBSCRIPTION_COUNTER.fetch_add(1, Ordering::SeqCst);
 
         let request = serde_json::json!({
@@ -255,12 +250,9 @@ impl WsClient {
     }
 
     /// Subscribe to program account changes
-    pub async fn subscribe_program(
-        &self,
-        program_id: &Pubkey,
-        commitment: &str,
-    ) -> Result<u64> {
-        self.subscribe_program_with_filters(program_id, commitment, None).await
+    pub async fn subscribe_program(&self, program_id: &Pubkey, commitment: &str) -> Result<u64> {
+        self.subscribe_program_with_filters(program_id, commitment, None)
+            .await
     }
 
     /// Subscribe to program account changes with optional filters
@@ -270,7 +262,10 @@ impl WsClient {
         commitment: &str,
         filters: Option<Vec<serde_json::Value>>,
     ) -> Result<u64> {
-        let sender = self.sender.as_ref().ok_or_else(|| anyhow!("Not connected"))?;
+        let sender = self
+            .sender
+            .as_ref()
+            .ok_or_else(|| anyhow!("Not connected"))?;
 
         let subscription_id = SUBSCRIPTION_COUNTER.fetch_add(1, Ordering::SeqCst);
 
@@ -308,12 +303,11 @@ impl WsClient {
     }
 
     /// Subscribe to account changes
-    pub async fn subscribe_account(
-        &self,
-        pubkey: &Pubkey,
-        commitment: &str,
-    ) -> Result<u64> {
-        let sender = self.sender.as_ref().ok_or_else(|| anyhow!("Not connected"))?;
+    pub async fn subscribe_account(&self, pubkey: &Pubkey, commitment: &str) -> Result<u64> {
+        let sender = self
+            .sender
+            .as_ref()
+            .ok_or_else(|| anyhow!("Not connected"))?;
 
         let subscription_id = SUBSCRIPTION_COUNTER.fetch_add(1, Ordering::SeqCst);
 
@@ -346,7 +340,10 @@ impl WsClient {
 
     /// Unsubscribe from a program subscription
     pub async fn unsubscribe_program(&self, subscription_id: u64) -> Result<()> {
-        let sender = self.sender.as_ref().ok_or_else(|| anyhow!("Not connected"))?;
+        let sender = self
+            .sender
+            .as_ref()
+            .ok_or_else(|| anyhow!("Not connected"))?;
 
         let request_id = SUBSCRIPTION_COUNTER.fetch_add(1, Ordering::SeqCst);
 
@@ -367,7 +364,10 @@ impl WsClient {
 
     /// Unsubscribe from an account subscription
     pub async fn unsubscribe_account(&self, subscription_id: u64) -> Result<()> {
-        let sender = self.sender.as_ref().ok_or_else(|| anyhow!("Not connected"))?;
+        let sender = self
+            .sender
+            .as_ref()
+            .ok_or_else(|| anyhow!("Not connected"))?;
 
         let request_id = SUBSCRIPTION_COUNTER.fetch_add(1, Ordering::SeqCst);
 
@@ -417,10 +417,17 @@ impl WsClient {
                                 }
                                 Ok(None) => {
                                     // Not a notification (could be subscription confirmation)
-                                    log::trace!("Non-notification message: {}", &text[..text.len().min(200)]);
+                                    log::trace!(
+                                        "Non-notification message: {}",
+                                        &text[..text.len().min(200)]
+                                    );
                                 }
                                 Err(e) => {
-                                    log::warn!("Failed to parse message: {} - {}", e, &text[..text.len().min(200)]);
+                                    log::warn!(
+                                        "Failed to parse message: {} - {}",
+                                        e,
+                                        &text[..text.len().min(200)]
+                                    );
                                 }
                             }
                         }
@@ -505,9 +512,8 @@ fn parse_notification(
     match method.as_str() {
         "programNotification" => {
             // Has pubkey + account wrapper
-            let value: ProgramNotificationValue =
-                serde_json::from_value(params.result.value)
-                    .map_err(|e| anyhow!("Failed to parse programNotification value: {}", e))?;
+            let value: ProgramNotificationValue = serde_json::from_value(params.result.value)
+                .map_err(|e| anyhow!("Failed to parse programNotification value: {}", e))?;
             let pubkey: Pubkey = value
                 .pubkey
                 .parse()
@@ -520,9 +526,8 @@ fn parse_notification(
         }
         "accountNotification" => {
             // Account data IS the value directly (no pubkey wrapper)
-            let account: SafeUiAccount =
-                serde_json::from_value(params.result.value)
-                    .map_err(|e| anyhow!("Failed to parse accountNotification value: {}", e))?;
+            let account: SafeUiAccount = serde_json::from_value(params.result.value)
+                .map_err(|e| anyhow!("Failed to parse accountNotification value: {}", e))?;
             // Use the subscribed pubkey since accountNotification doesn't include it
             let pubkey = subscribed_pubkey.unwrap_or_default();
             Ok(Some(WsAccountUpdate {

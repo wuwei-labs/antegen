@@ -53,10 +53,13 @@ pub fn thread_update(ctx: Context<ThreadUpdate>, params: ThreadUpdateParams) -> 
             Trigger::Cron {
                 schedule, jitter, ..
             } => {
-                let base_next =
-                    next_timestamp(current_timestamp, schedule.clone()).unwrap_or(current_timestamp);
-                let jitter_offset =
-                    crate::utils::calculate_jitter_offset(current_timestamp, &thread_pubkey, *jitter);
+                let base_next = next_timestamp(current_timestamp, schedule.clone())
+                    .unwrap_or(current_timestamp);
+                let jitter_offset = crate::utils::calculate_jitter_offset(
+                    current_timestamp,
+                    &thread_pubkey,
+                    *jitter,
+                );
                 Schedule::Timed {
                     prev: current_timestamp,
                     next: base_next.saturating_add(jitter_offset),
@@ -78,8 +81,11 @@ pub fn thread_update(ctx: Context<ThreadUpdate>, params: ThreadUpdateParams) -> 
                 seconds, jitter, ..
             } => {
                 let base_next = current_timestamp.saturating_add(*seconds);
-                let jitter_offset =
-                    crate::utils::calculate_jitter_offset(current_timestamp, &thread_pubkey, *jitter);
+                let jitter_offset = crate::utils::calculate_jitter_offset(
+                    current_timestamp,
+                    &thread_pubkey,
+                    *jitter,
+                );
                 Schedule::Timed {
                     prev: current_timestamp,
                     next: base_next.saturating_add(jitter_offset),

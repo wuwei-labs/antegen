@@ -378,17 +378,21 @@ mod tests {
 
     #[test]
     fn test_role_filtering() {
-        let submit_only =
-            EndpointState::new(EndpointConfig::new("https://submit.example.com").with_role(EndpointRole::Submission));
+        let submit_only = EndpointState::new(
+            EndpointConfig::new("https://submit.example.com").with_role(EndpointRole::Submission),
+        );
         assert!(submit_only.can_submit());
         assert!(!submit_only.can_fetch());
 
-        let fetch_only =
-            EndpointState::new(EndpointConfig::new("https://fetch.example.com").with_role(EndpointRole::Datasource));
+        let fetch_only = EndpointState::new(
+            EndpointConfig::new("https://fetch.example.com").with_role(EndpointRole::Datasource),
+        );
         assert!(!fetch_only.can_submit());
         assert!(fetch_only.can_fetch());
 
-        let both = EndpointState::new(EndpointConfig::new("https://both.example.com").with_role(EndpointRole::Both));
+        let both = EndpointState::new(
+            EndpointConfig::new("https://both.example.com").with_role(EndpointRole::Both),
+        );
         assert!(both.can_submit());
         assert!(both.can_fetch());
     }

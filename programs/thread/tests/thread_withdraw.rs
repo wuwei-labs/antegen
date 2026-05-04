@@ -1,4 +1,8 @@
-use solana_sdk::{pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+    transaction::Transaction,
+};
 
 mod common;
 use common::*;
@@ -58,13 +62,19 @@ fn test_thread_withdraw_success() {
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let thread_pubkey =
-        create_funded_thread(&mut svm, &authority, &payer, "tw-1", 5_000_000);
+    let thread_pubkey = create_funded_thread(&mut svm, &authority, &payer, "tw-1", 5_000_000);
 
     let thread_before = get_balance(&svm, &thread_pubkey);
     let authority_before = get_balance(&svm, &authority.pubkey());
 
-    send_withdraw(&mut svm, &authority, &authority.pubkey(), &thread_pubkey, 1_000_000).unwrap();
+    send_withdraw(
+        &mut svm,
+        &authority,
+        &authority.pubkey(),
+        &thread_pubkey,
+        1_000_000,
+    )
+    .unwrap();
 
     let thread_after = get_balance(&svm, &thread_pubkey);
     let authority_after = get_balance(&svm, &authority.pubkey());
@@ -80,12 +90,18 @@ fn test_thread_withdraw_authority_only() {
     let authority = Keypair::new();
     let bad_authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
-    svm.airdrop(&bad_authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+    svm.airdrop(&bad_authority.pubkey(), DEFAULT_AIRDROP)
+        .unwrap();
 
-    let thread_pubkey =
-        create_funded_thread(&mut svm, &authority, &payer, "tw-auth", 5_000_000);
+    let thread_pubkey = create_funded_thread(&mut svm, &authority, &payer, "tw-auth", 5_000_000);
 
-    let result = send_withdraw(&mut svm, &bad_authority, &bad_authority.pubkey(), &thread_pubkey, 1_000_000);
+    let result = send_withdraw(
+        &mut svm,
+        &bad_authority,
+        &bad_authority.pubkey(),
+        &thread_pubkey,
+        1_000_000,
+    );
     assert!(result.is_err());
 }
 
@@ -95,8 +111,7 @@ fn test_thread_withdraw_too_large() {
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let thread_pubkey =
-        create_funded_thread(&mut svm, &authority, &payer, "tw-large", 1_000_000);
+    let thread_pubkey = create_funded_thread(&mut svm, &authority, &payer, "tw-large", 1_000_000);
 
     let thread_balance = get_balance(&svm, &thread_pubkey);
     // Try to withdraw everything (would go below rent)
@@ -116,11 +131,17 @@ fn test_thread_withdraw_exact_to_rent() {
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let thread_pubkey =
-        create_funded_thread(&mut svm, &authority, &payer, "tw-rent", 5_000_000);
+    let thread_pubkey = create_funded_thread(&mut svm, &authority, &payer, "tw-rent", 5_000_000);
 
     // Withdraw a small amount that leaves well above rent
-    send_withdraw(&mut svm, &authority, &authority.pubkey(), &thread_pubkey, 100_000).unwrap();
+    send_withdraw(
+        &mut svm,
+        &authority,
+        &authority.pubkey(),
+        &thread_pubkey,
+        100_000,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -131,11 +152,17 @@ fn test_thread_withdraw_to_different_account() {
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
     svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
 
-    let thread_pubkey =
-        create_funded_thread(&mut svm, &authority, &payer, "tw-diff", 5_000_000);
+    let thread_pubkey = create_funded_thread(&mut svm, &authority, &payer, "tw-diff", 5_000_000);
 
     let recipient_before = get_balance(&svm, &recipient.pubkey());
-    send_withdraw(&mut svm, &authority, &recipient.pubkey(), &thread_pubkey, 1_000_000).unwrap();
+    send_withdraw(
+        &mut svm,
+        &authority,
+        &recipient.pubkey(),
+        &thread_pubkey,
+        1_000_000,
+    )
+    .unwrap();
     let recipient_after = get_balance(&svm, &recipient.pubkey());
 
     assert_eq!(recipient_after - recipient_before, 1_000_000);
@@ -147,8 +174,7 @@ fn test_thread_withdraw_zero_amount() {
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let thread_pubkey =
-        create_funded_thread(&mut svm, &authority, &payer, "tw-zero", 5_000_000);
+    let thread_pubkey = create_funded_thread(&mut svm, &authority, &payer, "tw-zero", 5_000_000);
 
     send_withdraw(&mut svm, &authority, &authority.pubkey(), &thread_pubkey, 0).unwrap();
 }

@@ -100,7 +100,10 @@ pub fn thread_exec<'info>(
             });
         }
 
-        msg!("Executing close_fiber to delete thread ({} fibers)", thread.fiber_ids.len());
+        msg!(
+            "Executing close_fiber to delete thread ({} fibers)",
+            thread.fiber_ids.len()
+        );
 
         thread.sign(|seeds| invoke_signed(&instruction, &all_account_infos, &[seeds]))?;
 
@@ -151,12 +154,23 @@ pub fn thread_exec<'info>(
 
     // Audit: check each instruction account is findable in remaining_accounts
     for (i, acc_meta) in instruction.accounts.iter().enumerate() {
-        if !ctx.remaining_accounts.iter().any(|ai| ai.key.eq(&acc_meta.pubkey)) {
+        if !ctx
+            .remaining_accounts
+            .iter()
+            .any(|ai| ai.key.eq(&acc_meta.pubkey))
+        {
             msg!("MISSING remaining_account[{}]: {}", i, acc_meta.pubkey);
         }
     }
-    if !ctx.remaining_accounts.iter().any(|ai| ai.key.eq(&instruction.program_id)) {
-        msg!("MISSING program_id in remaining_accounts: {}", instruction.program_id);
+    if !ctx
+        .remaining_accounts
+        .iter()
+        .any(|ai| ai.key.eq(&instruction.program_id))
+    {
+        msg!(
+            "MISSING program_id in remaining_accounts: {}",
+            instruction.program_id
+        );
     }
 
     thread.sign(|seeds| invoke_signed(&instruction, &all_account_infos, &[seeds]))?;
@@ -227,7 +241,11 @@ pub fn thread_exec<'info>(
         Signal::Next { index } => {
             thread.fiber_cursor = *index;
         }
-        Signal::Update { paused, trigger, index } => {
+        Signal::Update {
+            paused,
+            trigger,
+            index,
+        } => {
             if let Some(paused) = paused {
                 thread.paused = *paused;
             }
@@ -261,7 +279,13 @@ pub fn thread_exec<'info>(
     // explicitly set paused to false — e.g. rental_close activating a queued
     // rental needs the thread to stay alive).
     if matches!(fired_trigger, Trigger::Timestamp { .. }) && signal != Signal::Chain {
-        let signal_unpaused = matches!(&signal, Signal::Update { paused: Some(false), .. });
+        let signal_unpaused = matches!(
+            &signal,
+            Signal::Update {
+                paused: Some(false),
+                ..
+            }
+        );
         if !signal_unpaused {
             thread.paused = true;
         }

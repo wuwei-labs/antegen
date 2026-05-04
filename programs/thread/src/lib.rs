@@ -16,8 +16,8 @@ pub mod fiber {
     pub use antegen_fiber_program::ID;
 }
 
-pub use constants::*;
 pub use crate::program::AntegenThread;
+pub use constants::*;
 use instructions::*;
 use state::*;
 
@@ -150,9 +150,7 @@ pub mod antegen_thread {
     /// Closes an existing thread account and returns the lamports to the owner.
     /// Requires authority (owner) or thread itself to sign.
     /// External fiber accounts should be passed via remaining_accounts.
-    pub fn close_thread<'info>(
-        ctx: Context<'info, ThreadClose<'info>>,
-    ) -> Result<()> {
+    pub fn close_thread<'info>(ctx: Context<'info, ThreadClose<'info>>) -> Result<()> {
         thread_close(ctx)
     }
 

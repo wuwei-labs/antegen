@@ -47,7 +47,10 @@ impl RpcSubscription {
     ///
     /// Returns the number of accounts backfilled.
     pub async fn perform_backfill(&self, actor_ref: ActorRef<RpcSourceMessage>) -> Result<usize> {
-        debug!("[{}] Performing backfill via getProgramAccounts...", self.ws_url);
+        debug!(
+            "[{}] Performing backfill via getProgramAccounts...",
+            self.ws_url
+        );
 
         // Use discriminator filter for Thread accounts
         let filters = vec![serde_json::json!({
@@ -63,14 +66,20 @@ impl RpcSubscription {
             .await?;
 
         let count = accounts.len();
-        debug!("[{}] Found {} Thread accounts to backfill", self.ws_url, count);
+        debug!(
+            "[{}] Found {} Thread accounts to backfill",
+            self.ws_url, count
+        );
 
         for (pubkey, ui_account) in accounts {
             // Decode account data (supports base64 and base64+zstd)
             let data = match decode_account_data(&ui_account.data.0, &ui_account.data.1) {
                 Ok(d) => d,
                 Err(e) => {
-                    warn!("[{}] Failed to decode account {}: {}", self.ws_url, pubkey, e);
+                    warn!(
+                        "[{}] Failed to decode account {}: {}",
+                        self.ws_url, pubkey, e
+                    );
                     continue;
                 }
             };
@@ -84,7 +93,10 @@ impl RpcSubscription {
             trace!("[{}] Backfilling Thread account: {}", self.ws_url, pubkey);
 
             if let Err(e) = actor_ref.send_message(RpcSourceMessage::UpdateReceived(update)) {
-                error!("[{}] Failed to send backfilled account {}: {:?}", self.ws_url, pubkey, e);
+                error!(
+                    "[{}] Failed to send backfilled account {}: {:?}",
+                    self.ws_url, pubkey, e
+                );
                 break;
             }
         }
@@ -99,7 +111,10 @@ impl RpcSubscription {
     /// On reconnection, we re-send the subscription request.
     /// Sends periodic pings to keep the connection alive.
     pub async fn subscribe_to_program_accounts(&self, actor_ref: ActorRef<RpcSourceMessage>) {
-        debug!("[{}] Connecting to WebSocket for program subscription...", self.ws_url);
+        debug!(
+            "[{}] Connecting to WebSocket for program subscription...",
+            self.ws_url
+        );
 
         let (sender, mut receiver) = match WsClient::connect_raw(&self.ws_url).await {
             Ok((s, r)) => (s, r),
@@ -116,15 +131,15 @@ impl RpcSubscription {
                 "bytes": bs58::encode(Thread::DISCRIMINATOR).into_string()
             }
         })];
-        let (_, subscribe_msg) = WsClient::build_program_subscribe_request(
-            &self.program_id,
-            "confirmed",
-            Some(filters),
-        );
+        let (_, subscribe_msg) =
+            WsClient::build_program_subscribe_request(&self.program_id, "confirmed", Some(filters));
 
         // Send initial subscription
         if let Err(e) = sender.send(WsMessage::Text(subscribe_msg.clone())).await {
-            error!("[{}] Failed to send program subscription: {}", self.ws_url, e);
+            error!(
+                "[{}] Failed to send program subscription: {}",
+                self.ws_url, e
+            );
             return;
         }
 
@@ -149,16 +164,26 @@ impl RpcSubscription {
                     match &msg {
                         WsMessage::Text(text) => {
                             if let Some(update) = parse_program_notification(text) {
-                                if let Err(e) = actor_ref.send_message(RpcSourceMessage::UpdateReceived(update)) {
-                                    error!("[{}] Failed to send account update: {:?}", self.ws_url, e);
+                                if let Err(e) =
+                                    actor_ref.send_message(RpcSourceMessage::UpdateReceived(update))
+                                {
+                                    error!(
+                                        "[{}] Failed to send account update: {:?}",
+                                        self.ws_url, e
+                                    );
                                     break;
                                 }
                             }
                         }
                         WsMessage::ConnectionOpened => {
                             debug!("[{}] WS program connected, subscribing...", self.ws_url);
-                            if let Err(e) = sender.send(WsMessage::Text(subscribe_msg.clone())).await {
-                                error!("[{}] Failed to send program subscription: {}", self.ws_url, e);
+                            if let Err(e) =
+                                sender.send(WsMessage::Text(subscribe_msg.clone())).await
+                            {
+                                error!(
+                                    "[{}] Failed to send program subscription: {}",
+                                    self.ws_url, e
+                                );
                             } else {
                                 // Trigger backfill (handles both initial load and reconnection)
                                 let _ = actor_ref.send_message(RpcSourceMessage::Reconnected);
@@ -179,7 +204,10 @@ impl RpcSubscription {
     ///
     /// On reconnection, we re-send the subscription request.
     pub async fn subscribe_to_clock(&self, actor_ref: ActorRef<RpcSourceMessage>) {
-        debug!("[{}] Connecting to WebSocket for clock subscription...", self.ws_url);
+        debug!(
+            "[{}] Connecting to WebSocket for clock subscription...",
+            self.ws_url
+        );
 
         let (sender, mut receiver) = match WsClient::connect_raw(&self.ws_url).await {
             Ok((s, r)) => (s, r),
@@ -190,10 +218,8 @@ impl RpcSubscription {
         };
 
         // Build subscription message (reused on reconnection)
-        let (_, subscribe_msg) = WsClient::build_account_subscribe_request(
-            &sysvar::clock::ID,
-            "confirmed",
-        );
+        let (_, subscribe_msg) =
+            WsClient::build_account_subscribe_request(&sysvar::clock::ID, "confirmed");
 
         // Send initial subscription
         if let Err(e) = sender.send(WsMessage::Text(subscribe_msg.clone())).await {
@@ -218,26 +244,26 @@ impl RpcSubscription {
         // Process incoming messages
         loop {
             match receiver.recv().await {
-                Ok(msg) => {
-                    match &msg {
-                        WsMessage::Text(text) => {
-                            if let Some(clock) = parse_clock_notification(text) {
-                                if let Err(e) = actor_ref.send_message(RpcSourceMessage::ClockReceived(clock)) {
-                                    error!("[{}] Failed to send clock update: {:?}", self.ws_url, e);
-                                    break;
-                                }
+                Ok(msg) => match &msg {
+                    WsMessage::Text(text) => {
+                        if let Some(clock) = parse_clock_notification(text) {
+                            if let Err(e) =
+                                actor_ref.send_message(RpcSourceMessage::ClockReceived(clock))
+                            {
+                                error!("[{}] Failed to send clock update: {:?}", self.ws_url, e);
+                                break;
                             }
                         }
-                        WsMessage::ConnectionOpened => {
-                            debug!("[{}] WS clock connected, subscribing...", self.ws_url);
-                            if let Err(e) = sender.send(WsMessage::Text(subscribe_msg.clone())).await {
-                                error!("[{}] Failed to send clock subscription: {}", self.ws_url, e);
-                            }
-                        }
-                        WsMessage::ConnectionClosed => {}
-                        _ => {}
                     }
-                }
+                    WsMessage::ConnectionOpened => {
+                        debug!("[{}] WS clock connected, subscribing...", self.ws_url);
+                        if let Err(e) = sender.send(WsMessage::Text(subscribe_msg.clone())).await {
+                            error!("[{}] Failed to send clock subscription: {}", self.ws_url, e);
+                        }
+                    }
+                    WsMessage::ConnectionClosed => {}
+                    _ => {}
+                },
                 Err(_) => {
                     // pws handles reconnection automatically
                 }

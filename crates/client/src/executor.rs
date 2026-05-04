@@ -13,7 +13,6 @@ use crate::rpc::response::decode_account_data;
 use anchor_lang::{AccountDeserialize, AnchorDeserialize, InstructionData, ToAccountMetas};
 use antegen_thread_program::fiber::{decompile_instruction, CompiledInstructionV0, FiberState};
 use antegen_thread_program::state::PAYER_PUBKEY;
-use std::collections::HashSet;
 use antegen_thread_program::{
     accounts::ThreadExec,
     instruction::ExecThread,
@@ -30,6 +29,7 @@ use solana_sdk::{
     sysvar,
     transaction::Transaction,
 };
+use std::collections::HashSet;
 
 use anyhow::{anyhow, Result};
 use log::{debug, info, warn};
@@ -121,15 +121,17 @@ impl ExecutorLogic {
             thread_pubkey, thread.fiber_cursor, override_fiber_cursor, current_fiber_cursor
         );
         let first_ix = self
-            .build_thread_exec_ix(&mut priority_fee, thread_pubkey, thread, current_fiber_cursor)
+            .build_thread_exec_ix(
+                &mut priority_fee,
+                thread_pubkey,
+                thread,
+                current_fiber_cursor,
+            )
             .await?;
 
         // Empty fiber — nothing to submit
         let Some(first_ix) = first_ix else {
-            info!(
-                "{}: first fiber is empty, nothing to submit",
-                thread_pubkey
-            );
+            info!("{}: first fiber is empty, nothing to submit", thread_pubkey);
             return Ok((vec![], 0, false, None));
         };
 
@@ -161,9 +163,7 @@ impl ExecutorLogic {
                 "Simulating transaction with {} instruction(s) to check for batching...",
                 ixs.len()
             );
-            let (signal, _units) = self
-                .simulate_transaction(&ixs, thread_pubkey)
-                .await?;
+            let (signal, _units) = self.simulate_transaction(&ixs, thread_pubkey).await?;
             info!(
                 "{}: fiber {} simulation signal={:?}",
                 thread_pubkey, current_fiber_cursor, signal
@@ -225,9 +225,7 @@ impl ExecutorLogic {
                 Signal::Close => {
                     // Build thread_exec that executes the pre-compiled close_fiber
                     info!("Signal::Close detected - building thread_exec with close_fiber");
-                    let close_ix = self
-                        .build_close_thread_exec(thread_pubkey, thread)
-                        .await?;
+                    let close_ix = self.build_close_thread_exec(thread_pubkey, thread).await?;
 
                     // Check if close instruction fits in current batch
                     let mut trial = ixs.clone();
@@ -264,7 +262,10 @@ impl ExecutorLogic {
                 let ix_pubkeys: HashSet<Pubkey> = ix.accounts.iter().map(|a| a.pubkey).collect();
                 info!(
                     "{}: ix[{}] has {} accounts ({} unique)",
-                    thread_pubkey, i, ix.accounts.len(), ix_pubkeys.len()
+                    thread_pubkey,
+                    i,
+                    ix.accounts.len(),
+                    ix_pubkeys.len()
                 );
                 all_pubkeys.extend(ix_pubkeys);
             }
@@ -300,8 +301,9 @@ impl ExecutorLogic {
             .map_err(|e| anyhow!("Failed to fetch thread {}: {}", thread_pubkey, e))?
             .ok_or_else(|| anyhow!("Thread {} not found (may have been closed)", thread_pubkey))?;
 
-        let data = crate::rpc::response::decode_account_data(&ui_account.data.0, &ui_account.data.1)
-            .map_err(|e| anyhow!("Failed to decode thread account data: {}", e))?;
+        let data =
+            crate::rpc::response::decode_account_data(&ui_account.data.0, &ui_account.data.1)
+                .map_err(|e| anyhow!("Failed to decode thread account data: {}", e))?;
 
         Thread::try_deserialize(&mut data.as_slice())
             .map_err(|e| anyhow!("Failed to deserialize thread {}: {}", thread_pubkey, e))
@@ -335,7 +337,9 @@ impl ExecutorLogic {
         instructions: &[Instruction],
         thread_pubkey: &Pubkey,
     ) -> Result<u64> {
-        let (_, units) = self.simulate_transaction(instructions, thread_pubkey).await?;
+        let (_, units) = self
+            .simulate_transaction(instructions, thread_pubkey)
+            .await?;
         Ok(units)
     }
 
@@ -375,10 +379,7 @@ impl ExecutorLogic {
         thread: &Thread,
         fiber_cursor: u8,
     ) -> Result<Option<Instruction>> {
-        debug!(
-            "build_thread_exec_ix: fiber_cursor={}",
-            fiber_cursor
-        );
+        debug!("build_thread_exec_ix: fiber_cursor={}", fiber_cursor);
 
         // Fetch the fiber account
         let fiber_pubkey = thread.fiber_at_index(thread_pubkey, fiber_cursor);
@@ -401,19 +402,11 @@ impl ExecutorLogic {
             return Ok(None);
         }
 
-        debug!(
-            "Fiber fetched, priority_fee={}",
-            fiber_state.priority_fee
-        );
+        debug!("Fiber fetched, priority_fee={}", fiber_state.priority_fee);
 
         // Build execute instruction
         let ix = self
-            .build_execute_instruction(
-                thread_pubkey,
-                thread,
-                fiber_cursor,
-                &fiber_state,
-            )
+            .build_execute_instruction(thread_pubkey, thread, fiber_cursor, &fiber_state)
             .await?;
 
         *priority_fee = (*priority_fee).max(fiber_state.priority_fee);
@@ -464,7 +457,11 @@ impl ExecutorLogic {
     }
 
     /// Add compiled instruction accounts to the account list
-    fn add_compiled_accounts(&self, accounts: &mut Vec<AccountMeta>, compiled: &CompiledInstructionV0) {
+    fn add_compiled_accounts(
+        &self,
+        accounts: &mut Vec<AccountMeta>,
+        compiled: &CompiledInstructionV0,
+    ) {
         debug!(
             "Adding remaining accounts: {} accounts from compiled.accounts",
             compiled.accounts.len()
@@ -514,21 +511,25 @@ impl ExecutorLogic {
     ) -> Result<Instruction> {
         debug!(
             "Building exec_thread instruction: thread={}, fiber_cursor={}",
-            thread_pubkey,
-            fiber_cursor,
+            thread_pubkey, fiber_cursor,
         );
 
         // Get compiled instruction from fiber account
         let fiber_pubkey = thread.fiber_at_index(thread_pubkey, fiber_cursor);
-        let compiled = CompiledInstructionV0::deserialize(
-            &mut fiber.compiled_instruction.as_slice(),
-        )?;
+        let compiled =
+            CompiledInstructionV0::deserialize(&mut fiber.compiled_instruction.as_slice())?;
 
         // Diagnostic: decompile and verify all instruction accounts are in compiled.accounts
         let remaining_pubkeys: HashSet<Pubkey> = compiled
             .accounts
             .iter()
-            .map(|pk| if pk.eq(&PAYER_PUBKEY) { self.keypair.pubkey() } else { *pk })
+            .map(|pk| {
+                if pk.eq(&PAYER_PUBKEY) {
+                    self.keypair.pubkey()
+                } else {
+                    *pk
+                }
+            })
             .collect();
 
         match decompile_instruction(&compiled) {
@@ -567,7 +568,10 @@ impl ExecutorLogic {
                     }
                     debug!(
                         "  decompiled[{}]: {} signer={} writable={} in_table={}",
-                        i, resolved, acc.is_signer, acc.is_writable,
+                        i,
+                        resolved,
+                        acc.is_signer,
+                        acc.is_writable,
                         remaining_pubkeys.contains(&resolved)
                     );
                 }
@@ -636,7 +640,10 @@ impl ExecutorLogic {
         // Add external fiber accounts as remaining_accounts for thread_delete to close
         for &fiber_index in &thread.fiber_ids {
             let fiber_pda = thread.fiber_at_index(thread_pubkey, fiber_index);
-            debug!("Adding fiber account for deletion: {} (index={})", fiber_pda, fiber_index);
+            debug!(
+                "Adding fiber account for deletion: {} (index={})",
+                fiber_pda, fiber_index
+            );
             accounts.push(AccountMeta {
                 pubkey: fiber_pda,
                 is_signer: false,
@@ -760,9 +767,17 @@ impl ExecutorLogic {
             Err(e) => {
                 // Log each instruction's accounts for diagnosis on simulation error
                 for (i, ix) in instructions.iter().enumerate() {
-                    warn!("  IX[{}] program={}, {} accounts:", i, ix.program_id, ix.accounts.len());
+                    warn!(
+                        "  IX[{}] program={}, {} accounts:",
+                        i,
+                        ix.program_id,
+                        ix.accounts.len()
+                    );
                     for (j, acc) in ix.accounts.iter().enumerate() {
-                        warn!("    [{}]: {} signer={} writable={}", j, acc.pubkey, acc.is_signer, acc.is_writable);
+                        warn!(
+                            "    [{}]: {} signer={} writable={}",
+                            j, acc.pubkey, acc.is_signer, acc.is_writable
+                        );
                     }
                 }
                 return Err(e);
@@ -817,7 +832,10 @@ impl ExecutorLogic {
                     }
                 }
             } else {
-                warn!("{}: no account data in simulation response (account is null)", thread_pubkey);
+                warn!(
+                    "{}: no account data in simulation response (account is null)",
+                    thread_pubkey
+                );
                 Signal::None
             }
         } else {
@@ -885,7 +903,6 @@ impl ExecutorLogic {
 
         Ok(config)
     }
-
 }
 
 #[cfg(test)]

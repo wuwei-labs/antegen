@@ -3,11 +3,11 @@
 //! This is the executor process that runs Solana threads.
 //! Managed by `anm` (Antegen Node Manager) via `anm use/update/install`.
 
-use anyhow::{Context, Result};
 use antegen_client::config::{EndpointRole, RpcEndpoint};
 use antegen_client::rpc::websocket::WsClient;
 use antegen_client::rpc::RpcPool;
 use antegen_client::ClientConfig;
+use anyhow::{Context, Result};
 use clap::Parser;
 use solana_sdk::native_token::LAMPORTS_PER_SOL;
 use solana_sdk::signature::{read_keypair_file, Keypair, Signer};
@@ -110,7 +110,10 @@ async fn main() -> Result<()> {
     }
 
     builder.filter_module("ractor", log::LevelFilter::Warn);
-    builder.filter_module("solana_tpu_client_next::connection_worker", log::LevelFilter::Error);
+    builder.filter_module(
+        "solana_tpu_client_next::connection_worker",
+        log::LevelFilter::Error,
+    );
     builder.filter_module("pws", log::LevelFilter::Off);
     builder.format_timestamp_millis().init();
 
@@ -123,16 +126,17 @@ async fn main() -> Result<()> {
 
         ClientConfig::default().save(&config_path)?;
 
-        let abs_config_path = config_path
-            .canonicalize()
-            .unwrap_or_else(|_| {
-                std::env::current_dir()
-                    .map(|p| p.join(&config_path))
-                    .unwrap_or(config_path.clone())
-            });
+        let abs_config_path = config_path.canonicalize().unwrap_or_else(|_| {
+            std::env::current_dir()
+                .map(|p| p.join(&config_path))
+                .unwrap_or(config_path.clone())
+        });
 
         log::info!("Generated default config at: {}", abs_config_path.display());
-        log::warn!("IMPORTANT: Review and edit {} before running in production!", abs_config_path.display());
+        log::warn!(
+            "IMPORTANT: Review and edit {} before running in production!",
+            abs_config_path.display()
+        );
         log::warn!("   - Configure RPC endpoints");
         log::warn!("   - Adjust thread program ID if needed");
         log::info!("");
@@ -167,12 +171,7 @@ async fn main() -> Result<()> {
         .first()
         .ok_or_else(|| anyhow::anyhow!("No RPC endpoints configured"))?;
 
-    check_balance_or_wait(
-        &rpc_endpoint.url,
-        &rpc_endpoint.get_ws_url(),
-        &keypair_path,
-    )
-    .await?;
+    check_balance_or_wait(&rpc_endpoint.url, &rpc_endpoint.get_ws_url(), &keypair_path).await?;
 
     // Run the client
     antegen_client::run_standalone(config).await

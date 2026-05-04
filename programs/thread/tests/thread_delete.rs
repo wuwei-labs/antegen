@@ -1,4 +1,8 @@
-use solana_sdk::{pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+    transaction::Transaction,
+};
 
 mod common;
 use common::*;
@@ -44,12 +48,7 @@ fn test_thread_delete_admin_success() {
 
     let ix = build_delete_thread(&admin.pubkey(), &config_pubkey, &thread_pubkey);
     let blockhash = svm.latest_blockhash();
-    let tx = Transaction::new_signed_with_payer(
-        &[ix],
-        Some(&admin.pubkey()),
-        &[&admin],
-        blockhash,
-    );
+    let tx = Transaction::new_signed_with_payer(&[ix], Some(&admin.pubkey()), &[&admin], blockhash);
     svm.send_transaction(tx).unwrap();
 
     assert!(!account_exists(&svm, &thread_pubkey));
@@ -110,12 +109,7 @@ fn test_thread_delete_skips_fiber_checks() {
     let (config_pubkey, _) = config_pda();
     let ix = build_delete_thread(&admin.pubkey(), &config_pubkey, &thread_pubkey);
     let blockhash = svm.latest_blockhash();
-    let tx = Transaction::new_signed_with_payer(
-        &[ix],
-        Some(&admin.pubkey()),
-        &[&admin],
-        blockhash,
-    );
+    let tx = Transaction::new_signed_with_payer(&[ix], Some(&admin.pubkey()), &[&admin], blockhash);
     svm.send_transaction(tx).unwrap();
     assert!(!account_exists(&svm, &thread_pubkey));
 }
@@ -134,12 +128,7 @@ fn test_thread_delete_returns_rent_to_admin() {
 
     let ix = build_delete_thread(&admin.pubkey(), &config_pubkey, &thread_pubkey);
     let blockhash = svm.latest_blockhash();
-    let tx = Transaction::new_signed_with_payer(
-        &[ix],
-        Some(&admin.pubkey()),
-        &[&admin],
-        blockhash,
-    );
+    let tx = Transaction::new_signed_with_payer(&[ix], Some(&admin.pubkey()), &[&admin], blockhash);
     svm.send_transaction(tx).unwrap();
 
     let admin_after = get_balance(&svm, &admin.pubkey());

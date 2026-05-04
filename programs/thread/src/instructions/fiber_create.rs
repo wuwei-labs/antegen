@@ -58,7 +58,11 @@ pub fn fiber_create(
         let space = 8 + antegen_fiber_program::state::FiberState::INIT_SPACE;
         let rent_lamports = Rent::get()?.minimum_balance(space);
         **thread.to_account_info().try_borrow_mut_lamports()? -= rent_lamports;
-        **ctx.accounts.fiber.to_account_info().try_borrow_mut_lamports()? += rent_lamports;
+        **ctx
+            .accounts
+            .fiber
+            .to_account_info()
+            .try_borrow_mut_lamports()? += rent_lamports;
     }
 
     thread.sign(|seeds| {

@@ -147,7 +147,10 @@ EXAMPLES:
 }
 
 /// Dispatch a NodeConfigCommands variant to the appropriate handler
-pub fn dispatch_config(config_cmd: NodeConfigCommands, global_rpc: Option<String>) -> anyhow::Result<()> {
+pub fn dispatch_config(
+    config_cmd: NodeConfigCommands,
+    global_rpc: Option<String>,
+) -> anyhow::Result<()> {
     match config_cmd {
         NodeConfigCommands::Get { config } => {
             let path = config

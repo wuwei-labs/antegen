@@ -17,8 +17,8 @@ use antegen_thread_program::state::Thread;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
-    clock::Clock, instruction::Instruction, message::Message, pubkey::Pubkey,
-    signature::Signature, transaction::Transaction,
+    clock::Clock, instruction::Instruction, message::Message, pubkey::Pubkey, signature::Signature,
+    transaction::Transaction,
 };
 use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -185,11 +185,7 @@ async fn execute_thread(
             "Worker cancelled before execution for thread: {}",
             thread_pubkey
         );
-        return ExecutionResult::failed(
-            thread_pubkey,
-            "Cancelled before execution".to_string(),
-            0,
-        );
+        return ExecutionResult::failed(thread_pubkey, "Cancelled before execution".to_string(), 0);
     }
 
     // Re-fetch thread from cache to get latest last_executor
@@ -223,16 +219,17 @@ async fn execute_thread(
 
     // Check load balancer decision with fresh last_executor
     let decision = match load_balancer
-        .should_process(&thread_pubkey, &current_last_executor, is_overdue, overdue_seconds)
+        .should_process(
+            &thread_pubkey,
+            &current_last_executor,
+            is_overdue,
+            overdue_seconds,
+        )
         .await
     {
         Ok(d) => d,
         Err(e) => {
-            log::error!(
-                "Load balancer error for thread {}: {:?}",
-                thread_pubkey,
-                e
-            );
+            log::error!("Load balancer error for thread {}: {:?}", thread_pubkey, e);
             return ExecutionResult::failed(
                 thread_pubkey,
                 format!("Load balancer error: {}", e),
@@ -258,11 +255,7 @@ async fn execute_thread(
                 "Load balancer at capacity for thread {}, skipping",
                 thread_pubkey
             );
-            return ExecutionResult::failed(
-                thread_pubkey,
-                "At capacity".to_string(),
-                0,
-            );
+            return ExecutionResult::failed(thread_pubkey, "At capacity".to_string(), 0);
         }
         ProcessDecision::Process => {
             log::debug!("Load balancer approved processing thread {}", thread_pubkey);
@@ -427,10 +420,7 @@ async fn execute_thread(
         );
 
         // Simulate for accurate CU estimate
-        let cu_estimate = match executor
-            .estimate_compute_units(&ixs, &thread_pubkey)
-            .await
-        {
+        let cu_estimate = match executor.estimate_compute_units(&ixs, &thread_pubkey).await {
             Ok(units) => units,
             Err(e) => {
                 log::error!(
@@ -449,11 +439,13 @@ async fn execute_thread(
 
         // Prepend compute budget instructions
         let compute_units = ((cu_estimate as f64) * 1.1) as u32;
-        let mut final_ixs = vec![
-            ComputeBudgetInstruction::set_compute_unit_limit(compute_units),
-        ];
+        let mut final_ixs = vec![ComputeBudgetInstruction::set_compute_unit_limit(
+            compute_units,
+        )];
         if max_priority_fee > 0 {
-            final_ixs.push(ComputeBudgetInstruction::set_compute_unit_price(max_priority_fee));
+            final_ixs.push(ComputeBudgetInstruction::set_compute_unit_price(
+                max_priority_fee,
+            ));
         }
         final_ixs.extend_from_slice(&ixs);
 
@@ -469,12 +461,7 @@ async fn execute_thread(
         .await
         {
             Ok(sig) => {
-                log::info!(
-                    "{}: batch {} confirmed ({})",
-                    thread_pubkey,
-                    batch_num,
-                    sig
-                );
+                log::info!("{}: batch {} confirmed ({})", thread_pubkey, batch_num, sig);
             }
             Err((error, attempts)) => {
                 return ExecutionResult::failed(
@@ -639,13 +626,14 @@ async fn submit_and_confirm_batch(
                         log::warn!("{}: transaction failed on-chain: {:?}", thread_pubkey, e);
 
                         let _ = load_balancer
-                            .record_execution_result(&thread_pubkey, false, chrono::Utc::now().timestamp())
+                            .record_execution_result(
+                                &thread_pubkey,
+                                false,
+                                chrono::Utc::now().timestamp(),
+                            )
                             .await;
 
-                        return Err((
-                            format!("Transaction failed on-chain: {:?}", e),
-                            attempt,
-                        ));
+                        return Err((format!("Transaction failed on-chain: {:?}", e), attempt));
                     }
                     Ok(None) => {
                         // Not yet confirmed, continue polling
@@ -700,7 +688,9 @@ async fn submit_and_confirm_batch(
         }
 
         // Wait for RPC confirmation
-        match wait_for_confirmation(&resources.rpc_client, &signature, CONFIRMATION_TIMEOUT_SECS).await {
+        match wait_for_confirmation(&resources.rpc_client, &signature, CONFIRMATION_TIMEOUT_SECS)
+            .await
+        {
             Ok(()) => {
                 log::info!("{}: confirmed", thread_pubkey);
                 log::debug!("  txn: {}", signature);
@@ -737,7 +727,11 @@ async fn submit_and_confirm_batch(
 
                     // Only record loss for non-6004 errors
                     let _ = load_balancer
-                        .record_execution_result(&thread_pubkey, false, chrono::Utc::now().timestamp())
+                        .record_execution_result(
+                            &thread_pubkey,
+                            false,
+                            chrono::Utc::now().timestamp(),
+                        )
                         .await;
                 }
 
@@ -774,10 +768,7 @@ async fn wait_for_confirmation(
 
     loop {
         if start.elapsed() > timeout {
-            return Err(format!(
-                "Confirmation timeout after {}s",
-                timeout_secs
-            ));
+            return Err(format!("Confirmation timeout after {}s", timeout_secs));
         }
 
         match rpc_client.get_signature_status(signature).await {

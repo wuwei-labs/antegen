@@ -74,7 +74,7 @@ fn setup_exec_thread(
 fn build_remaining_accounts(executor: &Pubkey) -> Vec<AccountMeta> {
     vec![
         AccountMeta::new_readonly(PROGRAM_ID, false), // program account for CPI
-        AccountMeta::new_readonly(*executor, false),   // executor replaces PAYER_PUBKEY
+        AccountMeta::new_readonly(*executor, false),  // executor replaces PAYER_PUBKEY
     ]
 }
 
@@ -398,10 +398,16 @@ fn test_exec_thread_timestamp_ready() {
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
     assert_eq!(thread.exec_count, 1);
-    assert!(thread.paused, "Timestamp thread should auto-pause after firing");
+    assert!(
+        thread.paused,
+        "Timestamp thread should auto-pause after firing"
+    );
     match thread.schedule {
         antegen_thread_program::state::Schedule::Timed { next, .. } => {
-            assert_eq!(next, target_ts, "schedule.next should be the original unix_ts after timestamp fires");
+            assert_eq!(
+                next, target_ts,
+                "schedule.next should be the original unix_ts after timestamp fires"
+            );
         }
         _ => panic!("Expected Timed schedule"),
     }
@@ -708,7 +714,10 @@ fn test_exec_thread_signal_update_pause() {
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
     assert_eq!(thread.exec_count, 1);
-    assert!(thread.paused, "Thread should be paused after Signal::Update with paused=true");
+    assert!(
+        thread.paused,
+        "Thread should be paused after Signal::Update with paused=true"
+    );
 }
 
 #[test]
@@ -748,7 +757,8 @@ fn test_exec_thread_signal_chain() {
         &[&payer, &authority],
         blockhash,
     );
-    svm.send_transaction(tx).expect("create_thread should succeed");
+    svm.send_transaction(tx)
+        .expect("create_thread should succeed");
 
     // Create fiber 0: returns Signal::Chain
     let (fiber0_pubkey, _) = fiber_pda(&thread_pubkey, 0);
@@ -769,7 +779,8 @@ fn test_exec_thread_signal_chain() {
         &[&payer, &authority],
         blockhash,
     );
-    svm.send_transaction(tx).expect("create_fiber_0 should succeed");
+    svm.send_transaction(tx)
+        .expect("create_fiber_0 should succeed");
 
     // Create fiber 1: returns Signal::None (default memo)
     let (fiber1_pubkey, _) = fiber_pda(&thread_pubkey, 1);
@@ -790,7 +801,8 @@ fn test_exec_thread_signal_chain() {
         &[&payer, &authority],
         blockhash,
     );
-    svm.send_transaction(tx).expect("create_fiber_1 should succeed");
+    svm.send_transaction(tx)
+        .expect("create_fiber_1 should succeed");
 
     // Advance past interval
     advance_clock(&mut svm, 15);
@@ -814,7 +826,8 @@ fn test_exec_thread_signal_chain() {
         &[&executor],
         blockhash,
     );
-    svm.send_transaction(tx).expect("exec fiber 0 should succeed");
+    svm.send_transaction(tx)
+        .expect("exec fiber 0 should succeed");
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
     assert_eq!(thread.exec_count, 1);
@@ -843,7 +856,8 @@ fn test_exec_thread_signal_chain() {
         &[&executor],
         blockhash,
     );
-    svm.send_transaction(tx).expect("exec fiber 1 (chained) should succeed");
+    svm.send_transaction(tx)
+        .expect("exec fiber 1 (chained) should succeed");
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
     assert_eq!(thread.exec_count, 2, "Both fibers should have executed");
@@ -914,7 +928,10 @@ fn test_exec_thread_signal_update_trigger() {
     let thread = deserialize_thread(&svm, &thread_pubkey);
     assert_eq!(thread.exec_count, 1);
     assert!(!thread.paused, "Thread should not be paused");
-    assert_eq!(thread.trigger, new_trigger, "Trigger should be updated to Timestamp");
+    assert_eq!(
+        thread.trigger, new_trigger,
+        "Trigger should be updated to Timestamp"
+    );
 }
 
 /// Test that exec works when the CPI target program_id also appears as a
@@ -968,7 +985,8 @@ fn test_exec_with_program_id_in_accounts() {
         &[&payer, &authority],
         blockhash,
     );
-    svm.send_transaction(tx).expect("create_thread should succeed");
+    svm.send_transaction(tx)
+        .expect("create_thread should succeed");
 
     let (fiber_pubkey, _) = fiber_pda(&thread_pubkey, 0);
     let ix = build_create_fiber(
@@ -986,7 +1004,8 @@ fn test_exec_with_program_id_in_accounts() {
         &[&payer, &authority],
         blockhash,
     );
-    svm.send_transaction(tx).expect("create_fiber should succeed");
+    svm.send_transaction(tx)
+        .expect("create_fiber should succeed");
 
     // Build remaining accounts: PROGRAM_ID (CPI target + collision account) + executor
     let remaining = vec![
@@ -1010,7 +1029,8 @@ fn test_exec_with_program_id_in_accounts() {
         &[&executor],
         blockhash,
     );
-    svm.send_transaction(tx).expect("exec with program_id-as-account should succeed");
+    svm.send_transaction(tx)
+        .expect("exec with program_id-as-account should succeed");
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
     assert_eq!(thread.exec_count, 1);
@@ -1057,7 +1077,8 @@ fn test_exec_timestamp_chain_then_update_unpause() {
         &[&payer, &authority],
         blockhash,
     );
-    svm.send_transaction(tx).expect("create_thread should succeed");
+    svm.send_transaction(tx)
+        .expect("create_thread should succeed");
 
     // Fiber 0: returns Signal::Chain (simulates contract_process seeing expired rental)
     let (fiber0_pubkey, _) = fiber_pda(&thread_pubkey, 0);
@@ -1078,7 +1099,8 @@ fn test_exec_timestamp_chain_then_update_unpause() {
         &[&payer, &authority],
         blockhash,
     );
-    svm.send_transaction(tx).expect("create_fiber_0 should succeed");
+    svm.send_transaction(tx)
+        .expect("create_fiber_0 should succeed");
 
     // Fiber 1: returns Signal::Update { paused: false, trigger: Interval }
     // (simulates rental_close activating queued rental and restaging with cron/interval trigger)
@@ -1112,7 +1134,8 @@ fn test_exec_timestamp_chain_then_update_unpause() {
         &[&payer, &authority],
         blockhash,
     );
-    svm.send_transaction(tx).expect("create_fiber_1 should succeed");
+    svm.send_transaction(tx)
+        .expect("create_fiber_1 should succeed");
 
     // Advance past Timestamp target
     advance_clock(&mut svm, 15);
@@ -1136,7 +1159,8 @@ fn test_exec_timestamp_chain_then_update_unpause() {
         &[&executor],
         blockhash,
     );
-    svm.send_transaction(tx).expect("exec fiber 0 should succeed");
+    svm.send_transaction(tx)
+        .expect("exec fiber 0 should succeed");
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
     assert_eq!(thread.fiber_signal, Signal::Chain);
@@ -1160,7 +1184,8 @@ fn test_exec_timestamp_chain_then_update_unpause() {
         &[&executor],
         blockhash,
     );
-    svm.send_transaction(tx).expect("exec fiber 1 (chained) should succeed");
+    svm.send_transaction(tx)
+        .expect("exec fiber 1 (chained) should succeed");
 
     let thread = deserialize_thread(&svm, &thread_pubkey);
     assert_eq!(thread.exec_count, 2);

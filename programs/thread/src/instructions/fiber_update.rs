@@ -1,9 +1,6 @@
 use crate::{errors::*, *};
 use anchor_lang::prelude::*;
-use antegen_fiber_program::{
-    program::AntegenFiber,
-    state::SerializableInstruction,
-};
+use antegen_fiber_program::{program::AntegenFiber, state::SerializableInstruction};
 
 /// Accounts required by the `fiber_update` instruction.
 /// Validates authority, CPIs to Fiber Program to update (or init) the fiber.

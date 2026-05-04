@@ -1,4 +1,8 @@
-use solana_sdk::{pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+    transaction::Transaction,
+};
 
 mod common;
 use common::*;
@@ -72,8 +76,8 @@ fn test_fiber_create_success() {
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let thread_pubkey = setup_thread(&mut svm, &authority, &payer, "fc-1");
-    let fiber_pubkey = send_create_fiber(&mut svm, &authority, &payer, &thread_pubkey, 0, 100)
-        .unwrap();
+    let fiber_pubkey =
+        send_create_fiber(&mut svm, &authority, &payer, &thread_pubkey, 0, 100).unwrap();
 
     let fiber = deserialize_fiber(&svm, &fiber_pubkey);
     assert_eq!(fiber.thread, thread_pubkey);

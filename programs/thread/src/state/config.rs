@@ -24,18 +24,18 @@ pub trait PaymentProcessor {
         balance_change: i64,
         forgo_commission: bool,
     ) -> PaymentDetails;
-    
+
     fn should_pay(&self, balance_change: i64) -> bool {
-        balance_change <= 0  // Pay if balance decreased or stayed same
+        balance_change <= 0 // Pay if balance decreased or stayed same
     }
-    
+
     fn calculate_reimbursement(&self, balance_change: i64) -> u64 {
         if balance_change < 0 {
             balance_change.abs() as u64
         } else if balance_change > 0 {
-            0  // Already paid by inner instruction
+            0 // Already paid by inner instruction
         } else {
-            5000u64  // Default reimbursement
+            5000u64 // Default reimbursement
         }
     }
 }
@@ -89,16 +89,16 @@ impl CommissionCalculator for ThreadConfig {
             0.0
         }
     }
-    
+
     fn calculate_effective_commission(&self, time_since_ready: i64) -> u64 {
         let multiplier = self.calculate_commission_multiplier(time_since_ready);
         (self.commission_fee as f64 * multiplier) as u64
     }
-    
+
     fn calculate_executor_fee(&self, effective_commission: u64) -> u64 {
         (effective_commission * self.executor_fee_bps) / 10_000
     }
-    
+
     fn calculate_core_team_fee(&self, effective_commission: u64) -> u64 {
         (effective_commission * self.core_team_bps) / 10_000
     }
@@ -113,7 +113,7 @@ impl PaymentProcessor for ThreadConfig {
     ) -> PaymentDetails {
         // Calculate effective commission
         let effective_commission = self.calculate_effective_commission(time_since_ready);
-        
+
         // Calculate reimbursement and commission for executor
         let (fee_payer_reimbursement, executor_commission) = if self.should_pay(balance_change) {
             let reimbursement = self.calculate_reimbursement(balance_change);
@@ -126,10 +126,10 @@ impl PaymentProcessor for ThreadConfig {
         } else {
             (0, 0)
         };
-        
+
         // Calculate core team fee
         let core_team_fee = self.calculate_core_team_fee(effective_commission);
-        
+
         PaymentDetails {
             fee_payer_reimbursement,
             executor_commission,

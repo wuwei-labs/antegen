@@ -1,5 +1,9 @@
 use borsh::BorshDeserialize;
-use solana_sdk::{pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+    transaction::Transaction,
+};
 
 mod common;
 use common::*;
@@ -33,7 +37,8 @@ fn create_thread_helper(
         &[payer, authority],
         blockhash,
     );
-    svm.send_transaction(tx).expect("create_thread should succeed");
+    svm.send_transaction(tx)
+        .expect("create_thread should succeed");
     (thread_pubkey, bump)
 }
 
@@ -525,7 +530,8 @@ fn test_create_thread_with_fiber() {
         &[&payer, &authority],
         blockhash,
     );
-    svm.send_transaction(tx).expect("create_thread with fiber should succeed");
+    svm.send_transaction(tx)
+        .expect("create_thread with fiber should succeed");
 
     // Verify thread state
     let thread = deserialize_thread(&svm, &thread_pubkey);
@@ -573,5 +579,8 @@ fn test_create_thread_with_fiber_no_accounts_fails() {
         blockhash,
     );
     let result = svm.send_transaction(tx);
-    assert!(result.is_err(), "Should fail when instruction provided but fiber accounts missing");
+    assert!(
+        result.is_err(),
+        "Should fail when instruction provided but fiber accounts missing"
+    );
 }
