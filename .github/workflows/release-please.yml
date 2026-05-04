@@ -1,0 +1,584 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Only one release run can mutate state at a time.
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: "1.94.1"
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Stage 1: release-please opens / updates the Release PR. On Release PR
+  # merge, it creates per-package GitHub Releases and emits release outputs.
+  # -----------------------------------------------------------------------
+  release-please:
+    name: release-please
+    runs-on: ubuntu-22.04
+    outputs:
+      releases_created: ${{ steps.release.outputs.releases_created }}
+      paths_released: ${{ steps.release.outputs.paths_released }}
+
+      cron_released: ${{ steps.release.outputs['crates/cron--release_created'] }}
+      cron_tag: ${{ steps.release.outputs['crates/cron--tag_name'] }}
+
+      client_released: ${{ steps.release.outputs['crates/client--release_created'] }}
+      client_tag: ${{ steps.release.outputs['crates/client--tag_name'] }}
+      client_version: ${{ steps.release.outputs['crates/client--version'] }}
+
+      thread_released: ${{ steps.release.outputs['programs/thread--release_created'] }}
+      thread_tag: ${{ steps.release.outputs['programs/thread--tag_name'] }}
+
+      fiber_released: ${{ steps.release.outputs['programs/fiber--release_created'] }}
+      fiber_tag: ${{ steps.release.outputs['programs/fiber--tag_name'] }}
+
+      cli_core_released: ${{ steps.release.outputs['cli/core--release_created'] }}
+      cli_core_tag: ${{ steps.release.outputs['cli/core--tag_name'] }}
+
+      cli_released: ${{ steps.release.outputs['cli/antegen--release_created'] }}
+      cli_tag: ${{ steps.release.outputs['cli/antegen--tag_name'] }}
+      cli_version: ${{ steps.release.outputs['cli/antegen--version'] }}
+
+      ctl_released: ${{ steps.release.outputs['cli/antegenctl--release_created'] }}
+      ctl_tag: ${{ steps.release.outputs['cli/antegenctl--tag_name'] }}
+      ctl_version: ${{ steps.release.outputs['cli/antegenctl--version'] }}
+
+      geyser_released: ${{ steps.release.outputs['plugin/geyser--release_created'] }}
+      geyser_tag: ${{ steps.release.outputs['plugin/geyser--tag_name'] }}
+      geyser_version: ${{ steps.release.outputs['plugin/geyser--version'] }}
+    steps:
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: .github/release-please-config.json
+          manifest-file: .github/.release-please-manifest.json
+
+  # -----------------------------------------------------------------------
+  # Stage 2: solana-verify build for each released program. Attaches the
+  # verifiable .so + sha256 to the program's GitHub Release so downstream
+  # consumers (e.g. srsly) can fetch reproducible binaries.
+  # -----------------------------------------------------------------------
+  verifiable-build:
+    name: solana-verify build
+    runs-on: ubuntu-22.04
+    needs: release-please
+    if: |
+      needs.release-please.outputs.releases_created == 'true' &&
+      (needs.release-please.outputs.thread_released == 'true' ||
+       needs.release-please.outputs.fiber_released == 'true')
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - program: antegen_thread_program
+            released_flag: thread_released
+            tag_output: thread_tag
+          - program: antegen_fiber_program
+            released_flag: fiber_released
+            tag_output: fiber_tag
+    steps:
+      - name: Resolve release flag for this program
+        id: gate
+        run: |
+          if [ "${{ matrix.program }}" = "antegen_thread_program" ]; then
+            echo "released=${{ needs.release-please.outputs.thread_released }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ needs.release-please.outputs.thread_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=${{ needs.release-please.outputs.fiber_released }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ needs.release-please.outputs.fiber_tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v6
+        if: steps.gate.outputs.released == 'true'
+
+      - uses: dtolnay/rust-toolchain@master
+        if: steps.gate.outputs.released == 'true'
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.gate.outputs.released == 'true'
+
+      - name: Install solana-verify
+        if: steps.gate.outputs.released == 'true'
+        run: cargo install solana-verify --locked
+
+      - name: Run solana-verify build
+        if: steps.gate.outputs.released == 'true'
+        run: solana-verify build --library-name ${{ matrix.program }}
+
+      - name: Compute sha256
+        if: steps.gate.outputs.released == 'true'
+        run: |
+          shasum -a 256 target/deploy/${{ matrix.program }}.so | tee target/deploy/${{ matrix.program }}.so.sha256
+
+      - name: Upload workflow artifacts
+        if: steps.gate.outputs.released == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.program }}-verifiable-build
+          path: |
+            target/deploy/${{ matrix.program }}.so
+            target/deploy/${{ matrix.program }}.so.sha256
+          retention-days: 7
+
+      - name: Attach to GitHub Release
+        if: steps.gate.outputs.released == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.gate.outputs.tag }}
+          files: |
+            target/deploy/${{ matrix.program }}.so
+            target/deploy/${{ matrix.program }}.so.sha256
+          append_body: false
+
+  # -----------------------------------------------------------------------
+  # Stage 3: Publish library + program crates to crates.io in topo order.
+  # antegen-geyser-plugin is publish=false so it's excluded.
+  # -----------------------------------------------------------------------
+  publish-crates:
+    name: Publish to crates.io
+    runs-on: ubuntu-22.04
+    needs: [release-please, verifiable-build]
+    if: |
+      always() &&
+      needs.release-please.outputs.releases_created == 'true' &&
+      needs.verifiable-build.result != 'failure' &&
+      (needs.release-please.outputs.cron_released == 'true' ||
+       needs.release-please.outputs.fiber_released == 'true' ||
+       needs.release-please.outputs.thread_released == 'true' ||
+       needs.release-please.outputs.client_released == 'true' ||
+       needs.release-please.outputs.cli_core_released == 'true' ||
+       needs.release-please.outputs.cli_released == 'true' ||
+       needs.release-please.outputs.ctl_released == 'true')
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Publish antegen-cron
+        if: needs.release-please.outputs.cron_released == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p antegen-cron --token "$CARGO_REGISTRY_TOKEN"
+
+      - name: Wait for index after cron
+        if: needs.release-please.outputs.cron_released == 'true'
+        run: sleep 30
+
+      - name: Publish antegen-fiber-program
+        if: needs.release-please.outputs.fiber_released == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p antegen-fiber-program --token "$CARGO_REGISTRY_TOKEN"
+
+      - name: Wait for index after fiber
+        if: needs.release-please.outputs.fiber_released == 'true'
+        run: sleep 30
+
+      - name: Publish antegen-thread-program
+        if: needs.release-please.outputs.thread_released == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p antegen-thread-program --token "$CARGO_REGISTRY_TOKEN"
+
+      - name: Wait for index after thread
+        if: needs.release-please.outputs.thread_released == 'true'
+        run: sleep 30
+
+      - name: Publish antegen-client
+        if: needs.release-please.outputs.client_released == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p antegen-client --token "$CARGO_REGISTRY_TOKEN"
+
+      - name: Wait for index after client
+        if: needs.release-please.outputs.client_released == 'true'
+        run: sleep 30
+
+      - name: Publish antegen-cli-core
+        if: needs.release-please.outputs.cli_core_released == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p antegen-cli-core --token "$CARGO_REGISTRY_TOKEN"
+
+      - name: Wait for index after cli-core
+        if: needs.release-please.outputs.cli_core_released == 'true'
+        run: sleep 30
+
+      - name: Publish antegen-cli
+        if: needs.release-please.outputs.cli_released == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p antegen-cli --token "$CARGO_REGISTRY_TOKEN"
+
+      - name: Publish antegenctl
+        if: needs.release-please.outputs.ctl_released == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p antegenctl --token "$CARGO_REGISTRY_TOKEN"
+
+  # -----------------------------------------------------------------------
+  # Stage 4: Build cross-platform CLI binary and attach to release
+  # -----------------------------------------------------------------------
+  build-cli:
+    name: Build antegen-cli binary
+    runs-on: ${{ matrix.os }}
+    needs: release-please
+    if: needs.release-please.outputs.cli_released == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-14
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.target }}
+
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: brew install llvm
+
+      - name: Build CLI
+        env:
+          CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
+          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
+          CC_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          CC_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          AR_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
+          AR_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
+        run: cargo build -p antegen-cli --release --features prod --target ${{ matrix.target }} --locked
+
+      - name: Package artifact
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/antegen \
+            artifacts/antegen-v${{ needs.release-please.outputs.cli_version }}-${{ matrix.target }}
+          chmod +x artifacts/*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-${{ matrix.target }}
+          path: artifacts/*
+          retention-days: 1
+
+  attach-cli:
+    name: Attach antegen-cli binary to release
+    runs-on: ubuntu-22.04
+    needs: [release-please, build-cli]
+    if: needs.release-please.outputs.cli_released == 'true' && needs.build-cli.result == 'success'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: cli-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.release-please.outputs.cli_tag }}
+          files: artifacts/*
+          append_body: false
+
+  # -----------------------------------------------------------------------
+  # Stage 5: Build cross-platform antegenctl binary and attach to release
+  # -----------------------------------------------------------------------
+  build-ctl:
+    name: Build antegenctl binary
+    runs-on: ${{ matrix.os }}
+    needs: release-please
+    if: needs.release-please.outputs.ctl_released == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-14
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.target }}
+
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: brew install llvm
+
+      - name: Build antegenctl
+        env:
+          CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
+          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
+          CC_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          CC_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          AR_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
+          AR_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
+        run: cargo build -p antegenctl --release --features prod --target ${{ matrix.target }} --locked
+
+      - name: Package artifact
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/antegenctl \
+            artifacts/antegenctl-v${{ needs.release-please.outputs.ctl_version }}-${{ matrix.target }}
+          chmod +x artifacts/*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ctl-${{ matrix.target }}
+          path: artifacts/*
+          retention-days: 1
+
+  attach-ctl:
+    name: Attach antegenctl binary to release
+    runs-on: ubuntu-22.04
+    needs: [release-please, build-ctl]
+    if: needs.release-please.outputs.ctl_released == 'true' && needs.build-ctl.result == 'success'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: ctl-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.release-please.outputs.ctl_tag }}
+          files: artifacts/*
+          append_body: false
+
+  # -----------------------------------------------------------------------
+  # Stage 6: Build cross-platform antegen-node binary (from antegen-client
+  # with --features node) and attach to the antegen-client release.
+  # -----------------------------------------------------------------------
+  build-node:
+    name: Build antegen-node binary
+    runs-on: ${{ matrix.os }}
+    needs: release-please
+    if: needs.release-please.outputs.client_released == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-14
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.target }}
+
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: brew install llvm
+
+      - name: Build node
+        env:
+          CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
+          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
+          CC_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          CC_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          AR_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
+          AR_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
+        run: cargo build -p antegen-client --release --features node --target ${{ matrix.target }} --locked
+
+      - name: Package artifact
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/antegen-node \
+            artifacts/antegen-node-v${{ needs.release-please.outputs.client_version }}-${{ matrix.target }}
+          chmod +x artifacts/*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: node-${{ matrix.target }}
+          path: artifacts/*
+          retention-days: 1
+
+  attach-node:
+    name: Attach antegen-node binary to release
+    runs-on: ubuntu-22.04
+    needs: [release-please, build-node]
+    if: needs.release-please.outputs.client_released == 'true' && needs.build-node.result == 'success'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: node-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.release-please.outputs.client_tag }}
+          files: artifacts/*
+          append_body: false
+
+  # -----------------------------------------------------------------------
+  # Stage 7: Build geyser plugin shared libraries (publish=false → binary
+  # release only) and attach to release.
+  # -----------------------------------------------------------------------
+  build-geyser:
+    name: Build geyser plugin
+    runs-on: ${{ matrix.os }}
+    needs: release-please
+    if: needs.release-please.outputs.geyser_released == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-14
+            target: x86_64-apple-darwin
+            ext: dylib
+          - os: macos-14
+            target: aarch64-apple-darwin
+            ext: dylib
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            ext: so
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.target }}
+
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: brew install llvm
+
+      - name: Build geyser plugin
+        env:
+          CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
+          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
+          CC_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          CC_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          AR_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
+          AR_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
+        run: cargo build -p antegen-geyser-plugin --release --target ${{ matrix.target }} --locked
+
+      - name: Package artifact
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/libantegen_geyser_plugin.${{ matrix.ext }} \
+            artifacts/antegen-geyser-v${{ needs.release-please.outputs.geyser_version }}-${{ matrix.target }}.${{ matrix.ext }}
+          chmod +x artifacts/*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: geyser-${{ matrix.target }}
+          path: artifacts/*
+          retention-days: 1
+
+  attach-geyser:
+    name: Attach geyser plugin to release
+    runs-on: ubuntu-22.04
+    needs: [release-please, build-geyser]
+    if: needs.release-please.outputs.geyser_released == 'true' && needs.build-geyser.result == 'success'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: geyser-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.release-please.outputs.geyser_tag }}
+          files: artifacts/*
+          append_body: false

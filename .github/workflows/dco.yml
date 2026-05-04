@@ -1,0 +1,47 @@
+name: DCO
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  dco-check:
+    name: Verify Signed-off-by trailer
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Verify all PR commits have Signed-off-by
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          missing=0
+          # The PR commits API returns each commit's message in commit.message.
+          # Iterate through every commit in the PR and require a Signed-off-by
+          # trailer matching the DCO format (Name <email>).
+          while IFS='|' read -r sha subject; do
+            message=$(gh api "/repos/$REPO/commits/$sha" --jq '.commit.message')
+            if ! printf '%s' "$message" | grep -qE '^Signed-off-by: .+ <.+@.+>'; then
+              echo "::error::Commit $sha ($subject) is missing a Signed-off-by trailer."
+              missing=$((missing + 1))
+            fi
+          done < <(gh api --paginate "/repos/$REPO/pulls/$PR_NUMBER/commits" \
+                     --jq '.[] | "\(.sha)|\(.commit.message | split("\n")[0])"')
+
+          if [ "$missing" -gt 0 ]; then
+            echo ""
+            echo "DCO sign-off is required on every commit. To fix:"
+            echo "  git rebase --signoff origin/${{ github.base_ref }}"
+            echo "  git push --force-with-lease"
+            echo ""
+            echo "Or for a single commit: 'git commit --amend --signoff' then force-push."
+            exit 1
+          fi
+
+          echo "All commits have Signed-off-by trailers."
