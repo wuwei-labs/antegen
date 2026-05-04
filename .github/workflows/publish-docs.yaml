@@ -1,31 +1,48 @@
 name: Publish Retype powered website to GitHub Pages
+
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
       - "**.md"
       - retype.yml
       - .github/workflows/publish-docs.yaml
 
+# Allow only one concurrent deployment, never cancel an in-flight one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 jobs:
-  publish:
-    name: Publish to retype branch
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
-
+  build:
+    name: Build retype site
+    runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-dotnet@v1
+      - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 7.0.x
+          dotnet-version: 8.0.x
 
       - uses: retypeapp/action-build@latest
 
-      - uses: retypeapp/action-github-pages@latest
+      - uses: actions/upload-pages-artifact@v3
         with:
-          update-branch: true
+          path: .retype
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-22.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
