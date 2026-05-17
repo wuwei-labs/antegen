@@ -153,7 +153,7 @@ impl LoadBalancer {
         let thread_track = tracking.get(thread_pubkey);
         let at_capacity = *self.at_capacity.read().await;
 
-        if thread_track.map_or(false, |t| t.owned) {
+        if thread_track.is_some_and(|t| t.owned) {
             // We own this thread - always try to process
             Ok(ProcessDecision::Process)
         } else if is_overdue && overdue_seconds > self.config.thread_takeover_delay {

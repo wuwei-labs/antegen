@@ -253,7 +253,7 @@ pub fn import_node_binary() -> Result<()> {
         let mut dir = current_exe.parent().map(|p| p.to_path_buf());
         loop {
             match dir {
-                Some(ref d) if d.file_name().map_or(false, |n| n == "target") => {
+                Some(ref d) if d.file_name().is_some_and(|n| n == "target") => {
                     break d.join("release/antegen-node");
                 }
                 Some(ref d) if d.parent().is_some() => {
@@ -276,10 +276,9 @@ pub fn import_node_binary() -> Result<()> {
         .context("Failed to run antegen-node --version")?;
     let version_str = String::from_utf8_lossy(&output.stdout);
     let version = version_str
-        .trim()
         .split_whitespace()
         .last()
-        .map(|v| normalize_version(v))
+        .map(normalize_version)
         .context("Could not parse node version")?;
 
     let versioned_path = versioned_node_binary_path(&version)?;
@@ -823,7 +822,7 @@ fn detect_local_node_build() -> Option<(PathBuf, String)> {
     let version = version_output
         .split_whitespace()
         .nth(1)
-        .map(|v| normalize_version(v))?;
+        .map(normalize_version)?;
 
     Some((built_binary, version))
 }
@@ -867,7 +866,7 @@ pub fn cargo_build_and_install_node() -> Result<String> {
     let version = version_output
         .split_whitespace()
         .nth(1)
-        .map(|v| normalize_version(v))
+        .map(normalize_version)
         .context("Failed to parse version from built binary")?;
 
     // Copy to versioned path (don't use install_binary_to — it deletes the source)
@@ -933,7 +932,7 @@ pub async fn update_node(version: Option<String>, local: bool) -> Result<()> {
     }
 
     let installed = get_installed_node_version()
-        .or_else(|| read_node_version())
+        .or_else(read_node_version)
         .unwrap_or_else(|| "none".to_string());
     println!("Installed node version: {}", installed);
 
@@ -1131,7 +1130,7 @@ pub async fn list_cli(remote: bool) -> Result<()> {
     // If symlink → ~/.local/bin/antegen-v5.0.0, that managed version is active
     let cargo_is_active = symlink_target
         .as_ref()
-        .map_or(false, |t| t.to_string_lossy().contains(".cargo/bin/"));
+        .is_some_and(|t| t.to_string_lossy().contains(".cargo/bin/"));
     let managed_active = if !cargo_is_active {
         symlink_target.as_ref().and_then(|t| {
             t.file_name()?
@@ -1233,7 +1232,7 @@ pub async fn download_latest_node() -> Result<()> {
 /// Shows installed versions, local cargo build (if detected), and available remote versions.
 pub async fn list_node() -> Result<()> {
     let bin_dir = bin_dir()?;
-    let active_version = get_installed_node_version().or_else(|| read_node_version());
+    let active_version = get_installed_node_version().or_else(read_node_version);
 
     // Detect local cargo build
     let local_build = detect_local_node_build();

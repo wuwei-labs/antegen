@@ -304,7 +304,7 @@ impl StagingActor {
         state.last_processed_slot = clock.slot;
 
         // Periodic heartbeat at INFO level every 100 slots
-        if clock.slot % 100 == 0 {
+        if clock.slot.is_multiple_of(100) {
             info!(
                 "ClockTick heartbeat: slot={}, tracked={}, queued={}",
                 clock.slot,
@@ -315,14 +315,14 @@ impl StagingActor {
 
         // Periodic load balancer pruning every 1000 slots (~7 minutes)
         // Removes tracking entries for threads that no longer exist
-        if clock.slot % 1000 == 0 {
+        if clock.slot.is_multiple_of(1000) {
             let known_threads: HashSet<Pubkey> = state.tracked_threads.keys().copied().collect();
             state.load_balancer.prune_stale(&known_threads).await;
         }
 
         // Periodic priority queue compaction every 500 slots (~3.5 minutes)
         // Removes stale entries where exec_count no longer matches or thread is untracked
-        if clock.slot % 500 == 0 {
+        if clock.slot.is_multiple_of(500) {
             self.compact_queues(state).await;
         }
 

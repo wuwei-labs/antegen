@@ -7,7 +7,7 @@ use service_manager::{
 };
 use std::ffi::OsString;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Service label for antegen
 const SERVICE_LABEL: &str = "antegen";
@@ -141,7 +141,7 @@ fn do_init(rpc: Option<String>, force: bool) -> Result<PathBuf> {
 
 /// Install the service (helper for start command).
 /// Uses the `antegen-node` binary directly instead of the CLI binary.
-async fn install_service(config_path: &PathBuf, version: Option<&str>) -> Result<()> {
+async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()> {
     let manager = get_service_manager()?;
     let label = get_label()?;
 

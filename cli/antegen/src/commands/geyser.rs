@@ -5,7 +5,7 @@ use antegen_cli_core::download::{
 };
 use antegen_client::ClientConfig;
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Initialize Geyser plugin for validator
 pub async fn init(output: PathBuf, config_path: PathBuf) -> Result<()> {
@@ -36,7 +36,7 @@ pub async fn init(output: PathBuf, config_path: PathBuf) -> Result<()> {
     // Determine config file path
     // If default "antegen.toml", put it in the plugin directory
     // Otherwise use the user-specified path
-    let final_config_path = if config_path == PathBuf::from("antegen.toml") {
+    let final_config_path = if config_path == Path::new("antegen.toml") {
         plugin_dir.join("antegen.toml")
     } else {
         config_path

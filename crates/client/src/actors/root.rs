@@ -217,7 +217,7 @@ impl Actor for RootSupervisor {
 /// Spawn a background task to listen for SIGINT and SIGTERM signals
 fn spawn_signal_handler(root: ActorRef<RootMessage>) {
     tokio::spawn(async move {
-        let mut signals = match Signals::new(&[SIGINT, SIGTERM]) {
+        let mut signals = match Signals::new([SIGINT, SIGTERM]) {
             Ok(s) => s,
             Err(e) => {
                 log::error!("Failed to create signal handler: {}", e);

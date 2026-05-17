@@ -97,12 +97,7 @@ fn find_node_binary() -> Result<PathBuf> {
     #[cfg(not(feature = "prod"))]
     if let Ok(current_exe) = std::env::current_exe() {
         let path_str = current_exe.to_string_lossy();
-        if path_str.contains("/target/debug/") {
-            let candidate = current_exe.with_file_name("antegen-node");
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        } else if path_str.contains("/target/release/") {
+        if path_str.contains("/target/debug/") || path_str.contains("/target/release/") {
             let candidate = current_exe.with_file_name("antegen-node");
             if candidate.exists() {
                 return Ok(candidate);
