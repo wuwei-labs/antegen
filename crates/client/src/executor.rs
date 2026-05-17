@@ -11,7 +11,9 @@
 use crate::resources::SharedResources;
 use crate::rpc::response::decode_account_data;
 use anchor_lang::{AccountDeserialize, AnchorDeserialize, InstructionData, ToAccountMetas};
-use antegen_thread_program::fiber::{decompile_instruction, CompiledInstructionV0, FiberState};
+use antegen_thread_program::fiber::{
+    decompile_instruction, CompiledInstructionV0, Fiber,
+};
 use antegen_thread_program::state::PAYER_PUBKEY;
 use antegen_thread_program::{
     accounts::ThreadExec,
@@ -390,11 +392,11 @@ impl ExecutorLogic {
         );
 
         let account = self.fetch_fiber_account(&fiber_pubkey).await?;
-        let fiber_state = FiberState::try_deserialize(&mut account.data.as_slice())
+        let fiber_read = Fiber::try_deserialize(&mut account.data.as_slice())
             .map_err(|e| anyhow!("Failed to deserialize fiber {}: {}", fiber_pubkey, e))?;
 
         // Empty compiled_instruction = cleared fiber (e.g. after close). Skip.
-        if fiber_state.compiled_instruction.is_empty() {
+        if fiber_read.compiled_instruction().is_empty() {
             info!(
                 "fiber_{} has empty compiled_instruction, skipping",
                 fiber_cursor
@@ -402,14 +404,22 @@ impl ExecutorLogic {
             return Ok(None);
         }
 
-        debug!("Fiber fetched, priority_fee={}", fiber_state.priority_fee);
+        debug!(
+            "Fiber fetched, priority_fee={}",
+            fiber_read.priority_fee()
+        );
 
         // Build execute instruction
         let ix = self
-            .build_execute_instruction(thread_pubkey, thread, fiber_cursor, &fiber_state)
+            .build_execute_instruction(
+                thread_pubkey,
+                thread,
+                fiber_cursor,
+                fiber_read.compiled_instruction(),
+            )
             .await?;
 
-        *priority_fee = (*priority_fee).max(fiber_state.priority_fee);
+        *priority_fee = (*priority_fee).max(fiber_read.priority_fee());
 
         Ok(Some(ix))
     }
@@ -507,7 +517,7 @@ impl ExecutorLogic {
         thread_pubkey: &Pubkey,
         thread: &Thread,
         fiber_cursor: u8,
-        fiber: &FiberState,
+        compiled_instruction: &[u8],
     ) -> Result<Instruction> {
         debug!(
             "Building exec_thread instruction: thread={}, fiber_cursor={}",
@@ -516,8 +526,7 @@ impl ExecutorLogic {
 
         // Get compiled instruction from fiber account
         let fiber_pubkey = thread.fiber_at_index(thread_pubkey, fiber_cursor);
-        let compiled =
-            CompiledInstructionV0::deserialize(&mut fiber.compiled_instruction.as_slice())?;
+        let compiled = CompiledInstructionV0::deserialize(&mut &compiled_instruction[..])?;
 
         // Diagnostic: decompile and verify all instruction accounts are in compiled.accounts
         let remaining_pubkeys: HashSet<Pubkey> = compiled
