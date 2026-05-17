@@ -26,7 +26,5 @@ solana-system-interface = { workspace = true }
 anchor-lang = { workspace = true }
 borsh = { workspace = true }
 
-[lints.rust]
-unexpected_cfgs = { level = "allow", check-cfg = [
-  'cfg(target_os, values("solana"))',
-] }
+[lints]
+workspace = true
