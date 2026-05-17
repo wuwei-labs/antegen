@@ -28,3 +28,4 @@ docker-target
 
 # Local cargo config (machine-specific patches)
 .cargo/config.toml
+.claude
