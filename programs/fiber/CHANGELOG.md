@@ -1,5 +1,16 @@
 # Changelog
 
+## [6.0.0](https://github.com/wuwei-labs/antegen/compare/antegen-fiber-program-v5.1.0...antegen-fiber-program-v6.0.0) (2026-05-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **fiber:** `create` and `update` ix surfaces gain a required parameter; consumers must rebuild against the new IDL.
+
+### Features
+
+* **fiber:** add versioned Fiber state with lookup_tables ([6b1a7b0](https://github.com/wuwei-labs/antegen/commit/6b1a7b0c6e400c6aa790558e2cb780560af0d494))
+
 ## [5.1.0](https://github.com/wuwei-labs/antegen/compare/antegen-fiber-program-v5.0.7...antegen-fiber-program-v5.1.0) (2026-05-17)
 
 

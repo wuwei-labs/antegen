@@ -1,5 +1,16 @@
 # Changelog
 
+## [6.0.0](https://github.com/wuwei-labs/antegen/compare/antegen-thread-program-v5.1.0...antegen-thread-program-v6.0.0) (2026-05-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **thread:** `create_thread`, `create_fiber`, `update_fiber` instructions gain required `lookup_tables` parameters. The `fiber`, `target`, and `source` accounts on close / swap / exec are now untyped — consumers building the transaction by hand are unaffected, but anyone using Anchor's typed `Account` wrappers must update.
+
+### Features
+
+* **thread:** forward lookup_tables through fiber CPIs ([19eb27b](https://github.com/wuwei-labs/antegen/commit/19eb27ba1f2b6877104be916a87565cb74dc20b9))
+
 ## [5.1.0](https://github.com/wuwei-labs/antegen/compare/antegen-thread-program-v5.0.12...antegen-thread-program-v5.1.0) (2026-05-17)
 
 
