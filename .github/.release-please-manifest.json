@@ -1,10 +1,10 @@
 {
-  "crates/cron": "4.0.0",
-  "crates/client": "5.1.4",
-  "programs/thread": "5.0.12",
-  "programs/fiber": "5.0.7",
-  "cli/core": "6.0.0",
-  "cli/antegen": "6.0.0",
+  "crates/cron": "4.1.0",
+  "crates/client": "5.2.0",
+  "programs/thread": "5.1.0",
+  "programs/fiber": "5.1.0",
+  "cli/core": "6.1.0",
+  "cli/antegen": "6.1.0",
   "cli/antegenctl": "6.0.0",
-  "plugin/geyser": "5.0.5"
+  "plugin/geyser": "5.1.0"
 }
