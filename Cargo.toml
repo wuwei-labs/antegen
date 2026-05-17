@@ -62,14 +62,14 @@ large_enum_variant = "allow"
 
 [workspace.dependencies]
 # Internal workspace crates (each has its own version)
-antegen-cli-core = { version = "6.0.0", path = "cli/core" }
+antegen-cli-core = { version = "6.1.0", path = "cli/core" }
 antegen-cron = { version = "4.0.0", path = "crates/cron" }
-antegen-client = { version = "5.0.4", path = "crates/client" }
-antegen-geyser-plugin = { version = "5.0.0", path = "plugin/geyser" }
-antegen-fiber-program = { version = "5.0.4", path = "programs/fiber", features = [
+antegen-client = { version = "5.2.0", path = "crates/client" }
+antegen-geyser-plugin = { version = "5.1.0", path = "plugin/geyser" }
+antegen-fiber-program = { version = "6.0.0", path = "programs/fiber", features = [
     "cpi",
 ] }
-antegen-thread-program = { version = "5.0.6", path = "programs/thread", features = [
+antegen-thread-program = { version = "6.0.0", path = "programs/thread", features = [
     "cpi",
 ] }
 
