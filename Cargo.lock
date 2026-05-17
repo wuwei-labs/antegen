@@ -494,7 +494,7 @@ version = "0.0.0"
 
 [[package]]
 name = "antegen-cli"
-version = "6.0.0"
+version = "6.1.0"
 dependencies = [
  "anchor-lang",
  "antegen-cli-core",
@@ -515,7 +515,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-cli-core"
-version = "6.0.0"
+version = "6.1.0"
 dependencies = [
  "antegen-client",
  "anyhow",
@@ -546,7 +546,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-client"
-version = "5.1.4"
+version = "5.2.0"
 dependencies = [
  "anchor-lang",
  "antegen-thread-program",
@@ -592,7 +592,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-cron"
-version = "4.0.0"
+version = "4.1.0"
 dependencies = [
  "chrono",
  "nom",
@@ -600,7 +600,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-fiber-program"
-version = "5.0.7"
+version = "5.1.0"
 dependencies = [
  "anchor-lang",
  "borsh",
@@ -609,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-geyser-plugin"
-version = "5.0.5"
+version = "5.1.0"
 dependencies = [
  "agave-geyser-plugin-interface",
  "antegen-client",
@@ -635,7 +635,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-thread-program"
-version = "5.0.12"
+version = "5.1.0"
 dependencies = [
  "anchor-lang",
  "antegen-cron",
