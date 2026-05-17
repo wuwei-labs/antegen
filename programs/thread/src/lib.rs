@@ -49,6 +49,13 @@ impl ThreadId {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        match self {
+            ThreadId::Bytes(bytes) => bytes.is_empty(),
+            ThreadId::Pubkey(_) => false,
+        }
+    }
+
     pub fn to_name(&self) -> String {
         match self {
             ThreadId::Bytes(bytes) => String::from_utf8_lossy(bytes).to_string(),

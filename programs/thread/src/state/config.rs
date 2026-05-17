@@ -31,7 +31,7 @@ pub trait PaymentProcessor {
 
     fn calculate_reimbursement(&self, balance_change: i64) -> u64 {
         if balance_change < 0 {
-            balance_change.abs() as u64
+            balance_change.unsigned_abs()
         } else if balance_change > 0 {
             0 // Already paid by inner instruction
         } else {

@@ -60,44 +60,26 @@ unexpected_cfgs = { level = "allow", check-cfg = [
 #      walked through.
 # Crates inherit via `[lints] workspace = true` in their Cargo.toml.
 [workspace.lints.clippy]
+# Anchor macro / API-shape lints.
 diverging_sub_expression = "allow"
 too_many_arguments = "allow"
-result_large_err = "allow"
 large_enum_variant = "allow"
-len_without_is_empty = "allow"
-manual_range_contains = "allow"
-unnecessary_unwrap = "allow"
-cast_sign_loss = "allow"
-cast_abs_to_unsigned = "allow"
-unnecessary_cast = "allow"
+# Style lints firing in `crates/client` actors — addressable in a future
+# code-quality pass; not worth churning ALT support PR over.
 needless_borrow = "allow"
 needless_borrows_for_generic_args = "allow"
-clone_on_copy = "allow"
-useless_format = "allow"
-unused_io_amount = "allow"
-empty_line_after_doc_comments = "allow"
 unnecessary_map_or = "allow"
-needless_option_take = "allow"
 cloned_ref_to_slice_refs = "allow"
+manual_is_multiple_of = "allow"
+# Style lints firing in `cli/core` — same rationale as the client allows.
 derivable_impls = "allow"
 if_same_then_else = "allow"
 missing_safety_doc = "allow"
 ptr_arg = "allow"
 redundant_closure = "allow"
 trim_split_whitespace = "allow"
-cmp_owned = "allow"
 manual_strip = "allow"
-collapsible_if = "allow"
-collapsible_else_if = "allow"
-redundant_pattern_matching = "allow"
-needless_collect = "allow"
-get_first = "allow"
-manual_is_multiple_of = "allow"
-never_loop = "allow"
-needless_bool = "allow"
-useless_vec = "allow"
-unused_enumerate_index = "allow"
-zero_prefixed_literal = "allow"
+cmp_owned = "allow"
 
 [workspace.dependencies]
 # Internal workspace crates (each has its own version)

@@ -43,7 +43,12 @@ jobs:
         run: cargo fmt --all --check
 
       - name: cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        # Lint lib + bin targets only. Integration tests `include_bytes!`
+        # `.so` artifacts that this job does not build (build-sbf runs in
+        # the Test stage), and exercise patterns clippy dislikes
+        # (`unwrap()`, hand-built data, etc.) that aren't worth fighting
+        # in test code.
+        run: cargo clippy --workspace --lib --bins -- -D warnings
 
   # -----------------------------------------------------------------------
   # Stage 2: Test (depends on lint)

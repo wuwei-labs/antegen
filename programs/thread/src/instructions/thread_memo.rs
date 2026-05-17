@@ -18,8 +18,7 @@ pub fn thread_memo(
 ) -> Result<Signal> {
     msg!("Thread memo: {}", memo);
 
-    if signal.is_some() {
-        let response: Signal = signal.unwrap();
+    if let Some(response) = signal {
         return Ok(response);
     }
 
