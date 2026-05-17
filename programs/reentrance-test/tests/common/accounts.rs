@@ -37,10 +37,7 @@ pub fn deserialize_thread(svm: &LiteSVM, pubkey: &Pubkey) -> antegen_thread_prog
 
 /// Deserialize a fiber account, accepting either legacy or V1 shape and
 /// projecting to V1 fields (legacy → version=0, lookup_tables=[]).
-pub fn deserialize_fiber(
-    svm: &LiteSVM,
-    pubkey: &Pubkey,
-) -> FiberVersionedState {
+pub fn deserialize_fiber(svm: &LiteSVM, pubkey: &Pubkey) -> FiberVersionedState {
     let account = svm.get_account(pubkey).expect("Fiber account not found");
     let read = Fiber::try_deserialize(&mut account.data.as_slice())
         .expect("Failed to deserialize fiber account");

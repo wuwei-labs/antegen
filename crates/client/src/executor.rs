@@ -11,9 +11,7 @@
 use crate::resources::SharedResources;
 use crate::rpc::response::decode_account_data;
 use anchor_lang::{AccountDeserialize, AnchorDeserialize, InstructionData, ToAccountMetas};
-use antegen_thread_program::fiber::{
-    decompile_instruction, CompiledInstructionV0, Fiber,
-};
+use antegen_thread_program::fiber::{decompile_instruction, CompiledInstructionV0, Fiber};
 use antegen_thread_program::state::PAYER_PUBKEY;
 use antegen_thread_program::{
     accounts::ThreadExec,
@@ -404,10 +402,7 @@ impl ExecutorLogic {
             return Ok(None);
         }
 
-        debug!(
-            "Fiber fetched, priority_fee={}",
-            fiber_read.priority_fee()
-        );
+        debug!("Fiber fetched, priority_fee={}", fiber_read.priority_fee());
 
         // Build execute instruction
         let ix = self

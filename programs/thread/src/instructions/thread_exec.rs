@@ -7,7 +7,7 @@ use anchor_lang::{
     prelude::*,
     solana_program::program::{get_return_data, invoke_signed},
 };
-use antegen_fiber_program::state::{FiberInstructionProcessor, Fiber};
+use antegen_fiber_program::state::{Fiber, FiberInstructionProcessor};
 
 /// Accounts required by the `thread_exec` instruction.
 #[derive(Accounts)]

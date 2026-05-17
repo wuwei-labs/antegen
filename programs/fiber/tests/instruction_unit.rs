@@ -389,7 +389,7 @@ fn test_fiber_read_dispatches_v1_buffer() {
 
 #[test]
 fn test_fiber_read_rejects_short_buffer() {
-    let too_short = vec![0u8; 4];
+    let too_short = [0u8; 4];
     assert!(Fiber::try_deserialize(&mut &too_short[..]).is_err());
 }
 

@@ -322,14 +322,8 @@ fn test_fiber_create_rejects_more_than_four_alts() {
 
     let thread_pubkey = setup_thread(&mut svm, &authority, &payer, "fc-alt-5");
     let five_alts: Vec<Pubkey> = (0..5).map(|_| Pubkey::new_unique()).collect();
-    let result = send_create_fiber_with_alts(
-        &mut svm,
-        &authority,
-        &payer,
-        &thread_pubkey,
-        0,
-        five_alts,
-    );
+    let result =
+        send_create_fiber_with_alts(&mut svm, &authority, &payer, &thread_pubkey, 0, five_alts);
     assert!(
         result.is_err(),
         "creating a fiber with 5 ALTs must be rejected (max 4)"
