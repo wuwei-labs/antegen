@@ -75,7 +75,7 @@ pub fn config_update(ctx: Context<ConfigUpdate>, params: ConfigUpdateParams) -> 
     // Update timing parameters if provided
     if let Some(grace_period) = params.grace_period_seconds {
         require!(
-            grace_period >= 0 && grace_period <= 60, // Max 60 seconds grace
+            (0..=60).contains(&grace_period), // Max 60 seconds grace
             AntegenThreadError::InvalidFeePercentage
         );
         config.grace_period_seconds = grace_period;
@@ -84,7 +84,7 @@ pub fn config_update(ctx: Context<ConfigUpdate>, params: ConfigUpdateParams) -> 
 
     if let Some(decay_period) = params.fee_decay_seconds {
         require!(
-            decay_period >= 0 && decay_period <= 600, // Max 10 minutes decay
+            (0..=600).contains(&decay_period), // Max 10 minutes decay
             AntegenThreadError::InvalidFeePercentage
         );
         config.fee_decay_seconds = decay_period;

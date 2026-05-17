@@ -38,6 +38,7 @@ pub fn fiber_update(
     instruction: Option<SerializableInstruction>,
     priority_fee: Option<u64>,
     track: bool,
+    lookup_tables: Option<Vec<Pubkey>>,
 ) -> Result<()> {
     // Prevent thread_delete instructions in fibers
     if let Some(ref ix) = instruction {
@@ -63,7 +64,7 @@ pub fn fiber_update(
     // Pre-fund fiber account from thread PDA if not yet initialized
     let fiber_info = ctx.accounts.fiber.to_account_info();
     if fiber_info.data_len().eq(&0) {
-        let space = 8 + antegen_fiber_program::state::FiberState::INIT_SPACE;
+        let space = 8 + antegen_fiber_program::state::FiberVersionedState::INIT_SPACE;
         let rent_lamports = Rent::get()?.minimum_balance(space);
         **thread.to_account_info().try_borrow_mut_lamports()? -= rent_lamports;
         **fiber_info.try_borrow_mut_lamports()? += rent_lamports;
@@ -84,6 +85,7 @@ pub fn fiber_update(
             fiber_index,
             instruction,
             priority_fee,
+            lookup_tables.clone(),
         )
     })?;
 

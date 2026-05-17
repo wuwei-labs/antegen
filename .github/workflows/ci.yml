@@ -43,7 +43,12 @@ jobs:
         run: cargo fmt --all --check
 
       - name: cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        # Lint lib + bin targets only. Integration tests `include_bytes!`
+        # `.so` artifacts that this job does not build (build-sbf runs in
+        # the Test stage), and exercise patterns clippy dislikes
+        # (`unwrap()`, hand-built data, etc.) that aren't worth fighting
+        # in test code.
+        run: cargo clippy --workspace --lib --bins -- -D warnings
 
   # -----------------------------------------------------------------------
   # Stage 2: Test (depends on lint)
@@ -64,6 +69,19 @@ jobs:
 
       - name: Install system deps
         run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+
+      - name: Install Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/${{ env.SOLANA_VERSION }}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Anchor CLI
+        run: cargo install --git https://github.com/coral-xyz/anchor --tag v${{ env.ANCHOR_VERSION }} anchor-cli --locked
+
+      - name: anchor build (programs)
+        # Integration tests `include_bytes!` the program `.so` artifacts.
+        # Build them before `cargo test` compiles the test binaries.
+        run: anchor build --ignore-keys
 
       - name: cargo test
         run: cargo test --workspace --locked

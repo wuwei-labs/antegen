@@ -1,4 +1,5 @@
 use anchor_lang::AccountDeserialize;
+use antegen_thread_program::fiber::{Fiber, FiberVersionedState};
 use litesvm::LiteSVM;
 use solana_sdk::pubkey::Pubkey;
 
@@ -34,14 +35,24 @@ pub fn deserialize_thread(svm: &LiteSVM, pubkey: &Pubkey) -> antegen_thread_prog
         .expect("Failed to deserialize Thread")
 }
 
-/// Deserialize a FiberState account from the SVM.
-pub fn deserialize_fiber(
-    svm: &LiteSVM,
-    pubkey: &Pubkey,
-) -> antegen_thread_program::state::FiberState {
+/// Deserialize a fiber account, accepting either legacy or V1 shape and
+/// projecting to V1 fields (legacy → version=0, lookup_tables=[]).
+pub fn deserialize_fiber(svm: &LiteSVM, pubkey: &Pubkey) -> FiberVersionedState {
     let account = svm.get_account(pubkey).expect("Fiber account not found");
-    antegen_thread_program::state::FiberState::try_deserialize(&mut account.data.as_slice())
-        .expect("Failed to deserialize FiberState")
+    let read = Fiber::try_deserialize(&mut account.data.as_slice())
+        .expect("Failed to deserialize fiber account");
+    match read {
+        Fiber::Legacy(s) => FiberVersionedState {
+            version: 0,
+            thread: s.thread,
+            compiled_instruction: s.compiled_instruction,
+            last_executed: s.last_executed,
+            exec_count: s.exec_count,
+            priority_fee: s.priority_fee,
+            lookup_tables: Vec::new(),
+        },
+        Fiber::V1(s) => s,
+    }
 }
 
 /// Check if an account exists and has non-zero data.

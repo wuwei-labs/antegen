@@ -200,6 +200,138 @@ fn test_fiber_update_wrong_thread() {
     assert!(result.is_err());
 }
 
+// ============================================================================
+// lookup_tables (ALT support) tests
+// ============================================================================
+
+#[test]
+fn test_fiber_update_replaces_lookup_tables() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let (thread_pubkey, fiber_pubkey) =
+        setup_thread_with_fiber_account(&mut svm, &authority, &payer, "fu-alt-rep");
+    let alt_a = Pubkey::new_unique();
+    let alt_b = Pubkey::new_unique();
+
+    let new_memo = make_memo_instruction("with-alts", None);
+    let serializable = make_serializable_instruction(&new_memo);
+    let ix = build_update_fiber_full(
+        &authority.pubkey(),
+        &thread_pubkey,
+        &fiber_pubkey,
+        0,
+        Some(serializable),
+        None,
+        false,
+        Some(vec![alt_a, alt_b]),
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    svm.send_transaction(tx).unwrap();
+
+    let read = deserialize_fiber_any(&svm, &fiber_pubkey);
+    assert!(!read.is_legacy());
+    assert_eq!(read.lookup_tables(), &[alt_a, alt_b]);
+}
+
+#[test]
+fn test_fiber_update_none_leaves_lookup_tables_unchanged() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let (thread_pubkey, fiber_pubkey) =
+        setup_thread_with_fiber_account(&mut svm, &authority, &payer, "fu-alt-keep");
+    let alt = Pubkey::new_unique();
+
+    // First write: set lookup_tables = [alt].
+    let memo = make_memo_instruction("set-alts", None);
+    let serializable = make_serializable_instruction(&memo);
+    let ix = build_update_fiber_full(
+        &authority.pubkey(),
+        &thread_pubkey,
+        &fiber_pubkey,
+        0,
+        Some(serializable),
+        None,
+        false,
+        Some(vec![alt]),
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    svm.send_transaction(tx).unwrap();
+
+    // Second write: instruction change, lookup_tables = None → unchanged.
+    let memo2 = make_memo_instruction("change-ix-keep-alts", None);
+    let serializable2 = make_serializable_instruction(&memo2);
+    let ix2 = build_update_fiber_full(
+        &authority.pubkey(),
+        &thread_pubkey,
+        &fiber_pubkey,
+        0,
+        Some(serializable2),
+        None,
+        false,
+        None,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx2 = Transaction::new_signed_with_payer(
+        &[ix2],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    svm.send_transaction(tx2).unwrap();
+
+    let read = deserialize_fiber_any(&svm, &fiber_pubkey);
+    assert_eq!(read.lookup_tables(), &[alt]);
+}
+
+#[test]
+fn test_fiber_update_rejects_more_than_four_alts() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let (thread_pubkey, fiber_pubkey) =
+        setup_thread_with_fiber_account(&mut svm, &authority, &payer, "fu-alt-5");
+    let five_alts: Vec<Pubkey> = (0..5).map(|_| Pubkey::new_unique()).collect();
+
+    let memo = make_memo_instruction("too-many", None);
+    let serializable = make_serializable_instruction(&memo);
+    let ix = build_update_fiber_full(
+        &authority.pubkey(),
+        &thread_pubkey,
+        &fiber_pubkey,
+        0,
+        Some(serializable),
+        None,
+        false,
+        Some(five_alts),
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    let result = svm.send_transaction(tx);
+    assert!(result.is_err());
+}
+
 #[test]
 fn test_fiber_update_prevents_delete_thread() {
     let (mut svm, _admin, payer) = create_test_env();

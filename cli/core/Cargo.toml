@@ -42,3 +42,6 @@ libc = "0.2"
 [features]
 dev = []
 prod = [] # Production mode - no dev build detection
+
+[lints]
+workspace = true

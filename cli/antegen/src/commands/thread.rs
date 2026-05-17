@@ -582,6 +582,7 @@ mod test_commands {
             fiber_index,
             instruction: serializable_ix,
             priority_fee: 0,
+            lookup_tables: Vec::new(),
         }
         .data();
 
@@ -956,6 +957,7 @@ mod test_commands {
             paused: None,
             instruction: Some(serializable_ix),
             priority_fee: Some(0),
+            lookup_tables: Vec::new(),
         }
         .data();
 
@@ -1113,6 +1115,7 @@ mod test_commands {
             paused: None,
             instruction: Some(serializable_a),
             priority_fee: Some(0),
+            lookup_tables: Vec::new(),
         }
         .data();
 
@@ -1165,6 +1168,7 @@ mod test_commands {
             paused: None,
             instruction: Some(serializable_b),
             priority_fee: Some(0),
+            lookup_tables: Vec::new(),
         }
         .data();
 
@@ -1241,6 +1245,7 @@ mod test_commands {
             paused: None,
             instruction: Some(serializable),
             priority_fee: Some(0),
+            lookup_tables: Vec::new(),
         }
         .data();
 

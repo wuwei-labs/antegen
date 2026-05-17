@@ -427,7 +427,7 @@ impl TriggerProcessor for Thread {
                 let mut hasher = DefaultHasher::new();
                 let data = &account_info.try_borrow_data()?;
                 let offset = *offset as usize;
-                let range_end = offset.checked_add(*size as usize).unwrap() as usize;
+                let range_end = offset.checked_add(*size as usize).unwrap();
 
                 use std::hash::Hash;
                 if data.len() > range_end {
@@ -471,7 +471,7 @@ impl TriggerProcessor for Thread {
                 let mut hasher = DefaultHasher::new();
                 let data = &account_info.try_borrow_data()?;
                 let offset = *offset as usize;
-                let range_end = offset.checked_add(*size as usize).unwrap() as usize;
+                let range_end = offset.checked_add(*size as usize).unwrap();
 
                 use std::hash::Hash;
                 if data.len() > range_end {

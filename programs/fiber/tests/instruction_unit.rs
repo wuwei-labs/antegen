@@ -1,3 +1,4 @@
+use anchor_lang::{AccountDeserialize, AnchorSerialize, Discriminator};
 use antegen_fiber_program::state::*;
 use antegen_fiber_program::*;
 use solana_sdk::instruction::{AccountMeta, Instruction};
@@ -320,4 +321,117 @@ fn test_pubkey_different_threads() {
     let pda_b = FiberState::pubkey(thread_b, 0);
 
     assert_ne!(pda_a, pda_b);
+}
+
+// ============================================================================
+// Fiber dispatch tests
+// ============================================================================
+
+/// Hand-craft a legacy on-chain buffer: 8-byte legacy discriminator + borsh state.
+fn craft_legacy_buffer(state: &FiberState) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(FiberState::DISCRIMINATOR);
+    state.serialize(&mut buf).unwrap();
+    buf
+}
+
+/// Hand-craft a v1 on-chain buffer: 8-byte v1 discriminator + borsh state.
+fn craft_v1_buffer(state: &FiberVersionedState) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(FiberVersionedState::DISCRIMINATOR);
+    state.serialize(&mut buf).unwrap();
+    buf
+}
+
+#[test]
+fn test_fiber_read_dispatches_legacy_buffer() {
+    let thread = Pubkey::new_unique();
+    let legacy = FiberState {
+        thread,
+        compiled_instruction: vec![1, 2, 3],
+        last_executed: 42,
+        exec_count: 7,
+        priority_fee: 1000,
+    };
+    let buf = craft_legacy_buffer(&legacy);
+
+    let read = Fiber::try_deserialize(&mut &buf[..]).unwrap();
+    assert!(read.is_legacy());
+    assert_eq!(read.thread(), thread);
+    assert_eq!(read.compiled_instruction(), &[1, 2, 3]);
+    assert_eq!(read.priority_fee(), 1000);
+    assert_eq!(read.lookup_tables(), &[] as &[Pubkey]);
+}
+
+#[test]
+fn test_fiber_read_dispatches_v1_buffer() {
+    let thread = Pubkey::new_unique();
+    let alt_a = Pubkey::new_unique();
+    let alt_b = Pubkey::new_unique();
+    let state = FiberVersionedState {
+        version: CURRENT_FIBER_VERSION,
+        thread,
+        compiled_instruction: vec![9, 9, 9],
+        last_executed: 100,
+        exec_count: 3,
+        priority_fee: 500,
+        lookup_tables: vec![alt_a, alt_b],
+    };
+    let buf = craft_v1_buffer(&state);
+
+    let read = Fiber::try_deserialize(&mut &buf[..]).unwrap();
+    assert!(!read.is_legacy());
+    assert_eq!(read.thread(), thread);
+    assert_eq!(read.compiled_instruction(), &[9, 9, 9]);
+    assert_eq!(read.priority_fee(), 500);
+    assert_eq!(read.lookup_tables(), &[alt_a, alt_b]);
+}
+
+#[test]
+fn test_fiber_read_rejects_short_buffer() {
+    let too_short = [0u8; 4];
+    assert!(Fiber::try_deserialize(&mut &too_short[..]).is_err());
+}
+
+#[test]
+fn test_fiber_read_rejects_unknown_discriminator() {
+    let buf = vec![0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0, 0, 0, 0];
+    assert!(Fiber::try_deserialize(&mut &buf[..]).is_err());
+}
+
+#[test]
+fn test_legacy_and_v1_discriminators_differ() {
+    // Distinct struct names → distinct anchor discriminators, so on-chain
+    // dispatch can tell them apart.
+    assert_ne!(
+        FiberState::DISCRIMINATOR,
+        FiberVersionedState::DISCRIMINATOR,
+    );
+}
+
+#[test]
+fn test_max_lookup_tables_constant_matches_solana_v0_cap() {
+    // Solana's v0 transaction format caps ALTs at 4. The per-fiber max must
+    // not exceed that — otherwise a single fiber could create a tx that
+    // cannot be compiled.
+    assert_eq!(MAX_LOOKUP_TABLES_PER_FIBER, 4);
+}
+
+#[test]
+fn test_fiber_versioned_state_roundtrip_empty_lookup_tables() {
+    // A v1 fiber with no ALTs should round-trip cleanly through the Fiber
+    // dispatcher — guards against borsh-trailing-vec mishaps.
+    let state = FiberVersionedState {
+        version: CURRENT_FIBER_VERSION,
+        thread: Pubkey::new_unique(),
+        compiled_instruction: vec![],
+        last_executed: 0,
+        exec_count: 0,
+        priority_fee: 0,
+        lookup_tables: vec![],
+    };
+    let buf = craft_v1_buffer(&state);
+    let read = Fiber::try_deserialize(&mut &buf[..]).unwrap();
+    assert!(!read.is_legacy());
+    assert_eq!(read.lookup_tables(), &[] as &[Pubkey]);
 }

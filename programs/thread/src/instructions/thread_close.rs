@@ -1,7 +1,10 @@
 use {
     crate::{errors::AntegenThreadError, *},
     anchor_lang::prelude::*,
-    antegen_fiber_program::{cpi::close, state::FiberState},
+    antegen_fiber_program::{
+        cpi::close,
+        state::{Fiber, FiberState},
+    },
 };
 
 /// Accounts required by the `thread_close` instruction.
@@ -43,12 +46,10 @@ pub fn thread_close<'info>(ctx: Context<'info, ThreadClose<'info>>) -> Result<()
 
     // Process each fiber account from remaining_accounts via CPI to Fiber Program
     for account in ctx.remaining_accounts.iter() {
-        // Deserialize to validate it's a FiberState
-        let fiber = FiberState::try_deserialize(&mut &account.data.borrow()[..])?;
-
-        // Validate fiber belongs to this thread
+        // Validate the slot holds a fiber (legacy or V1) belonging to this thread.
+        let fiber_read = Fiber::try_deserialize(&mut &account.data.borrow()[..])?;
         require!(
-            fiber.thread == thread_key,
+            fiber_read.thread() == thread_key,
             AntegenThreadError::InvalidFiberAccount
         );
 

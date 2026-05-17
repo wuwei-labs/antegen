@@ -177,17 +177,14 @@ pub fn decompile_instruction(compiled: &CompiledInstructionV0) -> Result<Instruc
     let accounts: Vec<AccountMeta> = ix
         .accounts
         .iter()
-        .enumerate()
-        .map(|(_i, &idx)| {
+        .map(|&idx| {
             let pubkey = compiled.accounts[idx as usize];
             let is_writable = if idx < compiled.num_rw_signers {
                 true
             } else if idx < compiled.num_rw_signers + compiled.num_ro_signers {
                 false
-            } else if idx < compiled.num_rw_signers + compiled.num_ro_signers + compiled.num_rw {
-                true
             } else {
-                false
+                idx < compiled.num_rw_signers + compiled.num_ro_signers + compiled.num_rw
             };
             let is_signer = idx < compiled.num_rw_signers + compiled.num_ro_signers;
 

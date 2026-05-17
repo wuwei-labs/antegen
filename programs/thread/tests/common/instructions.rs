@@ -61,6 +61,32 @@ pub fn build_create_thread(
     priority_fee: Option<u64>,
     fiber: Option<Pubkey>,
 ) -> Instruction {
+    build_create_thread_with_alts(
+        authority,
+        payer,
+        thread,
+        amount,
+        id,
+        trigger,
+        instruction,
+        priority_fee,
+        fiber,
+        Vec::new(),
+    )
+}
+
+pub fn build_create_thread_with_alts(
+    authority: &Pubkey,
+    payer: &Pubkey,
+    thread: &Pubkey,
+    amount: u64,
+    id: ThreadId,
+    trigger: Trigger,
+    instruction: Option<SerializableInstruction>,
+    priority_fee: Option<u64>,
+    fiber: Option<Pubkey>,
+    lookup_tables: Vec<Pubkey>,
+) -> Instruction {
     let fiber_program = fiber.map(|_| FIBER_PROGRAM_ID);
 
     Instruction {
@@ -84,6 +110,7 @@ pub fn build_create_thread(
             paused: None,
             instruction,
             priority_fee,
+            lookup_tables,
         }
         .data(),
     }
@@ -180,6 +207,26 @@ pub fn build_create_fiber(
     instruction: SerializableInstruction,
     priority_fee: u64,
 ) -> Instruction {
+    build_create_fiber_with_alts(
+        authority,
+        thread,
+        fiber,
+        fiber_index,
+        instruction,
+        priority_fee,
+        Vec::new(),
+    )
+}
+
+pub fn build_create_fiber_with_alts(
+    authority: &Pubkey,
+    thread: &Pubkey,
+    fiber: &Pubkey,
+    fiber_index: u8,
+    instruction: SerializableInstruction,
+    priority_fee: u64,
+    lookup_tables: Vec<Pubkey>,
+) -> Instruction {
     Instruction {
         program_id: PROGRAM_ID,
         accounts: antegen_thread_program::accounts::FiberCreate {
@@ -194,6 +241,7 @@ pub fn build_create_fiber(
             fiber_index,
             instruction,
             priority_fee,
+            lookup_tables,
         }
         .data(),
     }
@@ -227,6 +275,28 @@ pub fn build_update_fiber(
     priority_fee: Option<u64>,
     track: bool,
 ) -> Instruction {
+    build_update_fiber_full(
+        authority,
+        thread,
+        fiber,
+        fiber_index,
+        Some(instruction),
+        priority_fee,
+        track,
+        None,
+    )
+}
+
+pub fn build_update_fiber_full(
+    authority: &Pubkey,
+    thread: &Pubkey,
+    fiber: &Pubkey,
+    fiber_index: u8,
+    instruction: Option<SerializableInstruction>,
+    priority_fee: Option<u64>,
+    track: bool,
+    lookup_tables: Option<Vec<Pubkey>>,
+) -> Instruction {
     Instruction {
         program_id: PROGRAM_ID,
         accounts: antegen_thread_program::accounts::FiberUpdate {
@@ -239,9 +309,10 @@ pub fn build_update_fiber(
         .to_account_metas(None),
         data: antegen_thread_program::instruction::UpdateFiber {
             fiber_index,
-            instruction: Some(instruction),
+            instruction,
             priority_fee,
             track,
+            lookup_tables,
         }
         .data(),
     }

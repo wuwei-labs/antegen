@@ -25,12 +25,10 @@ pub struct FiberClose<'info> {
     )]
     pub thread: Account<'info, Thread>,
 
-    /// The fiber account to close (owned by Fiber Program)
-    #[account(
-        mut,
-        constraint = fiber.thread.eq(&thread.key()) @ AntegenThreadError::InvalidFiberAccount,
-    )]
-    pub fiber: Account<'info, antegen_fiber_program::state::FiberState>,
+    /// CHECK: fiber account to close (owned by Fiber Program). Shape-agnostic
+    /// — the fiber program validates the `thread` field against the signer.
+    #[account(mut)]
+    pub fiber: UncheckedAccount<'info>,
 
     /// The Fiber Program for CPI
     pub fiber_program: Program<'info, antegen_fiber_program::program::AntegenFiber>,

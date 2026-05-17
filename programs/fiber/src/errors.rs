@@ -13,4 +13,13 @@ pub enum AntegenFiberError {
 
     #[msg("Fiber account has insufficient lamports for rent")]
     InsufficientRent,
+
+    #[msg("Lookup tables list exceeds maximum of 4 entries")]
+    LookupTablesExceedMax,
+
+    #[msg("Lookup tables are not supported on legacy fibers — close and recreate")]
+    LegacyFiberLookupTablesUnsupported,
+
+    #[msg("Fiber account data is malformed or has unknown discriminator")]
+    InvalidFiberData,
 }

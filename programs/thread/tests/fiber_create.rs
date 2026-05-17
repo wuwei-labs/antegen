@@ -232,6 +232,120 @@ fn test_fiber_create_updates_thread() {
     assert_eq!(thread_after.fiber_next_id, 1);
 }
 
+// ============================================================================
+// lookup_tables (ALT support) tests
+// ============================================================================
+
+/// Send a create_fiber with an explicit lookup_tables list.
+fn send_create_fiber_with_alts(
+    svm: &mut litesvm::LiteSVM,
+    authority: &Keypair,
+    payer: &Keypair,
+    thread: &Pubkey,
+    fiber_index: u8,
+    lookup_tables: Vec<Pubkey>,
+) -> Result<Pubkey, litesvm::types::FailedTransactionMetadata> {
+    let (fiber_pubkey, _) = fiber_pda(thread, fiber_index);
+    let memo_ix = make_memo_instruction("fiber-alt", None);
+    let serializable = make_serializable_instruction(&memo_ix);
+
+    let ix = build_create_fiber_with_alts(
+        &authority.pubkey(),
+        thread,
+        &fiber_pubkey,
+        fiber_index,
+        serializable,
+        0,
+        lookup_tables,
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[payer, authority],
+        blockhash,
+    );
+    svm.send_transaction(tx).map(|_| fiber_pubkey)
+}
+
+#[test]
+fn test_fiber_create_stores_lookup_tables() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let thread_pubkey = setup_thread(&mut svm, &authority, &payer, "fc-alt-store");
+    let alt_a = Pubkey::new_unique();
+    let alt_b = Pubkey::new_unique();
+    let fiber_pubkey = send_create_fiber_with_alts(
+        &mut svm,
+        &authority,
+        &payer,
+        &thread_pubkey,
+        0,
+        vec![alt_a, alt_b],
+    )
+    .unwrap();
+
+    let read = deserialize_fiber_any(&svm, &fiber_pubkey);
+    assert!(!read.is_legacy(), "new fiber should be V1");
+    assert_eq!(read.lookup_tables(), &[alt_a, alt_b]);
+}
+
+#[test]
+fn test_fiber_create_at_alt_boundary_succeeds() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let thread_pubkey = setup_thread(&mut svm, &authority, &payer, "fc-alt-4");
+    let four_alts: Vec<Pubkey> = (0..4).map(|_| Pubkey::new_unique()).collect();
+    let fiber_pubkey = send_create_fiber_with_alts(
+        &mut svm,
+        &authority,
+        &payer,
+        &thread_pubkey,
+        0,
+        four_alts.clone(),
+    )
+    .unwrap();
+
+    let read = deserialize_fiber_any(&svm, &fiber_pubkey);
+    assert_eq!(read.lookup_tables(), four_alts.as_slice());
+}
+
+#[test]
+fn test_fiber_create_rejects_more_than_four_alts() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let thread_pubkey = setup_thread(&mut svm, &authority, &payer, "fc-alt-5");
+    let five_alts: Vec<Pubkey> = (0..5).map(|_| Pubkey::new_unique()).collect();
+    let result =
+        send_create_fiber_with_alts(&mut svm, &authority, &payer, &thread_pubkey, 0, five_alts);
+    assert!(
+        result.is_err(),
+        "creating a fiber with 5 ALTs must be rejected (max 4)"
+    );
+}
+
+#[test]
+fn test_fiber_create_empty_lookup_tables_default() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let thread_pubkey = setup_thread(&mut svm, &authority, &payer, "fc-alt-empty");
+    let fiber_pubkey =
+        send_create_fiber(&mut svm, &authority, &payer, &thread_pubkey, 0, 0).unwrap();
+
+    let read = deserialize_fiber_any(&svm, &fiber_pubkey);
+    // V1 fiber with empty lookup_tables (default path).
+    assert!(!read.is_legacy());
+    assert!(read.lookup_tables().is_empty());
+}
+
 #[test]
 fn test_fiber_create_compiled_roundtrip() {
     let (mut svm, _admin, payer) = create_test_env();

@@ -70,6 +70,7 @@ pub fn thread_create(
     paused: Option<bool>,
     instruction: Option<SerializableInstruction>,
     priority_fee: Option<u64>,
+    lookup_tables: Vec<Pubkey>,
 ) -> Result<()> {
     let authority: &Signer = &ctx.accounts.authority;
     let payer: &Signer = &ctx.accounts.payer;
@@ -231,7 +232,7 @@ pub fn thread_create(
 
         // Conditional pre-funding: only pre-fund if fiber account is not yet initialized
         if fiber.to_account_info().data_len() == 0 {
-            let space = 8 + antegen_fiber_program::state::FiberState::INIT_SPACE;
+            let space = 8 + antegen_fiber_program::state::FiberVersionedState::INIT_SPACE;
             let rent_lamports = Rent::get()?.minimum_balance(space);
             **thread.to_account_info().try_borrow_mut_lamports()? -= rent_lamports;
             **fiber.to_account_info().try_borrow_mut_lamports()? += rent_lamports;
@@ -251,6 +252,7 @@ pub fn thread_create(
                 0, // fiber_index = 0
                 instruction.clone(),
                 priority_fee,
+                lookup_tables.clone(),
             )
         })?;
 

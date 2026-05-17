@@ -24,6 +24,7 @@ impl Schedule {
         Schedule { source, fields }
     }
 
+    #[allow(clippy::never_loop)]
     pub fn next_after<Z>(&self, after: &DateTime<Z>) -> Option<DateTime<Z>>
     where
         Z: TimeZone,
@@ -121,6 +122,7 @@ impl Schedule {
         None
     }
 
+    #[allow(clippy::never_loop)]
     pub fn prev_before<Z>(&self, before: &DateTime<Z>) -> Option<DateTime<Z>>
     where
         Z: TimeZone,
@@ -444,9 +446,9 @@ where
 }
 
 fn is_leap_year(year: Ordinal) -> bool {
-    let by_four = year % 4 == 0;
-    let by_hundred = year % 100 == 0;
-    let by_four_hundred = year % 400 == 0;
+    let by_four = year.is_multiple_of(4);
+    let by_hundred = year.is_multiple_of(100);
+    let by_four_hundred = year.is_multiple_of(400);
     by_four && ((!by_hundred) || by_four_hundred)
 }
 

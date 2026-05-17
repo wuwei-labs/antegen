@@ -25,14 +25,23 @@ jobs:
           # The PR commits API returns each commit's message in commit.message.
           # Iterate through every commit in the PR and require a Signed-off-by
           # trailer matching the DCO format (Name <email>).
-          while IFS='|' read -r sha subject; do
+          #
+          # Skip merge commits (parents > 1). GitHub's "Update branch" /
+          # auto-merge button creates a merge commit with no Signed-off-by
+          # trailer; rejecting it would force every contributor to rebase
+          # manually. The non-merge commits behind it still carry trailers.
+          while IFS='|' read -r sha subject parents; do
+            if [ "$parents" -gt 1 ]; then
+              echo "Skipping merge commit $sha ($subject)"
+              continue
+            fi
             message=$(gh api "/repos/$REPO/commits/$sha" --jq '.commit.message')
             if ! printf '%s' "$message" | grep -qE '^Signed-off-by: .+ <.+@.+>'; then
               echo "::error::Commit $sha ($subject) is missing a Signed-off-by trailer."
               missing=$((missing + 1))
             fi
           done < <(gh api --paginate "/repos/$REPO/pulls/$PR_NUMBER/commits" \
-                     --jq '.[] | "\(.sha)|\(.commit.message | split("\n")[0])"')
+                     --jq '.[] | "\(.sha)|\(.commit.message | split("\n")[0])|\(.parents | length)"')
 
           if [ "$missing" -gt 0 ]; then
             echo ""

@@ -22,3 +22,6 @@ log = { workspace = true }
 [features]
 dev = ["antegen-cli-core/dev"]
 prod = ["antegen-cli-core/prod"]
+
+[lints]
+workspace = true
