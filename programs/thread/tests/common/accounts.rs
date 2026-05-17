@@ -1,4 +1,5 @@
 use anchor_lang::AccountDeserialize;
+use antegen_fiber_program::state::Fiber;
 use litesvm::LiteSVM;
 use solana_sdk::pubkey::Pubkey;
 
@@ -44,14 +45,37 @@ pub fn deserialize_config(
         .expect("Failed to deserialize ThreadConfig")
 }
 
-/// Deserialize a FiberState account from the SVM (owned by Fiber Program).
+/// Deserialize a fiber account, returning a unified V1 view regardless of
+/// on-disk shape. Legacy fibers get `version = 0` and `lookup_tables = []`
+/// so existing tests can keep using dot-field access.
 pub fn deserialize_fiber(
     svm: &LiteSVM,
     pubkey: &Pubkey,
-) -> antegen_fiber_program::state::FiberState {
+) -> antegen_fiber_program::state::FiberVersionedState {
     let account = svm.get_account(pubkey).expect("Fiber account not found");
-    antegen_fiber_program::state::FiberState::try_deserialize(&mut account.data.as_slice())
-        .expect("Failed to deserialize FiberState")
+    let read = Fiber::try_deserialize(&mut account.data.as_slice())
+        .expect("Failed to deserialize fiber account");
+    match read {
+        Fiber::Legacy(s) => antegen_fiber_program::state::FiberVersionedState {
+            version: 0,
+            thread: s.thread,
+            compiled_instruction: s.compiled_instruction,
+            last_executed: s.last_executed,
+            exec_count: s.exec_count,
+            priority_fee: s.priority_fee,
+            lookup_tables: Vec::new(),
+        },
+        Fiber::V1(s) => s,
+    }
+}
+
+/// Deserialize a fiber account as a `Fiber`, preserving whether it's
+/// a legacy or V1 account on disk. Use when the test specifically cares
+/// about the on-chain shape (e.g. lookup_table presence).
+pub fn deserialize_fiber_any(svm: &LiteSVM, pubkey: &Pubkey) -> Fiber {
+    let account = svm.get_account(pubkey).expect("Fiber account not found");
+    Fiber::try_deserialize(&mut account.data.as_slice())
+        .expect("Failed to deserialize fiber account")
 }
 
 /// Check if an account exists and has non-zero data.

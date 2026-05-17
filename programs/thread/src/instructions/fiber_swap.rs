@@ -26,19 +26,15 @@ pub struct FiberSwap<'info> {
     )]
     pub thread: Account<'info, Thread>,
 
-    /// The target fiber — receives source's instruction content
-    #[account(
-        mut,
-        constraint = target.thread.eq(&thread.key()) @ AntegenThreadError::InvalidFiberAccount,
-    )]
-    pub target: Account<'info, antegen_fiber_program::state::FiberState>,
+    /// CHECK: target fiber — receives source's instruction content.
+    /// Shape-agnostic; fiber program validates the `thread` field.
+    #[account(mut)]
+    pub target: UncheckedAccount<'info>,
 
-    /// The source fiber — closed after its instruction is copied to target
-    #[account(
-        mut,
-        constraint = source.thread.eq(&thread.key()) @ AntegenThreadError::InvalidFiberAccount,
-    )]
-    pub source: Account<'info, antegen_fiber_program::state::FiberState>,
+    /// CHECK: source fiber — closed after its instruction is copied to target.
+    /// Shape-agnostic; fiber program validates the `thread` field.
+    #[account(mut)]
+    pub source: UncheckedAccount<'info>,
 
     /// The Fiber Program for CPI
     pub fiber_program: Program<'info, antegen_fiber_program::program::AntegenFiber>,

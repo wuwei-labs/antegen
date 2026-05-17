@@ -61,6 +61,7 @@ pub fn build_create_thread(
             paused: None,
             instruction: None,
             priority_fee: None,
+            lookup_tables: Vec::new(),
         }
         .data(),
     }
@@ -92,6 +93,7 @@ pub fn build_create_fiber(
             fiber_index,
             instruction,
             priority_fee,
+            lookup_tables: Vec::new(),
         }
         .data(),
     }

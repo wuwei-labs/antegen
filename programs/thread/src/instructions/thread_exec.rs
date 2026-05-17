@@ -7,6 +7,7 @@ use anchor_lang::{
     prelude::*,
     solana_program::program::{get_return_data, invoke_signed},
 };
+use antegen_fiber_program::state::{FiberInstructionProcessor, Fiber};
 
 /// Accounts required by the `thread_exec` instruction.
 #[derive(Accounts)]
@@ -32,8 +33,9 @@ pub struct ThreadExec<'info> {
     )]
     pub thread: Box<Account<'info, Thread>>,
 
-    /// The fiber to execute (owned by Fiber Program)
-    pub fiber: Box<Account<'info, antegen_fiber_program::state::FiberState>>,
+    /// CHECK: fiber to execute (owned by Fiber Program). Shape-agnostic —
+    /// dispatched manually via `Fiber` so both legacy and V1 fibers run.
+    pub fiber: UncheckedAccount<'info>,
 
     /// The config for fee distribution
     #[account(
@@ -143,7 +145,12 @@ pub fn thread_exec<'info>(
         AntegenThreadError::WrongFiberIndex
     );
 
-    let instruction = fiber.get_instruction(&executor.key())?;
+    let fiber_read = Fiber::try_deserialize(&mut &fiber.data.borrow()[..])?;
+    require!(
+        fiber_read.thread().eq(&thread_pubkey),
+        AntegenThreadError::InvalidFiberAccount
+    );
+    let instruction = fiber_read.get_instruction(&executor.key())?;
 
     msg!(
         "invoke_signed: program={}, ix_accounts={}, remaining_accounts={}",

@@ -11,7 +11,7 @@ pub mod fiber {
     pub use antegen_fiber_program::cpi;
     pub use antegen_fiber_program::program::AntegenFiber;
     pub use antegen_fiber_program::state::{
-        decompile_instruction, CompiledInstructionV0, FiberState,
+        decompile_instruction, CompiledInstructionV0, Fiber, FiberState, FiberVersionedState,
     };
     pub use antegen_fiber_program::ID;
 }
@@ -99,13 +99,15 @@ pub mod antegen_thread {
     }
 
     /// Creates a fiber (instruction) for a thread via CPI to Fiber Program.
+    /// `lookup_tables` is capped at 4 per fiber (Solana v0 transaction limit).
     pub fn create_fiber(
         ctx: Context<FiberCreate>,
         fiber_index: u8,
         instruction: SerializableInstruction,
         priority_fee: u64,
+        lookup_tables: Vec<Pubkey>,
     ) -> Result<()> {
-        fiber_create(ctx, fiber_index, instruction, priority_fee)
+        fiber_create(ctx, fiber_index, instruction, priority_fee, lookup_tables)
     }
 
     /// Closes a fiber from a thread via CPI to Fiber Program.
@@ -116,15 +118,25 @@ pub mod antegen_thread {
     /// Updates a fiber's instruction via CPI to Fiber Program.
     /// Initializes the fiber if it doesn't exist (thread PDA pays rent).
     /// If `track` is true, adds the fiber_index to thread.fiber_ids.
-    /// Pass `None` to wipe the compiled instruction (idle fiber).
+    /// Pass `None` for `instruction` to wipe the compiled instruction (idle).
+    /// Pass `None` for `lookup_tables` to leave them unchanged; `Some(vec)`
+    /// atomically replaces. Legacy fibers reject non-empty lookup_tables.
     pub fn update_fiber(
         ctx: Context<FiberUpdate>,
         fiber_index: u8,
         instruction: Option<SerializableInstruction>,
         priority_fee: Option<u64>,
         track: bool,
+        lookup_tables: Option<Vec<Pubkey>>,
     ) -> Result<()> {
-        fiber_update(ctx, fiber_index, instruction, priority_fee, track)
+        fiber_update(
+            ctx,
+            fiber_index,
+            instruction,
+            priority_fee,
+            track,
+            lookup_tables,
+        )
     }
 
     /// Swaps source fiber's instruction into target fiber, closes source.
@@ -135,6 +147,8 @@ pub mod antegen_thread {
 
     /// Creates a new transaction thread.
     /// Optionally creates fiber index 0 if `instruction` is provided.
+    /// `lookup_tables` is forwarded to fiber_0 when one is created;
+    /// it is ignored when `instruction` is `None`.
     pub fn create_thread(
         ctx: Context<ThreadCreate>,
         amount: u64,
@@ -143,8 +157,18 @@ pub mod antegen_thread {
         paused: Option<bool>,
         instruction: Option<SerializableInstruction>,
         priority_fee: Option<u64>,
+        lookup_tables: Vec<Pubkey>,
     ) -> Result<()> {
-        thread_create(ctx, amount, id, trigger, paused, instruction, priority_fee)
+        thread_create(
+            ctx,
+            amount,
+            id,
+            trigger,
+            paused,
+            instruction,
+            priority_fee,
+            lookup_tables,
+        )
     }
 
     /// Closes an existing thread account and returns the lamports to the owner.

@@ -547,6 +547,49 @@ fn test_create_thread_with_fiber() {
 }
 
 #[test]
+fn test_create_thread_with_fiber_carries_lookup_tables() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let id = "tc-alt";
+    let thread_id = ThreadId::Bytes(id.as_bytes().to_vec());
+    let (thread_pubkey, _) = thread_pda(&authority.pubkey(), id.as_bytes());
+    let (fiber_pubkey, _) = fiber_pda(&thread_pubkey, 0);
+
+    let memo_ix = make_memo_instruction("with-alt", None);
+    let ser_ix = make_serializable_instruction(&memo_ix);
+    let alt_a = Pubkey::new_unique();
+    let alt_b = Pubkey::new_unique();
+
+    let ix = build_create_thread_with_alts(
+        &authority.pubkey(),
+        &payer.pubkey(),
+        &thread_pubkey,
+        10_000_000,
+        thread_id,
+        Trigger::Immediate { jitter: 0 },
+        Some(ser_ix),
+        Some(0),
+        Some(fiber_pubkey),
+        vec![alt_a, alt_b],
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    svm.send_transaction(tx)
+        .expect("thread_create with lookup_tables should succeed");
+
+    let read = deserialize_fiber_any(&svm, &fiber_pubkey);
+    assert!(!read.is_legacy(), "fiber_0 should be V1");
+    assert_eq!(read.lookup_tables(), &[alt_a, alt_b]);
+}
+
+#[test]
 fn test_create_thread_with_fiber_no_accounts_fails() {
     let (mut svm, _admin, payer) = create_test_env();
     let authority = Keypair::new();
