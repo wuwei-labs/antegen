@@ -56,10 +56,10 @@ pub fn default_config_path() -> Result<PathBuf> {
 
 /// Expand ~ in path to home directory
 pub fn expand_tilde(path: &str) -> Result<PathBuf> {
-    if path.starts_with("~/") {
+    if let Some(stripped) = path.strip_prefix("~/") {
         let home = dirs::home_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
-        Ok(home.join(&path[2..]))
+        Ok(home.join(stripped))
     } else {
         Ok(PathBuf::from(path))
     }

@@ -627,7 +627,7 @@ async fn submit_and_confirm_batch(
 
                         let _ = load_balancer
                             .record_execution_result(
-                                &thread_pubkey,
+                                thread_pubkey,
                                 false,
                                 chrono::Utc::now().timestamp(),
                             )
@@ -654,7 +654,7 @@ async fn submit_and_confirm_batch(
 
             // Record success in load balancer
             let _ = load_balancer
-                .record_execution_result(&thread_pubkey, true, chrono::Utc::now().timestamp())
+                .record_execution_result(thread_pubkey, true, chrono::Utc::now().timestamp())
                 .await;
 
             return Ok(signature);
@@ -676,7 +676,7 @@ async fn submit_and_confirm_batch(
 
                 // Record loss in load balancer
                 let _ = load_balancer
-                    .record_execution_result(&thread_pubkey, false, chrono::Utc::now().timestamp())
+                    .record_execution_result(thread_pubkey, false, chrono::Utc::now().timestamp())
                     .await;
 
                 tokio::time::sleep(Duration::from_millis(
@@ -697,7 +697,7 @@ async fn submit_and_confirm_batch(
 
                 // Record success in load balancer
                 let _ = load_balancer
-                    .record_execution_result(&thread_pubkey, true, chrono::Utc::now().timestamp())
+                    .record_execution_result(thread_pubkey, true, chrono::Utc::now().timestamp())
                     .await;
 
                 return Ok(signature);
@@ -728,7 +728,7 @@ async fn submit_and_confirm_batch(
                     // Only record loss for non-6004 errors
                     let _ = load_balancer
                         .record_execution_result(
-                            &thread_pubkey,
+                            thread_pubkey,
                             false,
                             chrono::Utc::now().timestamp(),
                         )

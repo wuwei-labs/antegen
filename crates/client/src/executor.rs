@@ -141,7 +141,7 @@ impl ExecutorLogic {
         );
 
         // Verify single instruction fits in a transaction
-        if !self.would_fit_in_transaction(&[first_ix.clone()]) {
+        if !self.would_fit_in_transaction(std::slice::from_ref(&first_ix)) {
             return Err(anyhow!(
                 "Single instruction exceeds max transaction size for thread {}",
                 thread_pubkey

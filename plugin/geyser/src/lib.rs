@@ -12,7 +12,7 @@ use solana_program::pubkey::Pubkey;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct AntegenPlugin {
     inner: Option<Arc<Inner>>,
 }
@@ -180,12 +180,13 @@ impl GeyserPlugin for AntegenPlugin {
     }
 }
 
-impl Default for AntegenPlugin {
-    fn default() -> Self {
-        Self { inner: None }
-    }
-}
-
+/// Geyser entry point. Validators dlopen the plugin and call this symbol
+/// to construct the plugin instance.
+///
+/// # Safety
+/// The returned pointer must be released by the validator via
+/// `Box::from_raw`. The function is unsafe because it crosses the FFI
+/// boundary and the validator owns the lifetime of the returned plugin.
 #[no_mangle]
 #[allow(improper_ctypes_definitions)]
 pub unsafe extern "C" fn _create_plugin() -> *mut dyn GeyserPlugin {
