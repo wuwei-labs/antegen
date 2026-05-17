@@ -66,8 +66,11 @@ jobs:
 
   # -----------------------------------------------------------------------
   # Stage 2: solana-verify build for each released program. Attaches the
-  # verifiable .so + sha256 to the program's GitHub Release so downstream
-  # consumers (e.g. srsly) can fetch reproducible binaries.
+  # verifiable .so + sha256 + executable-hash to the program's GitHub
+  # Release so downstream consumers (e.g. srsly) can fetch reproducible
+  # binaries. If the verify build fails the partial release + tag are
+  # deleted in the failure step at the bottom of this job so we never
+  # leave a hollow release behind.
   # -----------------------------------------------------------------------
   verifiable-build:
     name: solana-verify build
@@ -84,11 +87,9 @@ jobs:
       matrix:
         include:
           - program: antegen_thread_program
-            released_flag: thread_released
-            tag_output: thread_tag
+            program_id: AgTv5w1UvUb6zeqkThwMrztGu9hpepBu8YLghuR4dpSx
           - program: antegen_fiber_program
-            released_flag: fiber_released
-            tag_output: fiber_tag
+            program_id: AgFv5afjW9DmSPkiEvJ1er5bAAmRUqaBeTB6Cr8e1hKx
     steps:
       - name: Resolve release flag for this program
         id: gate
@@ -117,13 +118,115 @@ jobs:
         run: cargo install solana-verify --locked
 
       - name: Run solana-verify build
+        # Pin to a recent solana-verifiable-build image so the in-image
+        # cargo is >= 1.85 — older images ship 1.84 and cannot parse
+        # `edition2024` manifests pulled in by transitive proc-macros
+        # (proc-macro-crate >= 3.5 → toml_edit >= 0.25). Bump this tag
+        # periodically.
         if: steps.gate.outputs.released == 'true'
-        run: solana-verify build --library-name ${{ matrix.program }}
+        run: solana-verify build --library-name ${{ matrix.program }} --base-image solanafoundation/solana-verifiable-build:3.1.14
 
-      - name: Compute sha256
+      - name: Reclaim solana-verify output ownership
+        # solana-verify runs cargo inside a Docker container as root, so
+        # everything it writes into the mounted `target/deploy/` ends up
+        # owned by root. The runner user can't write the .sha256 file
+        # alongside without this chown — `tee` would fail with
+        # "Permission denied".
         if: steps.gate.outputs.released == 'true'
+        run: sudo chown -R "$USER" target/deploy
+
+      - name: Compute hashes
+        # Two complementary hashes published alongside the .so:
+        #   .sha256          — standard `sha256sum` of the file. Matches the
+        #                      sha256 GitHub renders for the release asset.
+        #                      Verify with `sha256sum -c <name>.so.sha256`.
+        #   .executable-hash — `solana-verify get-executable-hash` output:
+        #                      the .so with ELF metadata + trailing zeros
+        #                      stripped, matching what
+        #                      `solana-verify get-program-hash <program-id>`
+        #                      returns for the deployed program. Lets a
+        #                      consumer compare the release artifact against
+        #                      live on-chain state.
+        if: steps.gate.outputs.released == 'true'
+        working-directory: target/deploy
         run: |
-          shasum -a 256 target/deploy/${{ matrix.program }}.so | tee target/deploy/${{ matrix.program }}.so.sha256
+          sha256sum ${{ matrix.program }}.so | tee ${{ matrix.program }}.so.sha256
+          solana-verify get-executable-hash ${{ matrix.program }}.so | tee ${{ matrix.program }}.so.executable-hash
+
+      - name: Compose verification footer
+        # Appended to the release body (below release-please's changelog)
+        # so consumers see exact verification commands inline. Embeds the
+        # file hashes computed above and the on-chain program ID so a
+        # reader can paste-and-run.
+        if: steps.gate.outputs.released == 'true'
+        working-directory: target/deploy
+        run: |
+          FILE_SHA="$(awk '{print $1}' ${{ matrix.program }}.so.sha256)"
+          EXEC_HASH="$(cat ${{ matrix.program }}.so.executable-hash)"
+          COMMIT="${{ github.sha }}"
+          cat > verify-footer.md <<EOF
+
+          ---
+
+          ## Verifying this release
+
+          This release attaches the on-chain program binary
+          \`${{ matrix.program }}.so\` for program ID
+          \`${{ matrix.program_id }}\` along with two hash files. Both are
+          worth checking — they answer different questions.
+
+          ### 1. Did the binary I downloaded arrive intact?
+
+          Standard \`sha256sum\` of the file, matching the \`sha256:…\`
+          GitHub renders next to each release asset:
+
+          \`\`\`
+          $FILE_SHA  ${{ matrix.program }}.so
+          \`\`\`
+
+          \`\`\`bash
+          sha256sum -c ${{ matrix.program }}.so.sha256
+          # → ${{ matrix.program }}.so: OK
+          \`\`\`
+
+          ### 2. Does this binary match what's deployed on-chain?
+
+          \`solana-verify get-executable-hash\` strips ELF metadata +
+          trailing zeros so the hash matches what
+          \`solana-verify get-program-hash\` returns for a live program
+          account:
+
+          \`\`\`
+          $EXEC_HASH
+          \`\`\`
+
+          \`\`\`bash
+          # Compare the artifact's hash to the deployed program's hash.
+          diff \\
+            <(cat ${{ matrix.program }}.so.executable-hash) \\
+            <(solana-verify get-program-hash ${{ matrix.program_id }} -u mainnet-beta)
+          # → no output = match
+          \`\`\`
+
+          ### 3. Did the binary actually come from this source tree?
+
+          Reproduce the build locally with the same Docker image
+          (\`solanafoundation/solana-verifiable-build:3.1.14\`):
+
+          \`\`\`bash
+          git clone https://github.com/${{ github.repository }} && cd antegen
+          git checkout $COMMIT
+          solana-verify build \\
+            --library-name ${{ matrix.program }} \\
+            --base-image solanafoundation/solana-verifiable-build:3.1.14
+          solana-verify get-executable-hash target/deploy/${{ matrix.program }}.so
+          # Should equal: $EXEC_HASH
+          \`\`\`
+
+          For full details on the verified-build pipeline, see
+          [solana.com/docs/programs/verified-builds](https://solana.com/docs/programs/verified-builds).
+          EOF
+          cat verify-footer.md
 
       - name: Upload workflow artifacts
         if: steps.gate.outputs.released == 'true'
@@ -133,6 +236,7 @@ jobs:
           path: |
             target/deploy/${{ matrix.program }}.so
             target/deploy/${{ matrix.program }}.so.sha256
+            target/deploy/${{ matrix.program }}.so.executable-hash
           retention-days: 7
 
       - name: Attach to GitHub Release
@@ -143,7 +247,24 @@ jobs:
           files: |
             target/deploy/${{ matrix.program }}.so
             target/deploy/${{ matrix.program }}.so.sha256
-          append_body: false
+            target/deploy/${{ matrix.program }}.so.executable-hash
+          body_path: target/deploy/verify-footer.md
+          append_body: true
+
+      - name: Rollback release + tag on failure
+        # release-please creates the GitHub Release + tag before this job
+        # runs, so a failed verify build would otherwise leave behind a
+        # release with no binary and a tag pointing at code that never
+        # produced a verifiable artifact. Delete both so the next push
+        # to main starts fresh from release-please.
+        if: ${{ failure() && steps.gate.outputs.released == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Verifiable build failed for ${{ matrix.program }}. Deleting empty release + tag ${{ steps.gate.outputs.tag }}."
+          gh release delete "${{ steps.gate.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --cleanup-tag --yes || true
 
   # -----------------------------------------------------------------------
   # Stage 3: Publish library + program crates to crates.io in topo order.
