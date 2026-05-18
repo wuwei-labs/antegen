@@ -1,6 +1,7 @@
 {
   "crates/cron": "4.1.0",
   "crates/client": "5.2.0",
+  "crates/ws": "0.1.0",
   "programs/thread": "5.2.0",
   "programs/fiber": "5.2.0",
   "cli/core": "6.1.0",

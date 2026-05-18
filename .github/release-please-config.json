@@ -17,6 +17,12 @@
       "package-name": "antegen-client",
       "changelog-path": "CHANGELOG.md"
     },
+    "crates/ws": {
+      "release-type": "rust",
+      "component": "antegen-ws",
+      "package-name": "antegen-ws",
+      "changelog-path": "CHANGELOG.md"
+    },
     "programs/thread": {
       "release-type": "rust",
       "component": "antegen-thread-program",

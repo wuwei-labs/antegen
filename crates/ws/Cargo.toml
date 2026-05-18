@@ -1,0 +1,34 @@
+[package]
+name = "antegen-ws"
+description = "Async WebSocket client with optional persistent reconnect, rustls-only"
+version = "0.1.0"
+authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
+repository = "https://github.com/wuwei-labs/antegen"
+homepage = "https://antegen.xyz/"
+license.workspace = true
+edition = "2021"
+readme = "../../README.md"
+keywords = ["websocket", "tokio", "rustls", "reconnect"]
+
+[lib]
+name = "antegen_ws"
+
+[features]
+default = ["persistent", "pong"]
+persistent = []
+pong = []
+
+[dependencies]
+futures = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tokio-tungstenite = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
+tokio-tungstenite = { workspace = true, features = ["handshake"] }
+
+[lints]
+workspace = true

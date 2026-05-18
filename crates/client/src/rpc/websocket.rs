@@ -1,459 +1,121 @@
-//! WebSocket client for Solana RPC subscriptions
+//! WebSocket client for Solana RPC subscriptions.
 //!
-//! Provides auto-reconnecting WebSocket connections using pws (persistent WebSocket).
-//!
-//! # Usage
-//!
-//! ## One-shot waiting (e.g., wait for balance)
-//! ```ignore
-//! let account = WsClient::wait_until(ws_url, &pubkey, |acc| acc.lamports >= 500_000).await?;
-//! ```
-//!
-//! ## Continuous subscription stream
-//! ```ignore
-//! let (handle, mut rx) = WsClient::subscribe_account_stream(ws_url, &pubkey, "confirmed").await?;
-//! while let Some(update) = rx.recv().await {
-//!     // Process update
-//! }
-//! ```
+//! Built on `antegen-ws` for transport + persistent reconnect with a
+//! rustls-only TLS stack. This module owns the Solana-specific layer:
+//! subscribe-request JSON, notification parsing, and a `wait_until`
+//! helper for one-shot account watchers.
 
 use anyhow::{anyhow, Result};
-pub use pws::Message as WsMessage;
-use pws::{connect_persistent_websocket_async, Message, Url, WsMessageReceiver, WsMessageSender};
 use serde::Deserialize;
 use solana_sdk::pubkey::Pubkey;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::sync::mpsc;
+use std::time::Duration;
 
 pub use super::response::SafeUiAccount;
 
-/// Subscription ID counter
+/// Subscription request ID counter (per process).
 static SUBSCRIPTION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-/// Handle to manage a WebSocket subscription lifecycle
-pub struct WsHandle {
-    handle: tokio::task::JoinHandle<()>,
-}
+/// Build a `programSubscribe` request and return `(id, json)`.
+pub fn build_program_subscribe_request(
+    program_id: &Pubkey,
+    commitment: &str,
+    filters: Option<Vec<serde_json::Value>>,
+) -> (u64, String) {
+    let subscription_id = SUBSCRIPTION_COUNTER.fetch_add(1, Ordering::SeqCst);
 
-impl WsHandle {
-    /// Abort the subscription task
-    pub fn abort(self) {
-        self.handle.abort();
+    let mut params = serde_json::json!({
+        "encoding": "base64+zstd",
+        "commitment": commitment,
+    });
+
+    if let Some(f) = filters {
+        params["filters"] = serde_json::Value::Array(f);
     }
 
-    /// Check if the subscription task is finished
-    pub fn is_finished(&self) -> bool {
-        self.handle.is_finished()
-    }
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": subscription_id,
+        "method": "programSubscribe",
+        "params": [program_id.to_string(), params],
+    });
+
+    (subscription_id, request.to_string())
 }
 
-/// WebSocket client for Solana RPC subscriptions
-///
-/// Provides both one-shot helpers (like `wait_until`) and continuous subscription
-/// streams for long-running subscriptions.
-pub struct WsClient {
-    /// WebSocket URL
-    ws_url: String,
-    /// Message sender
-    sender: Option<WsMessageSender>,
-    /// Message receiver
-    receiver: Option<WsMessageReceiver>,
+/// Build an `accountSubscribe` request and return `(id, json)`.
+pub fn build_account_subscribe_request(pubkey: &Pubkey, commitment: &str) -> (u64, String) {
+    let subscription_id = SUBSCRIPTION_COUNTER.fetch_add(1, Ordering::SeqCst);
+
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": subscription_id,
+        "method": "accountSubscribe",
+        "params": [
+            pubkey.to_string(),
+            {
+                "encoding": "base64+zstd",
+                "commitment": commitment,
+            }
+        ],
+    });
+
+    (subscription_id, request.to_string())
 }
 
-/// Backwards compatibility alias
-#[deprecated(since = "3.0.1", note = "Use WsClient instead")]
-pub type WsSubscriptionManager = WsClient;
+/// High-level helpers around `antegen-ws`.
+pub struct WsClient;
 
 impl WsClient {
-    /// Create a new WebSocket client
-    pub fn new(ws_url: impl Into<String>) -> Self {
-        Self {
-            ws_url: ws_url.into(),
-            sender: None,
-            receiver: None,
-        }
-    }
-
-    // =========================================================================
-    // High-level helpers (static methods)
-    // =========================================================================
-
-    /// Wait until account satisfies the given predicate
+    /// Subscribe to an account and return as soon as `predicate` accepts
+    /// the latest snapshot. Aborts the underlying transport on return.
     ///
-    /// This is a one-shot helper that connects, subscribes, waits for the
-    /// predicate to return true, then returns.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let account = WsClient::wait_until(
-    ///     ws_url,
-    ///     &pubkey,
-    ///     |acc| acc.lamports >= 500_000
-    /// ).await?;
-    /// ```
+    /// The subscription is sent inside the `on_connect` callback so that
+    /// reconnects re-subscribe automatically — useful if the watch outlives
+    /// a network blip.
     pub async fn wait_until<F>(ws_url: &str, pubkey: &Pubkey, predicate: F) -> Result<SafeUiAccount>
     where
         F: Fn(&SafeUiAccount) -> bool,
     {
-        let (handle, mut rx) = Self::subscribe_account_stream(ws_url, pubkey, "confirmed").await?;
+        let subscribed_pubkey = *pubkey;
+        let (_id, subscribe_msg) = build_account_subscribe_request(pubkey, "confirmed");
 
-        while let Some(update) = rx.recv().await {
-            if predicate(&update.account) {
-                handle.abort();
-                return Ok(update.account);
+        let mut handle = antegen_ws::WsClient::builder(ws_url)
+            .map_err(|e| anyhow!("invalid ws url: {e}"))?
+            .keepalive(Duration::from_secs(10))
+            .on_connect(move |tx| {
+                let msg = subscribe_msg.clone();
+                async move {
+                    let _ = tx.send_text(msg).await;
+                    Ok(())
+                }
+            })
+            .build()
+            .await
+            .map_err(|e| anyhow!("ws connect failed: {e}"))?;
+
+        while let Some(msg) = handle.recv().await {
+            if let antegen_ws::Message::Text(text) = msg {
+                if let Some(update) = parse_notification(&text, Some(subscribed_pubkey))? {
+                    if predicate(&update.account) {
+                        return Ok(update.account);
+                    }
+                }
             }
         }
 
         anyhow::bail!("Account subscription closed unexpectedly")
     }
-
-    /// Subscribe to account changes and return a stream
-    ///
-    /// Returns a handle to manage the subscription and a receiver for updates.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let (handle, mut rx) = WsClient::subscribe_account_stream(
-    ///     ws_url, &pubkey, "confirmed"
-    /// ).await?;
-    ///
-    /// while let Some(update) = rx.recv().await {
-    ///     println!("Account updated: {} lamports", update.account.lamports);
-    /// }
-    /// ```
-    pub async fn subscribe_account_stream(
-        ws_url: &str,
-        pubkey: &Pubkey,
-        commitment: &str,
-    ) -> Result<(WsHandle, mpsc::Receiver<WsAccountUpdate>)> {
-        let mut client = Self::new(ws_url);
-        client.connect().await?;
-        client.subscribe_account(pubkey, commitment).await?;
-
-        let (tx, rx) = mpsc::channel(32);
-        // Pass pubkey since accountNotification doesn't include it in the response
-        let handle = client.start_receiver(tx, Some(*pubkey));
-
-        Ok((WsHandle { handle }, rx))
-    }
-
-    /// Subscribe to program account changes and return a stream
-    ///
-    /// Returns a handle to manage the subscription and a receiver for updates.
-    /// Optionally accepts filters (e.g., memcmp for discriminator filtering).
-    ///
-    /// # Example
-    /// ```ignore
-    /// let filters = vec![serde_json::json!({
-    ///     "memcmp": { "offset": 0, "bytes": "..." }
-    /// })];
-    ///
-    /// let (handle, mut rx) = WsClient::subscribe_program_stream(
-    ///     ws_url, &program_id, "confirmed", Some(filters)
-    /// ).await?;
-    /// ```
-    pub async fn subscribe_program_stream(
-        ws_url: &str,
-        program_id: &Pubkey,
-        commitment: &str,
-        filters: Option<Vec<serde_json::Value>>,
-    ) -> Result<(WsHandle, mpsc::Receiver<WsAccountUpdate>)> {
-        let mut client = Self::new(ws_url);
-        client.connect().await?;
-        client
-            .subscribe_program_with_filters(program_id, commitment, filters)
-            .await?;
-
-        let (tx, rx) = mpsc::channel(32);
-        // programNotification includes pubkey in the response, so pass None
-        let handle = client.start_receiver(tx, None);
-
-        Ok((WsHandle { handle }, rx))
-    }
-
-    // =========================================================================
-    // Low-level helpers (for advanced use cases like RpcSubscription)
-    // =========================================================================
-
-    /// Connect to WebSocket and return raw sender/receiver
-    ///
-    /// Use this for advanced cases that need direct message handling
-    /// (e.g., reconnection events, custom message processing).
-    pub async fn connect_raw(ws_url: &str) -> Result<(WsMessageSender, WsMessageReceiver)> {
-        let url: Url = ws_url.parse().map_err(|e| anyhow!("Invalid URL: {}", e))?;
-
-        let (sender, receiver) = connect_persistent_websocket_async(url)
-            .await
-            .map_err(|e| anyhow!("WebSocket connection failed: {}", e))?;
-
-        log::debug!("WebSocket connected to {}", ws_url);
-        Ok((sender, receiver))
-    }
-
-    /// Build a program subscription request JSON
-    pub fn build_program_subscribe_request(
-        program_id: &Pubkey,
-        commitment: &str,
-        filters: Option<Vec<serde_json::Value>>,
-    ) -> (u64, String) {
-        let subscription_id = SUBSCRIPTION_COUNTER.fetch_add(1, Ordering::SeqCst);
-
-        let mut params = serde_json::json!({
-            "encoding": "base64+zstd",
-            "commitment": commitment
-        });
-
-        if let Some(f) = filters {
-            params["filters"] = serde_json::Value::Array(f);
-        }
-
-        let request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": subscription_id,
-            "method": "programSubscribe",
-            "params": [program_id.to_string(), params]
-        });
-
-        (subscription_id, request.to_string())
-    }
-
-    /// Build an account subscription request JSON
-    pub fn build_account_subscribe_request(pubkey: &Pubkey, commitment: &str) -> (u64, String) {
-        let subscription_id = SUBSCRIPTION_COUNTER.fetch_add(1, Ordering::SeqCst);
-
-        let request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": subscription_id,
-            "method": "accountSubscribe",
-            "params": [
-                pubkey.to_string(),
-                {
-                    "encoding": "base64+zstd",
-                    "commitment": commitment
-                }
-            ]
-        });
-
-        (subscription_id, request.to_string())
-    }
-
-    // =========================================================================
-    // Instance methods (used internally by high-level helpers)
-    // =========================================================================
-
-    /// Connect to the WebSocket endpoint
-    async fn connect(&mut self) -> Result<()> {
-        let (sender, receiver) = Self::connect_raw(&self.ws_url).await?;
-        self.sender = Some(sender);
-        self.receiver = Some(receiver);
-        Ok(())
-    }
-
-    /// Subscribe to program account changes
-    pub async fn subscribe_program(&self, program_id: &Pubkey, commitment: &str) -> Result<u64> {
-        self.subscribe_program_with_filters(program_id, commitment, None)
-            .await
-    }
-
-    /// Subscribe to program account changes with optional filters
-    pub async fn subscribe_program_with_filters(
-        &self,
-        program_id: &Pubkey,
-        commitment: &str,
-        filters: Option<Vec<serde_json::Value>>,
-    ) -> Result<u64> {
-        let sender = self
-            .sender
-            .as_ref()
-            .ok_or_else(|| anyhow!("Not connected"))?;
-
-        let subscription_id = SUBSCRIPTION_COUNTER.fetch_add(1, Ordering::SeqCst);
-
-        let mut params = serde_json::json!({
-            "encoding": "base64+zstd",
-            "commitment": commitment
-        });
-
-        if let Some(f) = filters {
-            params["filters"] = serde_json::Value::Array(f);
-        }
-
-        let request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": subscription_id,
-            "method": "programSubscribe",
-            "params": [
-                program_id.to_string(),
-                params
-            ]
-        });
-
-        sender
-            .send(Message::Text(request.to_string()))
-            .await
-            .map_err(|e| anyhow!("Failed to send subscription request: {}", e))?;
-
-        log::debug!(
-            "Subscribed to program {} with id {}",
-            program_id,
-            subscription_id
-        );
-
-        Ok(subscription_id)
-    }
-
-    /// Subscribe to account changes
-    pub async fn subscribe_account(&self, pubkey: &Pubkey, commitment: &str) -> Result<u64> {
-        let sender = self
-            .sender
-            .as_ref()
-            .ok_or_else(|| anyhow!("Not connected"))?;
-
-        let subscription_id = SUBSCRIPTION_COUNTER.fetch_add(1, Ordering::SeqCst);
-
-        let request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": subscription_id,
-            "method": "accountSubscribe",
-            "params": [
-                pubkey.to_string(),
-                {
-                    "encoding": "base64+zstd",
-                    "commitment": commitment
-                }
-            ]
-        });
-
-        sender
-            .send(Message::Text(request.to_string()))
-            .await
-            .map_err(|e| anyhow!("Failed to send subscription request: {}", e))?;
-
-        log::debug!(
-            "Subscribed to account {} with id {}",
-            pubkey,
-            subscription_id
-        );
-
-        Ok(subscription_id)
-    }
-
-    /// Unsubscribe from a program subscription
-    pub async fn unsubscribe_program(&self, subscription_id: u64) -> Result<()> {
-        let sender = self
-            .sender
-            .as_ref()
-            .ok_or_else(|| anyhow!("Not connected"))?;
-
-        let request_id = SUBSCRIPTION_COUNTER.fetch_add(1, Ordering::SeqCst);
-
-        let request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": "programUnsubscribe",
-            "params": [subscription_id]
-        });
-
-        sender
-            .send(Message::Text(request.to_string()))
-            .await
-            .map_err(|e| anyhow!("Failed to send unsubscribe request: {}", e))?;
-
-        Ok(())
-    }
-
-    /// Unsubscribe from an account subscription
-    pub async fn unsubscribe_account(&self, subscription_id: u64) -> Result<()> {
-        let sender = self
-            .sender
-            .as_ref()
-            .ok_or_else(|| anyhow!("Not connected"))?;
-
-        let request_id = SUBSCRIPTION_COUNTER.fetch_add(1, Ordering::SeqCst);
-
-        let request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": "accountUnsubscribe",
-            "params": [subscription_id]
-        });
-
-        sender
-            .send(Message::Text(request.to_string()))
-            .await
-            .map_err(|e| anyhow!("Failed to send unsubscribe request: {}", e))?;
-
-        Ok(())
-    }
-
-    /// Start receiving messages and forward to a channel
-    ///
-    /// For account subscriptions, pass the subscribed pubkey so it can be
-    /// included in the update (accountNotification doesn't include pubkey).
-    pub fn start_receiver(
-        mut self,
-        update_tx: mpsc::Sender<WsAccountUpdate>,
-        subscribed_pubkey: Option<Pubkey>,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            let mut receiver = match self.receiver.take() {
-                Some(r) => r,
-                None => {
-                    log::error!("No receiver available");
-                    return;
-                }
-            };
-
-            loop {
-                match receiver.recv().await {
-                    Ok(msg) => {
-                        if let Message::Text(text) = msg {
-                            match parse_notification(&text, subscribed_pubkey) {
-                                Ok(Some(update)) => {
-                                    if update_tx.send(update).await.is_err() {
-                                        log::info!("Update channel closed, stopping receiver");
-                                        break;
-                                    }
-                                }
-                                Ok(None) => {
-                                    // Not a notification (could be subscription confirmation)
-                                    log::trace!(
-                                        "Non-notification message: {}",
-                                        &text[..text.len().min(200)]
-                                    );
-                                }
-                                Err(e) => {
-                                    log::warn!(
-                                        "Failed to parse message: {} - {}",
-                                        e,
-                                        &text[..text.len().min(200)]
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("WebSocket receive error: {}", e);
-                        // pws handles reconnection automatically
-                    }
-                }
-            }
-        })
-    }
 }
 
-/// Account update from WebSocket notification
+/// Account update parsed from a `programNotification` or `accountNotification`.
 #[derive(Debug, Clone)]
 pub struct WsAccountUpdate {
-    /// The account pubkey
     pub pubkey: Pubkey,
-    /// The account data
     pub account: SafeUiAccount,
-    /// Slot when the update occurred
     pub slot: u64,
 }
 
-/// WebSocket notification wrapper
 #[derive(Debug, Deserialize)]
 struct WsNotification {
     method: Option<String>,
@@ -470,7 +132,7 @@ struct NotificationParams {
 #[derive(Debug, Deserialize)]
 struct NotificationResult {
     context: NotificationContext,
-    value: serde_json::Value, // Parse based on method type
+    value: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -478,29 +140,25 @@ struct NotificationContext {
     slot: u64,
 }
 
-/// For programNotification - has pubkey + account wrapper
 #[derive(Debug, Deserialize)]
 struct ProgramNotificationValue {
     pubkey: String,
     account: SafeUiAccount,
 }
 
-// For accountNotification - account data IS the value directly (use SafeUiAccount)
-
-/// Parse a WebSocket notification message
+/// Parse a `programNotification` or `accountNotification` message.
 ///
-/// For `accountNotification`, the pubkey is not included in the response,
-/// so `subscribed_pubkey` must be provided to fill it in.
-fn parse_notification(
+/// `accountNotification` doesn't include the pubkey in the response, so
+/// callers must supply the subscribed pubkey via `subscribed_pubkey`.
+pub fn parse_notification(
     text: &str,
     subscribed_pubkey: Option<Pubkey>,
 ) -> Result<Option<WsAccountUpdate>> {
     let notification: WsNotification = serde_json::from_str(text)?;
 
-    // Check if this is a notification
     let method = match notification.method {
         Some(m) => m,
-        None => return Ok(None), // Not a notification
+        None => return Ok(None),
     };
 
     let params = notification
@@ -511,7 +169,6 @@ fn parse_notification(
 
     match method.as_str() {
         "programNotification" => {
-            // Has pubkey + account wrapper
             let value: ProgramNotificationValue = serde_json::from_value(params.result.value)
                 .map_err(|e| anyhow!("Failed to parse programNotification value: {}", e))?;
             let pubkey: Pubkey = value
@@ -525,10 +182,8 @@ fn parse_notification(
             }))
         }
         "accountNotification" => {
-            // Account data IS the value directly (no pubkey wrapper)
             let account: SafeUiAccount = serde_json::from_value(params.result.value)
                 .map_err(|e| anyhow!("Failed to parse accountNotification value: {}", e))?;
-            // Use the subscribed pubkey since accountNotification doesn't include it
             let pubkey = subscribed_pubkey.unwrap_or_default();
             Ok(Some(WsAccountUpdate {
                 pubkey,
@@ -567,7 +222,6 @@ mod tests {
             }
         }"#;
 
-        // programNotification includes pubkey, so subscribed_pubkey is not needed
         let result = parse_notification(json, None).unwrap();
         assert!(result.is_some());
 
@@ -578,7 +232,6 @@ mod tests {
 
     #[test]
     fn test_parse_account_notification() {
-        // accountNotification has account data directly in value (no pubkey wrapper)
         let json = r#"{
             "jsonrpc": "2.0",
             "method": "accountNotification",
@@ -614,7 +267,7 @@ mod tests {
     fn test_parse_subscription_response() {
         let json = r#"{"jsonrpc":"2.0","result":123,"id":1}"#;
         let result = parse_notification(json, None).unwrap();
-        assert!(result.is_none()); // Not a notification
+        assert!(result.is_none());
     }
 
     #[test]

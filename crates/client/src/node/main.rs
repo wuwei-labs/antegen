@@ -114,7 +114,7 @@ async fn main() -> Result<()> {
         "solana_tpu_client_next::connection_worker",
         log::LevelFilter::Error,
     );
-    builder.filter_module("pws", log::LevelFilter::Off);
+    builder.filter_module("antegen_ws", log::LevelFilter::Off);
     builder.format_timestamp_millis().init();
 
     log::info!("Antegen Node - Standalone Mode");
