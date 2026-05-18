@@ -7,7 +7,6 @@ license.workspace = true
 description = "CLI for Antegen - Solana automation and scheduling"
 repository.workspace = true
 homepage.workspace = true
-documentation.workspace = true
 keywords = ["solana", "automation", "scheduler", "blockchain"]
 categories = ["command-line-utilities", "cryptography::cryptocurrencies"]
 

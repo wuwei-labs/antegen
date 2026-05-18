@@ -7,7 +7,6 @@ license.workspace = true
 description = "Client library for Antegen - Solana automation executor"
 repository.workspace = true
 homepage.workspace = true
-documentation.workspace = true
 keywords = ["solana", "automation", "executor"]
 readme = "../../README.md"
 

@@ -5,7 +5,6 @@ version = "5.1.0"
 authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
 repository = "https://github.com/wuwei-labs/antegen"
 homepage = "https://antegen.xyz/"
-documentation = "https://docs.antegen.xyz/"
 license.workspace = true
 edition = "2021"
 readme = "../../README.md"
