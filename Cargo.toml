@@ -97,6 +97,7 @@ futures = "=0.3.31"
 getrandom = { version = "=0.2.16", features = ["custom"] }
 hex = "=0.4.3"
 hyper = { version = "=0.14.32", features = ["server", "tcp", "http1"] }
+indexmap = "=2.13.0"
 lazy_static = "=1.5.0"
 loa-core = "=2.0.1"
 log = "=0.4.29"
@@ -136,6 +137,7 @@ uuid = { version = "=1.19.0", features = ["v4", "serde"] }
 # Solana dependencies - pinned to resolved versions
 solana-account-decoder = "=3.1.4"
 solana-account-decoder-client-types = "=3.1.4"
+solana-address-lookup-table-interface = "=3.0.1"
 solana-cli-config = "=3.1.4"
 solana-compute-budget-interface = "=3.0.0"
 solana-logger = "=3.0.0"

@@ -560,6 +560,7 @@ dependencies = [
  "dirs 5.0.1",
  "env_logger 0.10.2",
  "futures",
+ "indexmap",
  "loa-core",
  "log",
  "moka",
@@ -575,6 +576,7 @@ dependencies = [
  "signal-hook-tokio",
  "solana-account-decoder",
  "solana-account-decoder-client-types",
+ "solana-address-lookup-table-interface",
  "solana-compute-budget-interface",
  "solana-program",
  "solana-rpc-client",
@@ -600,7 +602,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-fiber-program"
-version = "5.1.0"
+version = "5.2.0"
 dependencies = [
  "anchor-lang",
  "borsh",
@@ -635,7 +637,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-thread-program"
-version = "5.1.0"
+version = "5.2.0"
 dependencies = [
  "anchor-lang",
  "antegen-cron",

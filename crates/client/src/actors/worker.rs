@@ -17,8 +17,12 @@ use antegen_thread_program::state::Thread;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
-    clock::Clock, instruction::Instruction, message::Message, pubkey::Pubkey, signature::Signature,
-    transaction::Transaction,
+    clock::Clock,
+    instruction::Instruction,
+    message::{v0, AddressLookupTableAccount, Message, VersionedMessage},
+    pubkey::Pubkey,
+    signature::Signature,
+    transaction::{Transaction, VersionedTransaction},
 };
 use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -318,7 +322,13 @@ async fn execute_thread(
         }
 
         // Build batch — first iteration uses trigger retry, subsequent don't need it
-        let (ixs, priority_fee, needs_continuation, next_cursor) = if batch_num == 1 {
+        let crate::executor::BatchedBuild {
+            ixs,
+            priority_fee,
+            needs_continuation,
+            next_fiber_cursor: next_cursor,
+            alts,
+        } = if batch_num == 1 {
             let trigger_retry_deadline =
                 Instant::now() + Duration::from_secs(TRIGGER_RETRY_DEADLINE_SECS);
             loop {
@@ -452,6 +462,7 @@ async fn execute_thread(
         // Submit and confirm
         match submit_and_confirm_batch(
             &final_ixs,
+            &alts,
             executor,
             resources,
             cancelled,
@@ -510,6 +521,7 @@ async fn execute_thread(
 /// Returns Ok(signature) on success, Err((error_msg, attempts)) on failure.
 async fn submit_and_confirm_batch(
     instructions: &[Instruction],
+    alts: &[AddressLookupTableAccount],
     executor: &ExecutorLogic,
     resources: &SharedResources,
     cancelled: &AtomicBool,
@@ -557,9 +569,52 @@ async fn submit_and_confirm_batch(
             }
         };
 
-        // Build and sign transaction
-        let message = Message::new(instructions, Some(&executor.pubkey()));
-        let tx = Transaction::new(&[executor.keypair().as_ref()], message, blockhash);
+        // Build and sign transaction. When the batch carries ALTs, emit a v0
+        // VersionedTransaction so the executor's account-key table is
+        // compressed through the ALT(s). With no ALTs we wrap a legacy
+        // Message in a VersionedTransaction — wire-compatible and lets every
+        // downstream send/sim path stay generic.
+        let signers = [executor.keypair().as_ref()];
+        let tx: VersionedTransaction = if alts.is_empty() {
+            let message = Message::new(instructions, Some(&executor.pubkey()));
+            Transaction::new(&signers, message, blockhash).into()
+        } else {
+            let v0_message =
+                match v0::Message::try_compile(&executor.pubkey(), instructions, alts, blockhash) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        last_error = format!("Failed to compile v0 message: {e}");
+                        log::warn!(
+                            "{}: v0 compile failed (attempt {}): {:?}",
+                            thread_pubkey,
+                            attempt,
+                            e
+                        );
+                        tokio::time::sleep(Duration::from_millis(
+                            BASE_RETRY_DELAY_MS * (1 << attempt.min(4)),
+                        ))
+                        .await;
+                        continue;
+                    }
+                };
+            match VersionedTransaction::try_new(VersionedMessage::V0(v0_message), &signers) {
+                Ok(t) => t,
+                Err(e) => {
+                    last_error = format!("Failed to sign v0 tx: {e}");
+                    log::warn!(
+                        "{}: v0 sign failed (attempt {}): {:?}",
+                        thread_pubkey,
+                        attempt,
+                        e
+                    );
+                    tokio::time::sleep(Duration::from_millis(
+                        BASE_RETRY_DELAY_MS * (1 << attempt.min(4)),
+                    ))
+                    .await;
+                    continue;
+                }
+            }
+        };
 
         // Compute signature before sending (needed for confirmation polling)
         // TPU submission is fire-and-forget so we need the signature upfront

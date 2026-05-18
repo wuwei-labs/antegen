@@ -18,11 +18,13 @@ use antegen_thread_program::{
     instruction::ExecThread,
     state::{Signal, Thread, ThreadConfig},
 };
+use indexmap::IndexMap;
+use solana_address_lookup_table_interface::state::AddressLookupTable;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
     account::Account,
     instruction::{AccountMeta, Instruction},
-    message::Message,
+    message::{AddressLookupTableAccount, Message},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
@@ -37,6 +39,25 @@ use std::sync::Arc;
 
 /// Maximum serialized transaction size in bytes (Solana's PACKET_DATA_SIZE)
 const MAX_TRANSACTION_SIZE: usize = 1232;
+
+/// Max ALTs an ExecThread tx may reference (Solana v0 hard cap).
+const MAX_ALTS_PER_TX: usize = 4;
+
+/// Minimum slot age before an ALT is considered usable. Solana requires the
+/// ALT's most-recent extension to be at least 1 slot in the past before it
+/// can be consumed by a v0 message.
+const MIN_ALT_SLOT_AGE: u64 = 1;
+
+/// Output of a single batching pass. `alts` is empty when no fibers
+/// in the batch carry lookup_tables (or when ALT resolution failed and
+/// we deliberately fell back to the legacy path).
+pub struct BatchedBuild {
+    pub ixs: Vec<Instruction>,
+    pub priority_fee: u64,
+    pub needs_continuation: bool,
+    pub next_fiber_cursor: Option<u8>,
+    pub alts: Vec<AddressLookupTableAccount>,
+}
 
 /// Executor logic for building thread execution transactions
 #[derive(Clone)]
@@ -101,7 +122,7 @@ impl ExecutorLogic {
         thread_pubkey: &Pubkey,
         thread: &Thread,
         override_fiber_cursor: Option<u8>,
-    ) -> Result<(Vec<Instruction>, u64, bool, Option<u8>)> {
+    ) -> Result<BatchedBuild> {
         // Log thread state for debugging
         self.log_thread_debug(thread, thread_pubkey);
 
@@ -110,6 +131,11 @@ impl ExecutorLogic {
         let mut ixs: Vec<Instruction> = Vec::new();
         let mut needs_continuation = false;
         let mut next_fiber_cursor: Option<u8> = None;
+
+        // Stable insertion-ordered union of ALT pubkeys across fibers in
+        // this batch. IndexMap preserves order so the final v0 message
+        // resolution matches the order alts were observed.
+        let mut alt_keys: IndexMap<Pubkey, ()> = IndexMap::new();
 
         // Track fiber_cursor through the chaining loop
         // Signal::Chain tells us to execute next fiber in sequence
@@ -120,7 +146,7 @@ impl ExecutorLogic {
             "{}: starting build: thread.fiber_cursor={}, override={:?}, using={}",
             thread_pubkey, thread.fiber_cursor, override_fiber_cursor, current_fiber_cursor
         );
-        let first_ix = self
+        let first = self
             .build_thread_exec_ix(
                 &mut priority_fee,
                 thread_pubkey,
@@ -130,17 +156,42 @@ impl ExecutorLogic {
             .await?;
 
         // Empty fiber — nothing to submit
-        let Some(first_ix) = first_ix else {
+        let Some((first_ix, first_alts)) = first else {
             info!("{}: first fiber is empty, nothing to submit", thread_pubkey);
-            return Ok((vec![], 0, false, None));
+            return Ok(BatchedBuild {
+                ixs: vec![],
+                priority_fee: 0,
+                needs_continuation: false,
+                next_fiber_cursor: None,
+                alts: vec![],
+            });
         };
 
+        // Seed ALT union with the first fiber's lookup_tables.
+        for lt in &first_alts {
+            alt_keys.insert(*lt, ());
+        }
+        if alt_keys.len() > MAX_ALTS_PER_TX {
+            // Single fiber overflows the v0 cap (rejected at the ix layer
+            // too, but defensive here).
+            return Err(anyhow!(
+                "fiber {} declares {} lookup_tables (max {})",
+                current_fiber_cursor,
+                alt_keys.len(),
+                MAX_ALTS_PER_TX,
+            ));
+        }
+
         debug!(
-            "First instruction built successfully, priority_fee: {}",
-            priority_fee
+            "First instruction built successfully, priority_fee: {}, alts={}",
+            priority_fee,
+            alt_keys.len()
         );
 
-        // Verify single instruction fits in a transaction
+        // Verify single instruction fits in a transaction. We use the
+        // legacy size estimate as a conservative upper bound on the
+        // v0-compressed size; when ALTs are resolved at the end of the
+        // batch the actual tx will be the same or smaller.
         if !self.would_fit_in_transaction(std::slice::from_ref(&first_ix)) {
             return Err(anyhow!(
                 "Single instruction exceeds max transaction size for thread {}",
@@ -179,7 +230,7 @@ impl ExecutorLogic {
                         "Batching: Signal::Chain, adding thread_exec for fiber {}",
                         current_fiber_cursor
                     );
-                    let next_ix = self
+                    let next = self
                         .build_thread_exec_ix(
                             &mut priority_fee,
                             thread_pubkey,
@@ -189,7 +240,7 @@ impl ExecutorLogic {
                         .await?;
 
                     // Empty fiber — stop chaining
-                    let Some(next_ix) = next_ix else {
+                    let Some((next_ix, next_alts)) = next else {
                         info!(
                             "{}: chained fiber {} is empty, stopping chain",
                             thread_pubkey, current_fiber_cursor
@@ -197,16 +248,37 @@ impl ExecutorLogic {
                         break;
                     };
 
-                    // Check if adding this instruction would exceed transaction size
+                    // ALT-count gate (parallel to the byte-size gate).
+                    let mut trial_alts = alt_keys.clone();
+                    for lt in &next_alts {
+                        trial_alts.insert(*lt, ());
+                    }
+                    if trial_alts.len() > MAX_ALTS_PER_TX {
+                        info!(
+                            "{}: ALT cap reached ({} ALTs, adding fiber {} would be {}, max {}), needs continuation",
+                            thread_pubkey,
+                            alt_keys.len(),
+                            current_fiber_cursor,
+                            trial_alts.len(),
+                            MAX_ALTS_PER_TX
+                        );
+                        needs_continuation = true;
+                        next_fiber_cursor = Some(current_fiber_cursor);
+                        break;
+                    }
+
+                    // Byte-size gate. We use the legacy size estimate here as a
+                    // conservative upper bound on the v0-compressed size — when
+                    // ALTs are present the actual tx will be smaller, so we'll
+                    // sometimes split earlier than strictly necessary, but never
+                    // overflow the 1232-byte cap.
                     let mut trial = ixs.clone();
                     trial.push(next_ix.clone());
                     let trial_size = self.estimate_transaction_size_with_budget(&trial);
                     if trial_size <= MAX_TRANSACTION_SIZE {
                         ixs.push(next_ix);
+                        alt_keys = trial_alts;
                     } else {
-                        // Doesn't fit — return what we have and signal continuation.
-                        // The worker will submit this batch, confirm it, re-fetch
-                        // the thread, and call us again for the next batch.
                         let current_size = self.estimate_transaction_size_with_budget(&ixs);
                         info!(
                             "{}: transaction full ({} ix, {} bytes), adding fiber {} would be {} bytes (max {}), needs continuation",
@@ -227,10 +299,11 @@ impl ExecutorLogic {
                     info!("Signal::Close detected - building thread_exec with close_fiber");
                     let close_ix = self.build_close_thread_exec(thread_pubkey, thread).await?;
 
-                    // Check if close instruction fits in current batch
+                    // close_fiber doesn't introduce new ALTs (built from a
+                    // pre-compiled fixed program call), so no ALT-gate check.
                     let mut trial = ixs.clone();
                     trial.push(close_ix.clone());
-                    if self.would_fit_in_transaction(&trial) {
+                    if self.estimate_transaction_size_with_budget(&trial) <= MAX_TRANSACTION_SIZE {
                         ixs.push(close_ix);
                     } else {
                         info!(
@@ -279,15 +352,30 @@ impl ExecutorLogic {
             );
         }
 
+        // Resolve the deduped ALT union to actual on-chain accounts. If any
+        // fetch/decode fails (or any ALT is too young to be usable), the
+        // whole batch falls back to the legacy tx path — simpler than
+        // partial-set logic and matches the size gate's all-or-nothing
+        // semantics.
+        let alts = self.resolve_alts_or_empty(&alt_keys).await;
+
         info!(
-            "{}: built {} instruction(s), priority_fee={}, continuation={}",
+            "{}: built {} instruction(s), priority_fee={}, continuation={}, alts_in_batch={} (resolved={})",
             thread_pubkey,
             ixs.len(),
             priority_fee,
-            needs_continuation
+            needs_continuation,
+            alt_keys.len(),
+            alts.len(),
         );
 
-        Ok((ixs, priority_fee, needs_continuation, next_fiber_cursor))
+        Ok(BatchedBuild {
+            ixs,
+            priority_fee,
+            needs_continuation,
+            next_fiber_cursor,
+            alts,
+        })
     }
 
     /// Fetch thread account from RPC and deserialize.
@@ -369,16 +457,19 @@ impl ExecutorLogic {
         }
     }
 
-    /// Build thread_exec instruction for a specific fiber, returning the instruction.
+    /// Build thread_exec instruction for a specific fiber.
     ///
-    /// Fetches the external fiber account to get compiled instruction and priority fee.
+    /// Returns `Some((ix, lookup_tables))` when the fiber has a non-empty
+    /// compiled_instruction, or `None` when the fiber is empty (e.g. cleared
+    /// after close). `lookup_tables` is the fiber's declared ALT pubkey list
+    /// (always `&[]` for legacy `FiberState`).
     async fn build_thread_exec_ix(
         &self,
         priority_fee: &mut u64,
         thread_pubkey: &Pubkey,
         thread: &Thread,
         fiber_cursor: u8,
-    ) -> Result<Option<Instruction>> {
+    ) -> Result<Option<(Instruction, Vec<Pubkey>)>> {
         debug!("build_thread_exec_ix: fiber_cursor={}", fiber_cursor);
 
         // Fetch the fiber account
@@ -402,7 +493,11 @@ impl ExecutorLogic {
             return Ok(None);
         }
 
-        debug!("Fiber fetched, priority_fee={}", fiber_read.priority_fee());
+        debug!(
+            "Fiber fetched, priority_fee={}, lookup_tables={}",
+            fiber_read.priority_fee(),
+            fiber_read.lookup_tables().len(),
+        );
 
         // Build execute instruction
         let ix = self
@@ -416,7 +511,7 @@ impl ExecutorLogic {
 
         *priority_fee = (*priority_fee).max(fiber_read.priority_fee());
 
-        Ok(Some(ix))
+        Ok(Some((ix, fiber_read.lookup_tables().to_vec())))
     }
 
     /// Build base ThreadExec accounts (shared by build_execute_instruction and build_close_thread_exec)
@@ -848,6 +943,85 @@ impl ExecutorLogic {
         };
 
         Ok((signal, units_consumed))
+    }
+
+    /// Resolve a deduped ALT pubkey union to on-chain `AddressLookupTableAccount`s.
+    ///
+    /// Returns an empty vec on any failure — caller should fall back to the
+    /// legacy `Transaction` path for the whole batch (matches the size gate's
+    /// all-or-nothing semantics).
+    async fn resolve_alts_or_empty(
+        &self,
+        alt_keys: &IndexMap<Pubkey, ()>,
+    ) -> Vec<AddressLookupTableAccount> {
+        if alt_keys.is_empty() {
+            return Vec::new();
+        }
+        let keys: Vec<Pubkey> = alt_keys.keys().copied().collect();
+        match self.fetch_alt_accounts(&keys).await {
+            Ok(alts) => alts,
+            Err(e) => {
+                warn!("ALT resolution failed; falling back to legacy tx: {e}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Fetch each ALT in `keys` and decode into an `AddressLookupTableAccount`.
+    ///
+    /// All-or-nothing: if any ALT is missing, fails to decode, is deactivated,
+    /// or is younger than [`MIN_ALT_SLOT_AGE`] slots, this returns `Err`.
+    async fn fetch_alt_accounts(&self, keys: &[Pubkey]) -> Result<Vec<AddressLookupTableAccount>> {
+        let (accounts, response_slot) = self
+            .resources
+            .rpc_client
+            .get_multiple_accounts(keys)
+            .await?;
+
+        if accounts.len() != keys.len() {
+            return Err(anyhow!(
+                "ALT fetch returned {} accounts for {} keys",
+                accounts.len(),
+                keys.len()
+            ));
+        }
+
+        let mut out = Vec::with_capacity(keys.len());
+        for (key, maybe_account) in keys.iter().zip(accounts.into_iter()) {
+            let ui_account = maybe_account.ok_or_else(|| anyhow!("ALT {} not found", key))?;
+            let data = decode_account_data(&ui_account.data.0, &ui_account.data.1)
+                .map_err(|e| anyhow!("Failed to decode ALT {} data: {}", key, e))?;
+            let alt = AddressLookupTable::deserialize(&data)
+                .map_err(|e| anyhow!("Failed to deserialize ALT {}: {:?}", key, e))?;
+
+            // Must not be deactivated.
+            if alt.meta.deactivation_slot != u64::MAX {
+                return Err(anyhow!(
+                    "ALT {} is deactivated (deactivation_slot={})",
+                    key,
+                    alt.meta.deactivation_slot
+                ));
+            }
+
+            // Must have aged at least one slot since its last extension to be
+            // usable in a v0 message.
+            let last_extended = alt.meta.last_extended_slot;
+            if last_extended > response_slot.saturating_sub(MIN_ALT_SLOT_AGE) {
+                return Err(anyhow!(
+                    "ALT {} too young (last_extended_slot={}, current_slot={})",
+                    key,
+                    last_extended,
+                    response_slot,
+                ));
+            }
+
+            out.push(AddressLookupTableAccount {
+                key: *key,
+                addresses: alt.addresses.into_owned(),
+            });
+        }
+
+        Ok(out)
     }
 
     /// Fetch fiber account directly from RPC, bypassing cache.

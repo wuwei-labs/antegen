@@ -37,6 +37,7 @@ chrono = { workspace = true }
 bincode = { workspace = true }
 solana-account-decoder-client-types = { workspace = true }
 solana-account-decoder = { workspace = true }
+solana-address-lookup-table-interface = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-system-interface = { workspace = true }
 bs58 = { workspace = true }
@@ -51,6 +52,9 @@ base64 = "0.22"
 
 # Efficient synchronization primitives
 parking_lot = "0.12"
+
+# Ordered ALT union accumulation in the executor batcher
+indexmap = { workspace = true }
 
 # Error handling
 thiserror = "1.0"

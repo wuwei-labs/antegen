@@ -34,7 +34,6 @@
 
 use anyhow::{anyhow, Result};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::transaction::Transaction;
 use solana_tpu_client_next::{
     connection_workers_scheduler::{
         BindTarget, ConnectionWorkersScheduler, ConnectionWorkersSchedulerConfig, Fanout,
@@ -173,7 +172,10 @@ impl TpuClient {
     /// Returns an error if:
     /// - Transaction serialization fails
     /// - The internal channel is closed (scheduler has stopped)
-    pub async fn send_transaction(&self, transaction: &Transaction) -> Result<()> {
+    pub async fn send_transaction<T: serde::Serialize + ?Sized>(
+        &self,
+        transaction: &T,
+    ) -> Result<()> {
         let wire_tx = bincode::serialize(transaction)?;
         let batch = TransactionBatch::new(vec![wire_tx]);
 

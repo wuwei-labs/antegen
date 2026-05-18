@@ -148,8 +148,12 @@ impl RpcPool {
         Ok((hash, result.value.last_valid_block_height))
     }
 
-    /// Send a transaction
-    pub async fn send_transaction(&self, transaction: &Transaction) -> Result<Signature> {
+    /// Send a transaction. Generic over `Serialize` so both legacy
+    /// `Transaction` and `VersionedTransaction` can be submitted.
+    pub async fn send_transaction<T: serde::Serialize + ?Sized>(
+        &self,
+        transaction: &T,
+    ) -> Result<Signature> {
         let tx_bytes = bincode::serialize(transaction)?;
         let tx_base64 = BASE64_STANDARD.encode(&tx_bytes);
 
@@ -259,7 +263,7 @@ impl RpcPool {
     pub async fn get_multiple_accounts(
         &self,
         pubkeys: &[Pubkey],
-    ) -> Result<Vec<Option<SafeUiAccount>>> {
+    ) -> Result<(Vec<Option<SafeUiAccount>>, u64)> {
         let addresses: Vec<String> = pubkeys.iter().map(|p| p.to_string()).collect();
 
         let body = json!({
@@ -273,14 +277,23 @@ impl RpcPool {
         });
 
         #[derive(serde::Deserialize)]
+        struct ContextValue {
+            slot: u64,
+        }
+
+        #[derive(serde::Deserialize)]
         struct MultipleAccountsResponse {
+            context: ContextValue,
             value: Vec<Option<SafeUiAccount>>,
         }
 
         let response: JsonRpcResponse<MultipleAccountsResponse> =
             self.execute_with_failover(&body, true).await?;
 
-        Ok(response.result.map(|r| r.value).unwrap_or_default())
+        Ok(response
+            .result
+            .map(|r| (r.value, r.context.slot))
+            .unwrap_or_default())
     }
 
     /// Get program accounts with optional filters
@@ -323,9 +336,9 @@ impl RpcPool {
     }
 
     /// Simulate a transaction and return accounts
-    pub async fn simulate_transaction(
+    pub async fn simulate_transaction<T: serde::Serialize + ?Sized>(
         &self,
-        transaction: &Transaction,
+        transaction: &T,
         account_addresses: &[Pubkey],
     ) -> Result<SafeSimulationResult> {
         let tx_bytes = bincode::serialize(transaction)?;
