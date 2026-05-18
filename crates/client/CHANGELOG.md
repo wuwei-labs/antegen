@@ -1,5 +1,16 @@
 # Changelog
 
+## [6.0.0](https://github.com/wuwei-labs/antegen/compare/antegen-client-v5.2.0...antegen-client-v6.0.0) (2026-05-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* **client:** swap pws for antegen-ws (rustls)
+
+### Code Refactoring
+
+* **client:** swap pws for antegen-ws (rustls) ([60e8f42](https://github.com/wuwei-labs/antegen/commit/60e8f42ed6ab02adbd85116a2746e1617192b88e))
+
 ## [5.2.0](https://github.com/wuwei-labs/antegen/compare/antegen-client-v5.1.4...antegen-client-v5.2.0) (2026-05-17)
 
 
