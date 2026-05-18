@@ -12,9 +12,9 @@ otherwise — must follow them too.
    ```
    - Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`,
      `test`, `build`, `ci`, `chore`, `revert`.
-   - Allowed scopes (optional): `cron`, `client`, `thread`, `fiber`,
-     `cli-core`, `cli`, `ctl`, `geyser`. Scope tells `release-please`
-     which package's changelog the commit belongs to.
+   - Allowed scopes (optional): `cron`, `client`, `ws`, `thread`,
+     `fiber`, `cli-core`, `cli`, `ctl`, `geyser`. Scope tells
+     `release-please` which package's changelog the commit belongs to.
    - Append `!` after type/scope (or include a `BREAKING CHANGE:`
      footer) for breaking changes — these become a major version bump.
    - Subject starts with a letter and reads as a present-tense imperative.
@@ -91,6 +91,7 @@ in `.github/release-please-config.json`. The current mapping:
 |------|-----------|-----------|----------------|
 | `crates/cron` | `antegen-cron` | `antegen-cron-v<X.Y.Z>` | crates.io |
 | `crates/client` | `antegen-client` | `antegen-client-v<X.Y.Z>` | crates.io + `antegen-node` binary |
+| `crates/ws` | `antegen-ws` | `antegen-ws-v<X.Y.Z>` | crates.io |
 | `programs/thread` | `antegen-thread-program` | `antegen-thread-program-v<X.Y.Z>` | crates.io + verifiable `.so` |
 | `programs/fiber` | `antegen-fiber-program` | `antegen-fiber-program-v<X.Y.Z>` | crates.io + verifiable `.so` |
 | `cli/core` | `antegen-cli-core` | `antegen-cli-core-v<X.Y.Z>` | crates.io |
