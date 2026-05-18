@@ -1,8 +1,8 @@
 {
   "crates/cron": "4.1.0",
   "crates/client": "5.2.0",
-  "programs/thread": "6.0.0",
-  "programs/fiber": "6.0.0",
+  "programs/thread": "5.1.0",
+  "programs/fiber": "5.1.0",
   "cli/core": "6.1.0",
   "cli/antegen": "6.1.0",
   "cli/antegenctl": "6.0.0",
