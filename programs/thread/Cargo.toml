@@ -21,7 +21,7 @@ crate-type = ["cdylib", "lib"]
 overflow-checks = true
 lto = "fat"
 codegen-units = 1
- 
+
 [profile.release.build-override]
 opt-level = 3
 incremental = false
@@ -36,6 +36,8 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
+custom-heap = []
+custom-panic = []
 
 [dependencies]
 solana-cron = { workspace = true }
