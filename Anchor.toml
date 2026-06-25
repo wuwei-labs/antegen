@@ -3,9 +3,7 @@ cluster = "mainnet"
 wallet = "~/.config/solana/id.json"
 
 [workspace]
-members = [
-    "programs/*"
-]
+members = ["programs/*"]
 
 [programs.localnet]
 antegen_network_program = "AgNet6qmh75bjFULcS9RQijUoWwkCtSiSwXM1K3Ujn6Z"
@@ -24,3 +22,6 @@ antegen_test_program = "AgTstktpwF7FfmUpLQW6NLdCioiF4nmQqV9oYjZQzHjj"
 
 [registry]
 url = "https://api.apr.dev"
+
+[toolchain]
+anchor_version = "1.0.2"
