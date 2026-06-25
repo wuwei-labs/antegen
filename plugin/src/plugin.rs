@@ -97,6 +97,17 @@ impl GeyserPlugin for AntegenPlugin {
         let account_pubkey = Pubkey::try_from(account_info.pubkey).unwrap();
         let event = AccountUpdateEvent::try_from(account_info);
 
+        // During snapshot load agave streams every account on the chain. We only need
+        // the Thread/Clock accounts (to backfill the observer with existing on-chain
+        // threads); for everything else `observe_account` is skipped anyway while
+        // `is_startup`. Spawning a task per account here floods the runtime and OOM-
+        // kills the validator at load, so drop irrelevant accounts before spawning.
+        // (At runtime we must still observe every account -- account-listener triggers
+        // can watch arbitrary accounts.)
+        if is_startup && event.is_err() {
+            return Ok(());
+        }
+
         // Process event on tokio task.
         self.inner.clone().spawn(|inner| async move {
             // Send all account updates to the thread observer for account listeners.
@@ -190,12 +201,12 @@ impl GeyserPlugin for AntegenPlugin {
     }
 
     fn account_data_snapshot_notifications_enabled(&self) -> bool {
-        // Don't receive account notifications while loading from snapshot.
-        // update_account() ignores startup accounts (`if !is_startup`), so returning
-        // true here just makes agave materialize and stream every account on the
-        // chain to us during snapshot load, only for us to drop it -- a huge,
-        // pointless memory spike that OOM-killed the validator at load time on v4.
-        false
+        // Must stay true: snapshot account notifications are how we backfill the
+        // observer with threads that already exist on-chain at startup (otherwise a
+        // cron/time-triggered thread that never changes its account would never be
+        // cranked). The memory blow-up this used to cause is handled in
+        // update_account(), which drops irrelevant accounts before spawning.
+        true
     }
 }
 

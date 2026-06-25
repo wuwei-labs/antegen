@@ -262,18 +262,21 @@ solana address && solana balance             # fund the new identity if needed
 
 Clone the v4 branch. **Before building, confirm the memory-critical plugin setting:**
 
-> **Required for v4 memory.** `account_data_snapshot_notifications_enabled()` in
-> `plugin/src/plugin.rs` must return **`false`**. With it `true`, agave streams the
-> full data of *every* account on the chain to the plugin during snapshot load — which
-> the plugin discards (`update_account` skips `is_startup`) — a huge anonymous-memory
-> spike that OOM-killed the validator at load on a 256 GB host. The v4 branch should
-> already carry this; verify it before building.
+> **Required for v4 memory.** `plugin/src/plugin.rs` `update_account()` must drop
+> irrelevant accounts **before** spawning a task, during snapshot load:
+> `if is_startup && event.is_err() { return Ok(()); }`. Without it, agave streams every
+> account on the chain at load and the plugin spawns a task per account — a huge
+> anonymous-memory spike that OOM-killed the validator at load on a 256 GB host. Note
+> `account_data_snapshot_notifications_enabled()` must stay **`true`** — those snapshot
+> notifications are how the observer backfills threads that already exist on-chain
+> (otherwise a cron-triggered thread that never changes its account would never crank).
+> The v4 branch should already carry this; verify before building.
 
 ```bash
 cd /home/sol
 git clone --branch feat/geyser-4.0.2 https://github.com/wuwei-labs/antegen.git
 cd antegen
-grep -A1 'fn account_data_snapshot_notifications_enabled' plugin/src/plugin.rs   # expect: false
+grep -A8 'let event = AccountUpdateEvent::try_from' plugin/src/plugin.rs   # expect the is_startup && event.is_err() guard
 cargo build --release -p antegen-plugin -p antegen-cli
 
 # Install the built artifacts
