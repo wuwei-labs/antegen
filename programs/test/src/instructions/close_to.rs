@@ -5,13 +5,13 @@ use antegen_utils::thread::ThreadResponse;
 pub struct CloseTo<'info> {
     /// CHECK:
     #[account(mut)]
-    pub to: AccountInfo<'info>
+    pub to: UncheckedAccount<'info>
 }
 
 pub fn handler(
   ctx: Context<CloseTo>
 ) -> Result<ThreadResponse> {
-  let to: &mut AccountInfo = &mut ctx.accounts.to;
+  let to = &ctx.accounts.to;
 
   msg!("close to test");
   Ok(ThreadResponse {
