@@ -1,0 +1,55 @@
+[Unit]
+Description=Antegen Crank
+After=network-online.target
+Wants=network-online.target
+# Don't start until the data drives AND hugepage pools are mounted --
+# agave dies instantly if /mnt/* isn't there yet at boot.
+RequiresMountsFor=/mnt/accounts /mnt/ledger /mnt/gigantic
+# Never give up after repeated fast failures (pairs with Restart=always).
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=sol
+Group=sol
+
+# Tune the NICs (ring buffers + coalescing) before the validator takes traffic.
+# '+' runs it as root despite User=sol; '-' means a NIC hiccup never blocks start.
+# The script is idempotent and skips work already done (no needless link flap).
+ExecStartPre=-+/usr/local/bin/nic-tune.sh
+
+ExecStart=/home/sol/rpc.sh
+
+# Restart behavior -- a validator should never exit cleanly; always bring it back.
+Restart=always
+RestartSec=5
+
+# File descriptor limit -- Solana needs a very high limit (matches
+# fs.nr_open=2000000 in 21-agave-validator.conf and the solana-rpc guide).
+LimitNOFILE=2000000
+
+# Thread cap -- agave spawns hundreds of threads; systemd's default TasksMax
+# will throttle/kill it. Lift it.
+TasksMax=infinity
+
+# Lock memory limit (bytes) -- canonical Solana value from the solana-rpc guide.
+# hugetlbfs pages (the 2M + 1G pools in DEPLOY-v4.md) are not charged against
+# this; bump to infinity only if agave reports a memlock error at startup.
+LimitMEMLOCK=2000000000
+
+# Process/thread rlimit headroom.
+LimitNPROC=infinity
+
+# Give the validator time to flush state on stop instead of being killed.
+KillSignal=SIGTERM
+TimeoutStopSec=120
+SendSIGKILL=yes
+
+# Keep the OOM killer from targeting the validator first.
+OOMScoreAdjust=-900
+
+# agave v4 XDP requirement -- the validator's networking needs these caps.
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_BPF CAP_PERFMON
+
+[Install]
+WantedBy=multi-user.target
