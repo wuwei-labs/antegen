@@ -18,10 +18,10 @@ use solana_program::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
 };
+use solana_commitment_config::CommitmentConfig;
+use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
     account::Account,
-    commitment_config::CommitmentConfig,
-    compute_budget::ComputeBudgetInstruction,
     message::{v0, VersionedMessage},
     signature::Keypair,
     signer::Signer,
@@ -120,7 +120,7 @@ pub async fn build_thread_exec_tx(
         {
             Err(err) => {
                 info!("Simulation error encountered: {:?}", err);
-                match err.kind {
+                match *err.kind {
                     solana_client::client_error::ClientErrorKind::RpcError(
                         solana_client::rpc_request::RpcError::RpcResponseError { code, .. },
                     ) if code == JSON_RPC_SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED => {
@@ -285,15 +285,7 @@ fn build_kickoff_ix(
             is_signer: false,
             is_writable: false,
         }),
-        Trigger::Pyth {
-            price_feed,
-            equality: _,
-            limit: _,
-        } => kickoff_ix.accounts.push(AccountMeta {
-            pubkey: price_feed,
-            is_signer: false,
-            is_writable: false,
-        }),
+        // Pyth triggers are retired; no extra account is required.
         _ => {}
     }
 

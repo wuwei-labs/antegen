@@ -38,13 +38,14 @@ futures = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
 prost = { workspace = true }
-pyth-sdk-solana = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 simple-error = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-client = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-compute-budget-interface = { workspace = true }
 solana-logger = { workspace = true }
 solana-program = { workspace = true }
 solana-quic-client = { workspace = true }

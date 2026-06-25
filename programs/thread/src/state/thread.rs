@@ -83,7 +83,7 @@ impl ThreadAccount for Account<'_, Thread> {
             size_of::<Trigger>() +            // trigger enum
             NEXT_INSTRUCTION_SIZE;            // next instruction
 
-        self.to_account_info().realloc(data_len, false)?;
+        self.to_account_info().resize(data_len)?;
         Ok(())
     }
 }

@@ -38,15 +38,15 @@ pub fn handler(ctx: Context<WorkerUpdate>, settings: WorkerSettings) -> Result<(
     worker.update(settings)?;
 
     // Realloc memory for the worker account
-    let data_len: usize = 8 + worker.try_to_vec()?.len();
-    worker.to_account_info().realloc(data_len, false)?;
+    let data_len: usize = 8 + borsh::to_vec(&**worker)?.len();
+    worker.to_account_info().resize(data_len)?;
 
     // If lamports are required to maintain rent-exemption, pay them
     let minimum_rent: u64 = Rent::get().unwrap().minimum_balance(data_len);
     if minimum_rent > worker.to_account_info().lamports() {
         transfer(
             CpiContext::new(
-                system_program.to_account_info(),
+                system_program.key(),
                 Transfer {
                     from: authority.to_account_info(),
                     to: worker.to_account_info(),

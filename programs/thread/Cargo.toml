@@ -44,8 +44,8 @@ antegen-utils = { workspace = true }
 
 anchor-lang = { workspace = true }
 anchor-spl = { workspace = true }
+borsh = { workspace = true }
 
 chrono = { workspace = true }
-pyth-sdk-solana = { workspace = true }
 static-pubkey = { workspace = true }
 version = { workspace = true }

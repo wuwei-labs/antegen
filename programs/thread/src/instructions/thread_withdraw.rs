@@ -35,7 +35,7 @@ pub fn handler(ctx: Context<ThreadWithdraw>, amount: u64) -> Result<()> {
     let thread = &mut ctx.accounts.thread;
 
     // Calculate the minimum rent threshold
-    let data_len = 8 + thread.try_to_vec()?.len();
+    let data_len = 8 + borsh::to_vec(&**thread)?.len();
     let minimum_rent = Rent::get().unwrap().minimum_balance(data_len);
     let post_balance = thread
         .to_account_info()

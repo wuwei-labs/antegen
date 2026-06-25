@@ -63,7 +63,7 @@ pub fn handler(ctx: Context<DistributeFeesProcessWorker>) -> Result<ThreadRespon
 
     // Calculate the fee account's usuable balance.
     let commission_lamport_balance: u64 = commission.to_account_info().lamports();
-    let commission_data_len: usize = 8 + commission.try_to_vec()?.len();
+    let commission_data_len: usize = 8 + borsh::to_vec(&**commission)?.len();
     let commission_rent_balance: u64 = Rent::get().unwrap().minimum_balance(commission_data_len);
     let commission_usable_balance: u64 = commission_lamport_balance.checked_sub(commission_rent_balance).unwrap();
 

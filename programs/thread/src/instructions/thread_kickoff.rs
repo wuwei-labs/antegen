@@ -9,7 +9,6 @@ use anchor_lang::prelude::*;
 use antegen_network_program::state::{Worker, WorkerAccount};
 use antegen_utils::thread::Trigger;
 use chrono::{DateTime, Utc};
-use pyth_sdk_solana::state::SolanaPriceAccount;
 use solana_cron::Schedule;
 
 /// Accounts required by the `thread_kickoff` instruction.
@@ -199,64 +198,13 @@ pub fn handler(ctx: Context<ThreadKickoff>) -> Result<()> {
                 },
             })
         }
-        Trigger::Pyth {
-            price_feed: price_feed_pubkey,
-            equality,
-            limit,
-        } => {
-            // Verify price limit has been reached.
-            match ctx.remaining_accounts.first() {
-                None => {
-                    return Err(AntegenThreadError::TriggerConditionFailed.into());
-                }
-                Some(account_info) => {
-                    require!(
-                        price_feed_pubkey.eq(account_info.key),
-                        AntegenThreadError::TriggerConditionFailed
-                    );
-                    const STALENESS_THRESHOLD: u64 = 60; // staleness threshold in seconds
-                    let price_feed =
-                        SolanaPriceAccount::account_info_to_feed(account_info).unwrap();
-                    let current_timestamp = Clock::get()?.unix_timestamp;
-                    let current_price = price_feed
-                        .get_price_no_older_than(current_timestamp, STALENESS_THRESHOLD)
-                        .unwrap();
-                    match equality {
-                        Equality::GreaterThanOrEqual => {
-                            require!(
-                                current_price.price.ge(&limit),
-                                AntegenThreadError::TriggerConditionFailed
-                            );
-                            thread.exec_context = Some(ExecContext {
-                                exec_index: 0,
-                                execs_since_reimbursement: 0,
-                                execs_since_slot: 0,
-                                last_exec_at: clock.slot,
-                                last_exec_timestamp: clock.unix_timestamp,
-                                trigger_context: TriggerContext::Pyth {
-                                    price: current_price.price,
-                                },
-                            });
-                        }
-                        Equality::LessThanOrEqual => {
-                            require!(
-                                current_price.price.le(&limit),
-                                AntegenThreadError::TriggerConditionFailed
-                            );
-                            thread.exec_context = Some(ExecContext {
-                                exec_index: 0,
-                                execs_since_reimbursement: 0,
-                                execs_since_slot: 0,
-                                last_exec_at: clock.slot,
-                                last_exec_timestamp: clock.unix_timestamp,
-                                trigger_context: TriggerContext::Pyth {
-                                    price: current_price.price,
-                                },
-                            });
-                        }
-                    }
-                }
-            }
+        Trigger::Pyth { .. } => {
+            // Pyth triggers are retired: the `pyth-sdk-solana` dependency had no
+            // Solana 3.x-compatible release and was dropped in the anchor 1.0 /
+            // Solana 3.x upgrade. The `Trigger::Pyth` / `TriggerContext::Pyth`
+            // variants are preserved for account & IDL compatibility, but the
+            // trigger can no longer be kicked off.
+            return Err(AntegenThreadError::TriggerConditionFailed.into());
         }
     }
 

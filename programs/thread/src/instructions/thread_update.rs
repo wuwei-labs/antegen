@@ -88,7 +88,7 @@ pub fn handler(ctx: Context<ThreadUpdate>, settings: ThreadSettings) -> Result<(
     if minimum_rent > thread.to_account_info().lamports() {
         transfer(
             CpiContext::new(
-                system_program.to_account_info(),
+                system_program.key(),
                 Transfer {
                     from: authority.to_account_info(),
                     to: thread.to_account_info(),

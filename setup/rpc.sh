@@ -1,4 +1,10 @@
 #!/bin/bash
+# agave-validator v4.x launch script (Antegen RPC worker).
+# v4 notes:
+#   - In-memory accounts index is the default; --enable-accounts-disk-index and
+#     --accounts-index-path were dropped (disk index deprecated in v4).
+#   - Snapshot Direct-I/O is on by default in v4. If /mnt/accounts storage rejects
+#     O_DIRECT on snapshot load, add: --no-accounts-db-snapshots-direct-io
 exec /home/sol/.cargo/bin/agave-validator \
     --identity /home/sol/rpc-keypair.json \
     --no-voting \
@@ -26,7 +32,6 @@ exec /home/sol/.cargo/bin/agave-validator \
     --block-verification-method unified-scheduler \
     --unified-scheduler-handler-threads 12 \
     --accounts-db-cache-limit-mb 8192 \
-    --enable-accounts-disk-index \
-    --accounts-index-path /mnt/accounts/index \
     --skip-startup-ledger-verification \
-    --geyser-plugin-config /home/sol/geyser-config.json
+    --geyser-plugin-config /home/sol/geyser-config.json \
+    --log /home/sol/log/agave-validator.log

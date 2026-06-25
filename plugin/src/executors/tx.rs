@@ -22,8 +22,8 @@ use {
     },
     solana_program::pubkey::Pubkey,
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
+    solana_commitment_config::CommitmentConfig,
     solana_sdk::{
-        commitment_config::CommitmentConfig,
         signature::{Keypair, Signature},
         transaction::{Transaction, VersionedTransaction},
     },

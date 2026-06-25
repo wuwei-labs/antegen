@@ -131,15 +131,6 @@ impl GeyserPlugin for AntegenPlugin {
                             .await
                             .ok();
                     }
-                    AccountUpdateEvent::PriceFeed { price_feed } => {
-                        inner
-                            .observers
-                            .thread
-                            .clone()
-                            .observe_price_feed(account_pubkey, price_feed)
-                            .await
-                            .ok();
-                    }
                 }
             }
             Ok(())

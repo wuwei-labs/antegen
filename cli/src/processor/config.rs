@@ -1,13 +1,12 @@
 use anchor_lang::{
     solana_program::{
-        hash::Hash,
         instruction::Instruction,
         pubkey::Pubkey,
     },
     InstructionData, ToAccountMetas
 };
 use antegen_network_program::state::{Config, ConfigSettings};
-use solana_sdk::{message::Message, transaction::Transaction};
+use solana_sdk::{hash::Hash, message::Message, transaction::Transaction};
 
 use crate::{client::Client, errors::CliError};
 

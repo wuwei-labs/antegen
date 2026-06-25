@@ -14,8 +14,8 @@ use {
         Result,
     },
     antegen_utils::explorer::Explorer,
+    solana_commitment_config::CommitmentConfig,
     solana_sdk::{
-        commitment_config::CommitmentConfig,
         native_token::LAMPORTS_PER_SOL,
         pubkey::Pubkey,
         signature::{

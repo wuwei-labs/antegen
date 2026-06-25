@@ -3,9 +3,9 @@ use std::mem::size_of;
 use anchor_lang::{
     prelude::*,
     solana_program::system_program,
-    system_program::{transfer, Transfer}
+    system_program::{transfer, Transfer},
 };
-use antegen_utils::thread::{Trigger, SerializableInstruction};
+use antegen_utils::thread::{SerializableInstruction, Trigger};
 
 use crate::{state::*, ThreadId};
 
@@ -20,7 +20,7 @@ pub struct ThreadCreate<'info> {
     #[account()]
     pub authority: Signer<'info>,
 
-    /// The payer for account initializations. 
+    /// The payer for account initializations.
     #[account(mut)]
     pub payer: Signer<'info>,
 
@@ -53,7 +53,7 @@ pub fn handler(
     amount: u64,
     id: ThreadId,
     instructions: Vec<SerializableInstruction>,
-    trigger: Trigger
+    trigger: Trigger,
 ) -> Result<()> {
     let id_bytes: Vec<u8> = match &id {
         ThreadId::Bytes(bytes) => bytes.clone(),
@@ -86,13 +86,13 @@ pub fn handler(
     // Transfer SOL from payer to the thread.
     transfer(
         CpiContext::new(
-            system_program.to_account_info(),
+            system_program.key(),
             Transfer {
                 from: payer.to_account_info(),
                 to: thread.to_account_info(),
             },
         ),
-        amount
+        amount,
     )?;
 
     Ok(())

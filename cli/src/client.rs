@@ -4,8 +4,8 @@ use solana_client::{
     client_error, rpc_client::RpcClient,
     rpc_response::RpcSimulateTransactionResult,
 };
+use solana_commitment_config::CommitmentConfig;
 use solana_sdk::{
-    commitment_config::CommitmentConfig,
     hash::Hash,
     instruction::Instruction,
     program_error::ProgramError,

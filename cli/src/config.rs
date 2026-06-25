@@ -1,5 +1,5 @@
 use {
-    solana_sdk::commitment_config::CommitmentConfig,
+    solana_commitment_config::CommitmentConfig,
     std::{
         env,
         fs,

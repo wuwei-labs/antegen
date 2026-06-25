@@ -16,7 +16,7 @@ use solana_client::{
     nonblocking::rpc_client::RpcClient,
 };
 use agave_geyser_plugin_interface::geyser_plugin_interface::Result as PluginResult;
-use solana_sdk::commitment_config::CommitmentConfig;
+use solana_commitment_config::CommitmentConfig;
 use tokio::runtime::Runtime;
 use tx::TxExecutor;
 

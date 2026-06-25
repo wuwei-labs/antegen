@@ -1,0 +1,823 @@
+df -h
+    2  sudo bash -c "cat >/etc/sysctl.d/21-agave-validator.conf <<EOF
+    3  # Increase max UDP buffer sizes
+    4  net.core.rmem_max = 134217728
+    5  net.core.wmem_max = 134217728
+    6  # Increase memory mapped files limit
+    7  vm.max_map_count = 1000000
+    8  # Increase number of allowed open file descriptors
+    9  fs.nr_open = 1000000
+   10  EOF"
+   11  sudo bash -c "cat >/etc/sysctl.d/21-agave-validator.conf <<EOF
+   12  # Increase max UDP buffer sizes
+   13  net.core.rmem_max = 134217728
+   14  net.core.wmem_max = 134217728
+   15  # Increase memory mapped files limit
+   16  vm.max_map_count = 1000000
+   17  # Increase number of allowed open file descriptors
+   18  fs.nr_open = 1000000
+   19  EOF"
+   20  sudo sysctl -p /etc/sysctl.d/21-agave-validator.conf
+   21  nano /etc/systemd/system.conf
+   22  sudo nano /etc/systemd/system.conf
+   23  sudo systemctl daemon-reload
+   24  sudo bash -c "cat >/etc/security/limits.d/90-solana-nofiles.conf <<EOF
+   25  # Increase process file descriptor count limit
+   26  * - nofile 1000000
+   27  # Increase memory locked limit (kB)
+   28  * - memlock 2000000
+   29  EOF"
+   30  solana-keygen --help
+   31  cargo install agave-validator
+   32  curl https://sh.rustup.rs -sSf | sh
+   33  source $HOME/.cargo/env
+   34  rustup component add rustfmt
+   35  sh -c "$(curl -sSfL https://release.anza.xyz/v3.1.9/install)"
+   36  solana config set --keypair ~/rpc-keypair.json
+   37  solana address
+   38  solana balance
+   39  ls
+   40  tail -f solana-rpc.log
+   41  curl -LO https://github.com/wuwei-labs/antegen/releases/download/v2.2.9/antegen-v2.2.9-x86_64-unknown-linux-gnu.tar.xz
+   42  ls
+   43  tar -xvf antegen-v2.2.9-x86_64-unknown-linux-gnu.tar.xz
+   44  ls
+   45  rm -r antegen-v2.2.9-x86_64-unknown-linux-gnu.tar.xz lib version.yml
+   46  ls
+   47  mv ./bin/antegen /usr/local/bin
+   48  sudo mv ./bin/antegen /usr/local/bin
+   49  cd bin
+   50  ls
+   51  cd ..
+   52  /usr/local/bin/antegen --help
+   53  /usr/local/bin/antegen worker --help
+   54  /usr/local/bin/antegen worker create --help
+   55  /usr/local/bin/antegen worker create /home/sol/rpc-keypair.json
+   56  solana-keygen grind --starts-with CRNK:1
+   57  ls
+   58  sudo nano geyser-config.json
+   59  /usr/local/bin/antegen worker create /home/sol/CRNKaxMoyKs1hhzRRuBKj1mTrtYWY5qPsbhKWNz3cjaC.json
+   60  /usr/local/bin/antegen worker --help
+   61  /usr/local/bin/antegen worker get --help
+   62  /usr/local/bin/antegen worker get N3uvVVc8mCXciRhqqKZmkAGP58EDhLRWfRK9uvP7XZx
+   63  /usr/local/bin/antegen worker get 0
+   64  tail -f solana-rpc.log
+   65  journalctl -u antegen-crank -n 200 --no-pager
+   66  sudo journalctl -u antegen-crank -n 200 --no-pager
+   67  sudo systemctl status antegen-crank
+   68  sudo systemctl stop antegen-crank
+   69  cat geyser-config.josn 
+   70  cat geyser-config.json
+   71  curl http://127.0.0.1:8899 -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'
+   72  clear
+   73  tail -f solana-rpc.log
+   74  clear
+   75  tail -f solana-rpc.log
+   76  clear
+   77  tail -f solana-rpc.log
+   78  clear
+   79  tail -f solana-rpc.log
+   80  clear
+   81  tail -f solana-rpc.log
+   82  ls
+   83  nano rpc-start.sh
+   84  sudo systemctl daemon-reload
+   85  sudo systemctl restart antegen-crank
+   86  tail -f solana-rpc.log
+   87  tail -f solana-rpc.log | grep geyser
+   88  tail -f solana-rpc.lo
+   89  ls
+   90  tail -f solana-rpc.log
+   91  agave-validator --ledger /mnt/ledger monitor
+   92  clear
+   93  agave-validator --ledger /mnt/ledger monitor
+   94  cat geyser-config.json 
+   95  rm geyser-config.json 
+   96  nano geyser-config.json
+   97  tail -f solana-rpc.log
+   98  agave-validator --ledger /mnt/ledger monitor
+   99  tail -f solana-rpc.log
+  100  cd /mnt
+  101  ls
+  102  cd ledger
+  103  ls
+  104  rm -r accounts_hash_cache
+  105  cd ~
+  106  rm -rf /mnt/ledger/{*,.*}
+  107  cd /mnt/ledger
+  108  ls
+  109  cd -
+  110  sudo systemctl restart antegen-crank
+  111  tail -f solana-rpc.log
+  112  clear
+  113  tail -f /home/sol/solana-rpc.log | grep --line-buffered "antegen_plugin"
+  114  tail -f solana-rpc.log
+  115  tail -f /home/sol/solana-rpc.log | grep --line-buffered "antegen_plugin"
+  116  tail -f solana-rpc.log
+  117  nano rpc-start.sh
+  118  ./rpc-start.sh
+  119  clear
+  120  ./rpc-start.sh
+  121  rm -rf /mnt/ledger/{*,.*}
+  122  ./rpc-start.sh
+  123  sudo systmectl restart antegen-crank
+  124  sudo systemctl restart antegen-crank
+  125  sudo nano rpc-start.sh
+  126  sudo systemctl daemon-reload
+  127  sudo systemctl restart antegen-crank
+  128  sudo journalctl -f antegen-crank
+  129  sudo systemctl status antegen-crank
+  130  sudo journalctl -f antegen-crank.service
+  131  sudo journalctl -u solv -f antegen-crank
+  132  sudo journalctl -u antegen-crank -f
+  133  sudo journalctl -u antegen-crank
+  134  sudo journalctl -u antegen-crank -R
+  135  sudo journalctl -u antegen-crank -
+  136  sudo journalctl -u antegen-crank -r
+  137  sudo journalctl -u antegen-crank -f
+  138  fclear
+  139  clear
+  140  tail -f solana-rpc.log
+  141  clear
+  142  sudo rm -rf /mnt/ledger/{*,.*}
+  143  wget --trust-server-names http://entrypoint3.mainnet-beta.solana.com/snapshot.tar.bz2 -P /mnt/ledger/remote/ 
+  144  cd /mnt/ledger
+  145  ls
+  146  mkdir remote
+  147  cd remote
+  148  wget -c --trust-server-names https://solana-snapshot-chi.erpc.global/snapshot.tar.bz2 && wget -c --trust-server-names                           
+  149  cd ..
+  150  ls
+  151  sudo rm -rf remote
+  152  ls
+  153  cd ~
+  154  ls
+  155  sudo nano rpc-start.sh
+  156  tail -f solana-rpc.log
+  157  sudo nano rpc-start.sh
+  158  tail -f solana-rpc.log
+  159  clear
+  160  agave-validator --ledger /mnt/ledger monitor
+  161  cat solana-rpc.log
+  162  tail -f solana-rpc.log
+  163  sudo systemctl status antegen-crank
+  164  sudo journalctl -u antegen-crank
+  165  sudo journalctl -u antegen-crank -r
+  166  cd /mnt/ledger
+  167  ls
+  168  cd snapshots
+  169  ls
+  170  cd ../remote
+  171  ls
+  172  wget -c --trust-server-names https://solana-snapshot-chi.erpc.global/snapshot.tar.bz2
+  173  cd ../../..
+  174  cd ~
+  175  nano snapshot-finder.py
+  176  python3 snapshot-finder.py --snapshot_path /mnt/ledger/remote --version 2.1.11 --max_latency 150
+  177  pip3 tqdm
+  178  sudo apt install pip
+  179  pip3 tqdm
+  180  pip3 install tqdm
+  181  apt install pipx
+  182  sudo apt install pipx
+  183  pipx install tqdm
+  184  pipx ensure
+  185  pipx ensurepath
+  186  python3 snapshot-finder.py --snapshot_path /mnt/ledger/remote --version 2.1.11 --max_latency 150
+  187  ls
+  188  python3 /home/sol/snapshot-finder.py --snapshot_path /mnt/ledger/remote --version 2.1.11 --max_latency 150
+  189  python3 -m pip install tqdm
+  190  pip3 install tqdm --break-system-packages
+  191  python3 /home/sol/snapshot-finder.py --snapshot_path /mnt/ledger/remote --version 2.1.11 --max_latency 150
+  192  clear
+  193  python3 /home/sol/snapshot-finder.py --snapshot_path /mnt/ledger/remote --version 2.1.11 --max_latency 150
+  194  clear
+  195  python3 /home/sol/snapshot-finder.py --snapshot_path /mnt/ledger/remote --version 2.1.11 --max_latency 150
+  196  python3 /home/sol/snapshot-finder.py --snapshot_path /mnt/ledger/remote  --max_latency 150
+  197  cd /mnt/ledger/remote
+  198  ls
+  199  cd -
+  200  rm /mnt/ledger/remote/snapshot-405294139-De73VMEEdMRu1GRfX6Y3bePxjzKbHuqfQPUQpZng35Mb.tar.zst
+  201  python3 /home/sol/snapshot-finder.py --snapshot_path /mnt/ledger/remote  --max_latency 150
+  202  python3 /home/sol/snapshot-finder.py   --snapshot_path /mnt/ledger/remote   --max_latency 150   --blacklist De73VMEEdMRu1GRfX6Y3bePxjzKbHuqfQPUQpZng35Mb
+  203  sudo journalctl -u antegen-crank -f
+  204  clear
+  205  agave-install init v2.1.18
+  206  agave-validator --version
+  207  sudo journalctl -u antegen-crank -f
+  208  python3 /home/sol/snapshot-finder.py   --snapshot_path /mnt/ledger/remote   --max_latency 150   --blacklist De73VMEEdMRu1GRfX6Y3bePxjzKbHuqfQPUQpZng35Mb
+  209  python3 /home/sol/snapshot-finder.py   --snapshot_path /mnt/ledger/remote --blacklist De73VMEEdMRu1GRfX6Y3bePxjzKbHuqfQPUQpZng35Mb
+  210  agave-install init v2.3.0
+  211  agave-install init v2.3.10
+  212  python3 /home/sol/snapshot-finder.py   --snapshot_path /mnt/ledger/remote
+  213  sudo journalctl -u antegen-crank -f
+  214  clear
+  215  sudo journalctl -u antegen-crank -f
+  216  clear
+  217  git clone --branch feat/geyser-3.1.9 https://github.com/wuwei-labs/antegen.git 
+  218  cd antegen
+  219  cargo build --release -p antegen-plugin
+  220  ls
+  221  cd target/release
+  222  ls
+  223  cp ./libantegen_plugin.so /home/sol/libantegen_plugin.so
+  224  cd /home/sol
+  225  ls
+  226  ls -la
+  227  which agave-validator
+  228  sudo rm -rf /home/sol/.local/share/solana/{*,.*}
+  229  which agave-validator
+  230  sh -c "$(curl -sSfL https://release.anza.xyz/v3.1.9/install)"
+  231  cargo install agave-validator
+  232  agave-validator --version
+  233  which agave-validator
+  234  agave-validator --version
+  235  sudo systemctl stop antegen-crank
+  236  sudo nano rpc-start.sh
+  237  nano rpc-v2.sh
+  238  which agave-validator
+  239  nano rpc-v2.sh
+  240  cd /etc/systemd
+  241  ls
+  242  cd system
+  243  ls
+  244  sudo nano antegen-crank.service
+  245  cd ..
+  246  cd !
+  247  cd ~
+  248  clear
+  249  ls
+  250  ls -la
+  251  chmod +x /home/sol/rpc-v2.sh
+  252  sudo systemctl restart daemon-reload
+  253  sudo systemctl daemon-reload
+  254  sudo nano rpc-v2.sh
+  255  sudo systemctl daemon-reload
+  256  clear
+  257  sudo journalctl -u antegen-crank -f
+  258  sudo rm -rf /mnt/ledger/{*,.*}
+  259  sudo journalctl -u antegen-crank -f
+  260  cat snapshot-finder.py
+  261  rm snapshot-finder.py
+  262  nano snapshot-finder.py
+  263  rm snapshot-finder.py
+  264  nano snapshot-finder.py
+  265  cat rpc-start.sh
+  266  sudo systemctl restart antegen-crank
+  267  agave-validator --ledger /mnt/ledger monitor
+  268  clear
+  269  sudo systemctl restart antegen-crank
+  270  agave-validator --ledger /mnt/ledger monitor
+  271  sudo rm -rf /mnt/ledger/{*,.*}
+  272  sudo systemctl restart antegen-crank
+  273  sudo systemctl stop antegen-crank
+  274  sudo nano rpc-start.sh
+  275  sudo systemctl daemon-reload
+  276  sudo systemctl restart antegen-crank
+  277  sudo systemctl status antegen-crank
+  278  sudo journalctl -u antegen-crank
+  279  sudo journalctl -u antegen-crank -R
+  280  sudo journalctl -u antegen-crank -r
+  281  sudo nano rpc-v2.sh
+  282  sudo systemctl restart antegen-crank
+  283  sudo systemctl status antegen-crank
+  284  clear
+  285  sudo journalctl -u antegen-crank -f
+  286  agave-validator --ledger /mnt/ledger monitor
+  287  sudo rm -rf /mnt/ledger/{*,.*}
+  288  sudo journalctl -u antegen-crank -f
+  289  sudo systemctl restart daemon-reload
+  290  sudo systemctl daemon-reload
+  291  sudo systemctl restart antegen-crank
+  292  df -h
+  293  sudo rm -rf /mnt/ledger/{*,.*}
+  294  sudo rm -rf /mnt/accounts/{*,.*}
+  295  sudo systemctl restart antegen-crank
+  296  df -h
+  297  sudo journalctl -u antegen-crank -f
+  298  agave-validator --ledger /mnt/ledger monitor
+  299  sudo systemctl daemon-reload
+  300  sudo systemctl restart antegen-crank
+  301  agave-validator --ledger /mnt/ledger monitor
+  302  sudo nano rpc-v2.sh
+  303  sudo journalctl -u antegen-crank -f
+  304  sudo journalctl -u antegen-crank -f | grep antegen
+  305  agave-validator --ledger /mnt/ledger monitor
+  306  sudo journalctl -u antegen-crank -f | grep antegen
+  307  sudo systemctl status antegen-crank
+  308  sudo journalctl -u antegen-crank -f | grep antegen
+  309  clear
+  310  sudo systemctl status antegen-crank
+  311  sudo journalctl -u antegen-crank -f | grep antegen
+  312  antegen worker get 0
+  313  tail -f solana-rpc.log
+  314  clear
+  315  tail -f solana-rpc.log
+  316  clear
+  317  ip
+  318  ip a
+  319  ls
+  320  cat CRNKaxMoyKs1hhzRRuBKj1mTrtYWY5qPsbhKWNz3cjaC.json
+  321  solana config get
+  322  antegen --help
+  323  antegen pool get
+  324  antegen pool get 0
+  325  antegen pool --help
+  326  antegen pool update --help
+  327  antegen pool update 0 --size 2
+  328  antegen pool get 0
+  329  tail -f solana-rpc.log
+  330  tail -f solana-rpc.log | grep geyser
+  331  cat solana-rpc.log | grep geyser
+  332  cat rpc-start.sh
+  333  sudo systemctl status antegen-crank
+  334  tail -f solana-rpc.log
+  335  rm solana-rpc.log
+  336  ls
+  337  cat solana-rpc.log
+  338  tail -f solana-rpc.log | grep geyser
+  339  tail -f solana-rpc.log
+  340  clear
+  341  tail -f solana-rpc.log
+  342  cat /home/sol/geyser-config.json
+  343  ls -la
+  344  tail -f solana-rpc.log
+  345  cargo install agave-validator@2.1.11
+  346  sh -c "$(curl -sSfL https://release.anza.xyz/v2.1.11/install)"
+  347  solana --version
+  348  cargo install agave-validator@2.1.11
+  349  agave-validator --version
+  350  agave-validator --help
+  351  tail -f solana-rpc.log
+  352  cargo uninstall agave-validator
+  353  clear
+  354  which agave-validator
+  355  agave-validator --version
+  356  clear
+  357  ./rpc-start.sh
+  358  which agave-validator
+  359  nano rpc-start.sh
+  360  ./rpc-start.sh
+  361  agave-validator --help
+  362  nano rpc-start.sh
+  363  ./rpc-start.sh
+  364  nano rpc-start.sh
+  365  ./rpc-start.sh
+  366  cat solana-rpc.log
+  367  sudo bash -c 'cat >> /etc/sysctl.conf << EOF
+  368  net.core.rmem_default=134217728
+  369  net.core.rmem_max=134217728
+  370  net.core.wmem_default=134217728
+  371  net.core.wmem_max=134217728
+  372  EOF'
+  373  sudo sysctl -p
+  374  ./rpc-start.sh
+  375  tail -f solana-rpc.log
+  376  clear
+  377  tail -f /home/sol/solana-rpc.log | grep --line-buffered "antegen_plugin"
+  378  solana-keygen --help
+  379  solana-keygen grind --starts-with SLY:1
+  380  cargo install agave-validator
+  381  sudo apt-get install libssl-dev libudev-dev pkg-config zlib1g-dev llvm clang cmake make libprotobuf-dev protobuf-compiler libclang-dev
+  382  cargo install agave-validator
+  383  which agave-validator
+  384  ls
+  385  mv SLYCFwMEkbtKJCp6HXaWi4DJPAazyKe1K26bPXtyzfn.json rpc-keypair.json
+  386  ls
+  387  pwd
+  388  curl -LO https://github.com/wuwei-labs/antegen/releases/download/v2.2.9/antegen-v2.2.9-x86_64-unknown-linux-gnu.tar.xz
+  389  ls
+  390  tar -xvf antegen-v2.2.9-x86_64-unknown-linux-gnu.tar.xz
+  391  ls
+  392  cd bin
+  393  ls
+  394  cd lib
+  395  antegen --help
+  396  ./antegen --help
+  397  cd ..
+  398  ls
+  399  rm antegen-v2.2.9-x86_64-unknown-linux-gnu.tar.xz
+  400  ls
+  401  rm -r bin
+  402  ls
+  403  cd lib
+  404  ls
+  405  cd ..
+  406  mv ./lib/libantegen_plugin.so .
+  407  ls
+  408  rm -r lib
+  409  ls
+  410  cat version.yml
+  411  rm version.yml
+  412  ls
+  413  nano geyser-config.json
+  414  nano rpc-start.sh
+  415  chmod +x /home/sol/rpc-start.sh
+  416  ls
+  417  ls -f
+  418  ls -h
+  419  ls -la
+  420  ./rpc-start.sh
+  421  nano rpc-start.sh
+  422  ./rpc-start.sh
+  423  ls
+  424  nano rpc-start.sh
+  425  ./rpc-start.sh
+  426  tail -f /home/sol/solana-rpc.log
+  427  nano rpc-start.sh
+  428  agave-validator --help
+  429  nano rpc-start.sh
+  430  ./rpc-start.sh
+  431  tail -f /home/sol/solana-rpc.log
+  432  cat /home/sol/solana-rpc.log
+  433  sudo nano /etc/systemd/system/sol.service
+  434  sudo systemctl daemon-reload
+  435  sudo mv /etc/systemd/system/sol.service /etc/systemd/system/antegen-crank.service
+  436  sudo systemctl daemon-reload
+  437  sudo systemctl enable antegen-crank
+  438  sudo systemctl start antegen-crank
+  439  sudo systemctl status antegen-crank
+  440  cat /home/sol/solana-rpc.log
+  441  sudo systemctl restart antegen-crank
+  442  sudo systemctl status antegen-crank
+  443  sudo nano /etc/systemd/system/sol.service
+  444  sudo nano /etc/systemd/system/antegen-crank.service
+  445  systemctl daemon-reload
+  446  sudo systemctl daemon-reload
+  447  sudo systemctl restart antegen-crank
+  448  sudo systemctl status antegen-crank
+  449  nano rpc-start.sh
+  450  sudo systemctl daemon-reload
+  451  sudo systemctl restart antegen-crank
+  452  sudo systemctl status antegen-crank
+  453  ls -la /home/sol/rpc-start.sh
+  454  head -1 /home/sol/rpc-start.sh
+  455  ls
+  456  rm solana-rpc.log
+  457  sudo systemctl restart antegen-crank
+  458  ls
+  459  sudo systemctl status antegen-crank
+  460  ./rpc-start.sh
+  461  which agave-validator
+  462  nano rpc-start.sh
+  463  sudo systemctl daemon-reload
+  464  sudo systemctl restart antegen-crank
+  465  sudo systemctl status antegen-crank
+  466  ls
+  467  tail -f solana-rpc.log
+  468  agave-validator --ledger /mnt/ledger monitor
+  469  clear
+  470  agave-validator --ledger /mnt/ledger monitor
+  471  clear
+  472  ./rpc-start.sh
+  473  sudo nano rpc-start.sh
+  474  ./rpc-start.sh
+  475  sudo systemctl status antegen-crank
+  476  sudo systemctl daemon-reload
+  477  sudo ps -aux | grep validator
+  478  sudo systemctl restart antegen-crank
+  479  sudo systemctl status antegen-crank
+  480  sudo nano /etc/systemd/system/antegen-crank.service
+  481  sudo systemctl daemon-reload
+  482  sudo systemctl restart antegen-crank
+  483  sudo nano rpc-start.sh
+  484  df -h
+  485  lsblk
+  486  sudo fallocate -l 32G /swapfile
+  487  chmod 600 /swapfile
+  488  sudo chmod 600 /swapfile
+  489  sudo mkswap /swapfile
+  490  sudo swapon /swapfile
+  491  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  492  sudo nano /etc/fstab
+  493  sudo systemctl daemon-reload
+  494  sudo systemctl restart antegen-crank
+  495  sudo systemctl status antegen-crank
+  496  sudo nano rpc-start.sh
+  497  sudo systemctl daemon-reload
+  498  sudo systemctl restart antegen-crank
+  499  sudo systemctl status antegen-crank
+  500  swapon --show
+  501  free -h
+  502  agave-validator --help
+  503  sudo systemct status antegen-crank
+  504  sudo systemctl status antegen-crank
+  505  sudo rpc-start.sh
+  506  sudo nano rpc-start.sh 
+  507  sudo systemctl daemon-reload
+  508  sudo systemctl restart antegen-crank
+  509  free -h
+  510  sudo systemctl status antegen-crank
+  511  sudo nano rpc-start.sh
+  512  sudo systemctl daemon-reload
+  513  sudo systemctl restart antegen-crank
+  514  sudo systemctl status antegen-crank
+  515  ls
+  516  ./bin/antegen --help
+  517  antegen --help
+  518  rm -r bin
+  519  antegen pool --help
+  520  antegen pool get
+  521  antegen pool get 0
+  522  antegen pool list
+  523  antegen pool rotate --help
+  524  antegen pool rotate 1
+  525  antegen worker get 0
+  526  antegen worker get 1
+  527  antegen pool rotate 1
+  528  antegen pool list
+  529  antegen pool rotate 0
+  530  antegen pool rotate --help
+  531  antegen pool rotate 1
+  532  sudo systemctl status antegen-crank
+  533  sudo systemctl stop antegen-crank
+  534  sudo nano rpc-start.sh
+  535  sudo systemctl daemon-reload
+  536  sudo systemctl start antegen-crank
+  537  sudo systemctl status antegen-crank
+  538  sudo systemctl stop antegen-crank
+  539  ./rpc-start.sh
+  540  ls
+  541  sudo nano rpc-start.sh
+  542  sudo systemctl daemon-reload
+  543  sudo systemctl start antegen-crank
+  544  sudo systemctl status antegen-crank
+  545  sudo systemctl restart antegen-crank
+  546  sudo systemctl status antegen-crank
+  547  sudo systemctl restart antegen-crank
+  548  sudo systemctl status antegen-crank
+  549  sudo systemctl daemon-reload
+  550  sudo systemctl restart antegen-cranke
+  551  clear
+  552  rpc-start.sh
+  553  ./rpc-start.sh
+  554  sudo systemctl daemon-reload
+  555  sudo systemctl restart antegen-crank
+  556  sudo systemctl status antegen-crank
+  557  ./rpc-start.sh
+  558  sudo systemctl daemon-reload
+  559  sudo systemctl restart antegen-crank
+  560  sudo systemctl status antegen-crank
+  561  clear
+  562  sudo systemctl status antegen-crank
+  563  sudo systemctl daemon-reload
+  564  sudo systemctl restart antegen-crank
+  565  sudo systemctl status antegen-crank
+  566  sudo systemctl restart antegen-crank
+  567  sudo journalctl -u antegen-crank -f | grep antegen
+  568  clear
+  569  sudo journalctl -u antegen-crank -f | grep antegen
+  570  clear
+  571  sudo journalctl -u antegen-crank -f | grep antegen
+  572  clear
+  573  df -h
+  574  sudo journalctl -u antegen-crank -f | grep antegen
+  575  ls
+  576  cat rpc-v2.sh
+  577  cat geyser-config.json
+  578  sudo journalctl -u antegen-crank -f | grep antegen
+  579  ps --aux | grep antegen
+  580  ps aux | grep antegen
+  581  sudo systemctl --type=service
+  582  sudo systemctl --type=service antegen-crank
+  583  sudo systemctl antegen-crank
+  584  sudo systemctl antegen-crank status
+  585  sudo systemctl status antegen-crank
+  586  sudo systemctl restart antegen-crank && sudo journalctl -u antegensudo systemctl antegen-crank status
+  587  sudo systemctl status antegen-crank
+  588  sudo systemctl restart antegen-crank
+  589  sudo journalctl -u antegen-crank -f | grep antegen
+  590  sudo journalctl -u antegen-crank -f
+  591  sudo systemctl status antegen-crank
+  592  cat /etc/systemd/system/antegen-crank.service
+  593  nano /etc/systemd/system/antegen-crank.service
+  594  sudo nano /etc/systemd/system/antegen-crank.service
+  595  sudo systemctl daemon-reload
+  596  sudo systemctl restart antegen-crank
+  597  sudo systemctl status antegen-crank
+  598  nano /etc/systemd/system/antegen-crank.service
+  599  sudo nano /etc/systemd/system/antegen-crank.service
+  600  sudo systemctl restart antegen-crank
+  601  sudo systemctl daemon-reload
+  602  sudo systemctl restart antegen-crank
+  603  sudo journalctl -u antegen-crank -f
+  604  sudo systemctl status antegen-crank
+  605  sudo journalctl -u antegen-crank -f
+  606  agave-validator --ledger /mnt/ledger monitor
+  607  sudo systemctl restart antegen-crank
+  608  agave-validator --ledger /mnt/ledger monitor
+  609  sudo journalctl -u antegen-crank -f
+  610  ls
+  611  cat rpc-v2.sh
+  612  agave-validator --version
+  613  sudo systemctl stop antegen-crank
+  614  agave-install --help
+  615  agave-install update
+  616  df -h
+  617  ncdu /
+  618  sudo apt update
+  619  df -h
+  620  ls
+  621  rm solana-rpc.log
+  622  df -h
+  623  sudo apt install ncdu
+  624  ncdu /
+  625  cat rpc-v2.log
+  626  ls
+  627  cat rpc-v2.sh
+  628  ncdu /
+  629  sudo truncate -s 0 /var/log/syslog
+  630  sudo truncate -s 0 /var/log/syslog.1
+  631  sudo rm -f /var/log/syslog.[0-9].gz
+  632  sudo journalctl --vacuum-size=2G
+  633  sudo systemctl restart rsyslog
+  634  df -h
+  635  ncdu /
+  636  agave-install update
+  637  agave-install update --help
+  638  agave-install --help
+  639  sh -c "$(curl -sSfL https://release.anza.xyz/v4.0.0/install)"
+  640  agave-install update
+  641  df -h
+  642  agave-validator --version
+  643  agave-validator --help
+  644  cargo install agave-validator
+  645  sudo nano rpc-v2.log
+  646  l
+  647  sudo nano rpc-v2.sh
+  648  sudo nano /etc/logrotate.d/agave-validator
+  649  sudo logrotate -d /etc/logrotate.d/agave-validator
+  650  touch /home/sol/log/agave-validator.log
+  651  sudo mkdir /home/sol/log
+  652  touch /home/sol/log/agave-validator.log
+  653  sudo touch /home/sol/log/agave-validator.log
+  654  sudo logrotate -d /etc/logrotate.d/agave-validator
+  655  ls
+  656  sudo nano rpc-v4.sh
+  657  sudo chmod +x /home/sol/rpc-v4.sh
+  658  ls
+  659  sudo nano /etc/systemd/system/antegen-crank.service
+  660  sudo systemctl daemon-reload
+  661  sudo systemctl enable antegen-crank.service
+  662  sudo systemctl restart antegen-crank.service
+  663  tail -f /home/sol/log/agave-validator.log
+  664  sudo systemctl status antegen-crank.service
+  665  cd /home/sol/log
+  666  ls
+  667  cat agave-validator.log
+  668  cd -
+  669  sudo journalctl -f antegen-crank.service
+  670  cat
+  671  cat /home/sol/log/agave-validator.log
+  672  sudo systemctl status antegen-crank.service
+  673  sudo journalctl -u antegen-crank -f
+  674  sudo journalctl -u antegen-crank
+  675  clear
+  676  sudo journalctl -u antegen-crank -f
+  677  df -h
+  678  sudo systemctl stop antegen-crank.service
+  679  sudo rm -rf /mnt/ledger/*
+  680  sudo rm -rf /mnt/accounts/*
+  681  df -h
+  682  sudo systemctl restart antegen-crank.service
+  683  sudo journalctl -u antegen-crank -f
+  684  agave-validator --ledger /mnt/ledger monitor
+  685  clear
+  686  agave-validator --ledger /mnt/ledger monitor
+  687  htop
+  688  clear
+  689  sudo journalctl -u antegen-crank -f
+  690  clear
+  691  iostat -x 2 5
+  692  clear
+  693  sudo journalctl -u antegen-crank -f
+  694  agave-validator --ledger /mnt/ledger monitor
+  695  sysctl net.core.rmem_max net.core.rmem_default net.core.wmem_max
+  696  sysctl net.core.wmem_default net.core.netdev_max_backlog
+  697  sudo journalctl -u antegen-crank -f
+  698  ip -br link
+  699  ethtool -S enp1s0f0 | grep -iE "drop|err|miss|discard|fifo|overrun|no_buffer"
+  700  ethtool -S enp1s0f1 | grep -iE "drop|err|miss|discard|fifo|overrun|no_buffer"
+  701  ethtool -S bond0 | grep -iE "drop|err|miss|discard|fifo|overrun|no_buffer"
+  702  clear
+  703  sudo journalctl -u antegen-crank -f
+  704  cd /home/sol
+  705  ls
+  706  ls -ha
+  707  ls -la
+  708  sudo chown sol:sol /home/sol/log
+  709  sudo chmod 755 /home/sol/log
+  710  ls -la
+  711  cd log
+  712  ls
+  713  ls -la
+  714  sudo rm /home/sol/log/agave-validator.log
+  715  ls
+  716  cd ..
+  717  clear
+  718  sudo journalctl -u antegen-crank -f
+  719  sudo systemctl stop antegen-crank.service
+  720  sudo nano /etc/systemd/system/antegen-crank.service
+  721  sudo systemctl daemon-reload
+  722  df -h
+  723  sudo rm -rf /mnt/accounts/*
+  724  sudo rm -rf /mnt/ledger/*
+  725  cargo install agave-validator@3.1.9
+  726  agave-validator --version
+  727  sudo systemctl restart antegen-crank.service
+  728  sudo journalctl -u antegen-crank -f
+  729  sudo systemctl daemon-reload
+  730  sudo nano /etc/systemd/system/antegen-crank.service
+  731  sudo systemctl restart antegen-crank.service
+  732  sudo systemctl status antegen-crank.service
+  733  tail -f /home/sol/log/agave-validator.log
+  734  agave-validator --ledger /mnt/ledger monitor
+  735  df -h
+  736  agave-validator --ledger /mnt/ledger monitor
+  737  tail -f /home/sol/log/agave-validator.log
+  738  sudo systemctl status antegen-crank.service
+  739  sudo systemctl restart antegen-crank.service
+  740  tail -f /home/sol/log/agave-validator.log
+  741  agave-validator --ledger /mnt/ledger monitor
+  742  sudo systemctl restart antegen-crank.service
+  743  agave-validator --ledger /mnt/ledger monitor
+  744  sudo systemctl restart antegen-crank.service
+  745  agave-validator --ledger /mnt/ledger monitor
+  746  clear
+  747  exit
+  748  df -h
+  749  sudo systemctl restart antegen-crank.service
+  750  agave-validator --ledger /mnt/ledger monitor
+  751  tail -f /home/sol/log/agave-validator.log
+  752  cat /home/sol/log/agave-validator.log | grep error
+  753  cat /home/sol/log/agave-validator.log | grep space
+  754  sudo rm -rf /mnt/ledger/*
+  755  sudo rm -rf /mnt/accounts/*
+  756  tail -f /home/sol/log/agave-validator.log
+  757  clear
+  758  agave-validator --ledger /mnt/ledger monitor
+  759  sudo systemctl restart antegen-crank.service
+  760  agave-validator --ledger /mnt/ledger monitor
+  761  tail -f /home/sol/log/agave-validator.log
+  762  clear
+  763  agave-validator --ledger /mnt/ledger monitor
+  764  agave-validator --ledger /mnt/ledger monitor
+  765  df -h
+  766  sudo systemctl stop antegen-crank.service
+  767  sudo rm -rf /mnt/ledger/*
+  768  sudo rm -rf /mnt/accounts/*
+  769  clear
+  770  sudo systemctl restart antegen-crank.service
+  771  agave-validator --ledger /mnt/ledger monitor
+  772  sudo systemctl restart antegen-crank.service
+  773  agave-validator --ledger /mnt/ledger monitor
+  774  sudo systemctl restart antegen-crank.service
+  775  ls
+  776  cd log
+  777  agave-validator --ledger /mnt/ledger monitor
+  778  df -h
+  779  agave-validator --ledger /mnt/ledger monitor
+  780  sudo systemctl restart antegen-crank.service
+  781  agave-validator --ledger /mnt/ledger monitor
+  782  agave-validator --ledger /mnt/ledger monitor
+  783  sudo rm -rf /mnt/accounts/*
+  784  sudo systemctl stop antegen-crank.service
+  785  sudo rm -rf /mnt/accounts/*
+  786  sudo rm -rf /mnt/ledger/*
+  787  sudo systemctl restart antegen-crank.service
+  788  agave-validator --ledger /mnt/ledger monitor
+  789  sudo systemctl restart antegen-crank.service
+  790  agave-validator --ledger /mnt/ledger monitor
+  791  clear
+  792  agave-validator --ledger /mnt/ledger monitor
+  793  sudo systemctl restart antegen-crank.service
+  794  agave-validator --ledger /mnt/ledger monitor
+  795  df -h
+  796  sudo systemctl stop antegen-crank.service
+  797  sudo rm -rf /mnt/ledger/*
+  798  sudo rm -rf /mnt/acounts/*
+  799  sudo systemctl restart antegen-crank.service
+  800  agave-validator --ledger /mnt/ledger monitor
+  801  df -h
+  802  agave-validator --ledger /mnt/ledger monitor
+  803  sudo rm -rf /mnt/accounts/*
+  804  sudo systemctl restart antegen-crank.service
+  805  agave-validator --ledger /mnt/ledger monitor
+  806  sudo systemctl restart antegen-crank.service
+  807  agave-validator --ledger /mnt/ledger monitor
+  808  sudo systemctl restart antegen-crank.service
+  809  agave-validator --ledger /mnt/ledger monitor
+  810  df -h
+  811  sudo rm -rf /mnt/accounts/* /mnt/ledger/*
+  812  sudo systemctl stop antegen-crank.service
+  813  sudo rm -rf /mnt/accounts/* /mnt/ledger/*
+  814  df -h
+  815  sudo systemctl restart antegen-crank.service
+  816  agave-validator --ledger /mnt/ledger monitor
+  817  sudo systemctl restart antegen-crank.service
+  818  ls
+  819  cat geyser-config.json
+  820  cat rpc-v2.sh
+  821  histroy
+  822  history
+  

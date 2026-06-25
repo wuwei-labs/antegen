@@ -41,14 +41,14 @@ pub fn handler(ctx: Context<PoolUpdate>, settings: PoolSettings) -> Result<()> {
 
     // Reallocate memory for the pool account
     let data_len: usize = 8 + size_of::<Pool>() + (settings.size as usize).checked_mul(size_of::<Pubkey>()).unwrap();
-    pool.to_account_info().realloc(data_len, false)?;
+    pool.to_account_info().resize(data_len)?;
 
     // If lamports are required to maintain rent-exemption, pay them
     let minimum_rent: u64 = Rent::get().unwrap().minimum_balance(data_len);
     if minimum_rent > pool.to_account_info().lamports() {
         transfer(
             CpiContext::new(
-                system_program.to_account_info(),
+                system_program.key(),
                 Transfer {
                     from: admin.to_account_info(),
                     to: pool.to_account_info(),

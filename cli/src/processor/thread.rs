@@ -7,6 +7,7 @@ use anchor_lang::{
 use antegen_thread_program::state::{SerializableInstruction, Thread, VersionedThread, ThreadSettings, Trigger};
 use antegen_utils::CrateInfo;
 use solana_sdk::{native_token::LAMPORTS_PER_SOL, pubkey::Pubkey};
+use std::str::FromStr;
 use crate::{client::Client, errors::CliError};
 
 pub fn crate_info(client: &Client) -> Result<(), CliError> {
@@ -123,7 +124,7 @@ pub fn memo_test(
     println!("Airdropped 1 SOL to thread: {}", thread_pubkey);
 
     let memo_ix = Instruction {
-        program_id: spl_memo::id(),
+        program_id: Pubkey::from_str("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr").unwrap(),
         data: "Hello, Thread!".as_bytes().to_vec(),
         accounts: vec![]
     };
