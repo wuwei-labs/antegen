@@ -1,10 +1,22 @@
 #!/bin/bash
 # agave-validator v4.x launch script (Antegen RPC worker).
 # v4 notes:
-#   - In-memory accounts index is the default; --enable-accounts-disk-index and
-#     --accounts-index-path were dropped (disk index deprecated in v4).
+#   - Accounts index is DISK-BACKED here (--accounts-index-limit minimal +
+#     --accounts-index-path). v4's in-memory default OOM'd this host's ~256 GB RAM
+#     on mainnet, so the index lives on the /mnt/accounts NVMe instead.
+#     To go back to the faster in-memory index (needs much more RAM), drop those
+#     two flags below.
+#   - Storage access is forced to mmap. v4's default ('file') reads account
+#     storages into ANONYMOUS RAM (non-reclaimable) -- on mainnet that hit ~212 GB
+#     anon and OOM-killed the validator during snapshot-load index generation
+#     (file-rss was 0 in the OOM dump). mmap maps the storages file-backed, so the
+#     kernel can reclaim them under pressure. This is the v3.1.9 default behavior.
 #   - Snapshot Direct-I/O is on by default in v4. If /mnt/accounts storage rejects
 #     O_DIRECT on snapshot load, add: --no-accounts-db-snapshots-direct-io
+#   - --full-rpc-api intentionally DROPPED. This node is a crank, not a public RPC.
+#     The plugin + antegen CLI only call getAccountInfo, getLatestBlockhash,
+#     simulateTransaction, sendTransaction -- all in the default RPC API. Re-add
+#     --full-rpc-api only if you also serve heavy RPC (getProgramAccounts, getBlock).
 #
 # NUMA: dual-socket host (2 nodes, ~128 GB each). Don't cpunodebind the
 # validator to one node -- the accounts working set outgrows 128 GB and agave
@@ -16,7 +28,6 @@ exec numactl --interleave=all /home/sol/.cargo/bin/agave-validator \
     --ledger /mnt/ledger \
     --accounts /mnt/accounts \
     --rpc-port 8899 \
-    --full-rpc-api \
     --only-known-rpc \
     --private-rpc \
     --gossip-port 8001 \
@@ -37,6 +48,9 @@ exec numactl --interleave=all /home/sol/.cargo/bin/agave-validator \
     --block-verification-method unified-scheduler \
     --unified-scheduler-handler-threads 12 \
     --accounts-db-cache-limit-mb 8192 \
+    --accounts-db-access-storages-method mmap \
+    --accounts-index-limit minimal \
+    --accounts-index-path /mnt/accounts/index \
     --skip-startup-ledger-verification \
     --geyser-plugin-config /home/sol/geyser-config.json \
     --log /home/sol/log/agave-validator.log

@@ -190,7 +190,12 @@ impl GeyserPlugin for AntegenPlugin {
     }
 
     fn account_data_snapshot_notifications_enabled(&self) -> bool {
-        true
+        // Don't receive account notifications while loading from snapshot.
+        // update_account() ignores startup accounts (`if !is_startup`), so returning
+        // true here just makes agave materialize and stream every account on the
+        // chain to us during snapshot load, only for us to drop it -- a huge,
+        // pointless memory spike that OOM-killed the validator at load time on v4.
+        false
     }
 }
 

@@ -2,9 +2,9 @@
 Description=Antegen Crank
 After=network-online.target
 Wants=network-online.target
-# Don't start until the data drives AND hugepage pools are mounted --
-# agave dies instantly if /mnt/* isn't there yet at boot.
-RequiresMountsFor=/mnt/accounts /mnt/ledger /mnt/gigantic
+# Don't start until the data drives are mounted -- agave dies instantly if
+# /mnt/ledger or /mnt/accounts isn't there yet at boot.
+RequiresMountsFor=/mnt/accounts /mnt/ledger
 # Never give up after repeated fast failures (pairs with Restart=always).
 StartLimitIntervalSec=0
 

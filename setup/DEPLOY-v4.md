@@ -12,7 +12,6 @@ Run as user `sol` unless a step says `sudo`. Target layout:
 | `/mnt/ledger` | ledger (fast NVMe) |
 | `/mnt/accounts` | accounts (fast NVMe) |
 | `/mnt/hugepages` | 2 MB hugetlbfs pool (RAM-backed) |
-| `/mnt/gigantic` | 1 GB hugetlbfs pool (RAM-backed) |
 
 > **Prerequisite:** the `feat/geyser-4.0.2` branch must exist with the geyser interface
 > bumped to v4 (`agave-geyser-plugin-interface = "=4.0.x"` in the workspace
@@ -66,7 +65,7 @@ sudo mount /dev/nvme2n1 /mnt/accounts
 sudo chown -R sol:sol /mnt/ledger /mnt/accounts
 
 # 64G swap file on the 500GB OS disk (/ is already there).
-# Cushion for the in-memory accounts-index startup spike — NOT usable capacity.
+# Cushion for memory spikes — NOT usable capacity (low swappiness, tuning step 4).
 # Keep low swappiness (tuning step 4) and leave ~100GB+ free on the OS disk for logs.
 sudo fallocate -l 64G /swapfile
 sudo chmod 600 /swapfile
@@ -74,10 +73,10 @@ sudo mkswap /swapfile
 sudo swapon /swapfile
 ```
 
-> **`/mnt/accounts` is always required.** In-memory index only moves the accounts
-> *index* into RAM — the account *data* (AccountsDb storages) still lives on this disk.
-> Provision it on fast NVMe regardless. If in-memory index proves unstable or RAM-tight
-> (see step 8 fallback), the disk-backed index reuses this same volume:
+> **`/mnt/accounts` holds both the account data and (by default here) the index.**
+> The account *data* (AccountsDb storages) always lives on this disk. This setup also
+> puts the accounts *index* here (`/mnt/accounts/index`, disk-backed) because the v4
+> in-memory index OOM'd ~256 GB RAM on mainnet — see step 8. Create the index dir now:
 > `mkdir -p /mnt/accounts/index && sudo chown sol:sol /mnt/accounts/index`
 
 Persist the mounts in `/etc/fstab`. Get the UUIDs with `blkid` (or
@@ -102,63 +101,61 @@ sudo mount -a        # must return with no errors
 swapon --show        # confirms /swapfile active
 ```
 
-## 1b. Hugepages (2 MB + 1 GB) & NUMA
+## 1b. Hugepages (2 MB only) & NUMA
 
-Reserve the hugepage pools, then mount them. **1 GB ("gigantic") pages must be
-reserved at boot** — the kernel can't find contiguous 1 GB blocks at runtime — so
-they go on the kernel command line. 2 MB pages could be set live, but doing both at
-boot is simplest and survives reboots.
+Reserve the 2 MB hugepage pool, then mount it. Hugepages set at boot survive reboots.
 
-```bash
-# Confirm the CPU supports 1 GB pages (non-zero = supported; 0 = drop the 1G pool).
-grep -c pdpe1gb /proc/cpuinfo
+> **No 1 GB ("gigantic") pool with a disk-backed index.** The earlier setup reserved
+> 26 × 1 GB pages (~26 GB) for the accounts index — but with the **disk-backed index**
+> (§8) agave never uses them, so that 26 GB is locked away from normal allocation and
+> made the validator OOM *sooner* during snapshot load (it died at ~230 GB on a 256 GB
+> box). So **don't reserve the 1 GB pool here.** Only reintroduce it if you switch to
+> an **in-memory** index on a much-larger-RAM host and explicitly back the index with
+> hugepages. Keep the small 2 MB pool — agave uses a few hundred MB of it.
+
+Edit `/etc/default/grub`, append to `GRUB_CMDLINE_LINUX_DEFAULT` **inside the quotes**:
+
+```
+GRUB_CMDLINE_LINUX_DEFAULT="hugepagesz=2M hugepages=128 default_hugepagesz=2M nvme_core.default_ps_max_latency_us=0"
 ```
 
-Reserve at boot — edit `/etc/default/grub`, append to `GRUB_CMDLINE_LINUX_DEFAULT`
-**inside the quotes** (each `hugepages=N` binds to the `hugepagesz=` before it):
-
-```
-GRUB_CMDLINE_LINUX_DEFAULT="... hugepagesz=2M hugepages=128 hugepagesz=1G hugepages=26 default_hugepagesz=2M nvme_core.default_ps_max_latency_us=0"
-```
-
-`nvme_core.default_ps_max_latency_us=0` disables NVMe power-saving for consistent
-ledger/accounts latency. On **AMD EPYC** hosts (`grep -m1 vendor_id /proc/cpuinfo` →
-`AuthenticAMD`) also add `amd_pstate=passive` to pair with the `performance` governor.
-Do **not** add PoH core-isolation params (`isolcpus`/`nohz_full`/
-`--experimental-poh-pinned-cpu-core`) on this node — see the PoH note in §4.
+`nvme_core.default_ps_max_latency_us=0` disables NVMe power-saving (APST) for
+consistent ledger/accounts latency. On **AMD** hosts (`grep -m1 vendor_id
+/proc/cpuinfo` → `AuthenticAMD`) also add `amd_pstate=passive` to pair with the
+`performance` governor. Do **not** add PoH core-isolation params
+(`isolcpus`/`nohz_full`/`--experimental-poh-pinned-cpu-core`) on this node — see §4.
 
 ```bash
 sudo update-grub        # RHEL/rocky: sudo grub2-mkconfig -o /boot/grub2/grub.cfg
 sudo reboot
 ```
 
-After reboot, verify the pools allocated (and, on a dual-socket box, that the 1 GB
-pages split across NUMA nodes):
+After reboot, verify:
 
 ```bash
-cat /proc/cmdline                                                   # tokens present
-cat /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages          # 128
-cat /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages       # 26
-cat /sys/devices/system/node/node*/hugepages/hugepages-1048576kB/nr_hugepages  # ~13/13
+cat /proc/cmdline | tr ' ' '\n' | grep -E 'huge|nvme|pstate'    # 2M present, NO 1G
+cat /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages      # 128
+cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_driver         # amd-pstate (AMD)
+cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor       # performance
 ```
 
-Mount the pools and persist in `/etc/fstab`:
+Mount the 2 MB pool and persist in `/etc/fstab`:
 
 ```bash
-sudo mkdir -p /mnt/hugepages /mnt/gigantic
-sudo mount -t hugetlbfs -o pagesize=2M,min_size=228589568    none /mnt/hugepages
-sudo mount -t hugetlbfs -o pagesize=1G,min_size=27917287424  none /mnt/gigantic
+sudo mkdir -p /mnt/hugepages
+sudo mount -t hugetlbfs -o pagesize=2M,min_size=228589568 none /mnt/hugepages
 ```
 
 ```fstab
-# /etc/fstab — append (min_size must equal the bytes the validator reserves)
-none  /mnt/hugepages  hugetlbfs  pagesize=2M,min_size=228589568    0  0
-none  /mnt/gigantic   hugetlbfs  pagesize=1G,min_size=27917287424  0  0
+# /etc/fstab — append
+none  /mnt/hugepages  hugetlbfs  pagesize=2M,min_size=228589568  0  0
 ```
 
 > `min_size` reserves those bytes at mount time, so the matching hugepages **must
 > already be allocated** (the GRUB step above) or the mount fails with
-> `Cannot allocate memory`. `228589568 / 2M = 109` pages; `27917287424 / 1G = 26`.
+> `Cannot allocate memory`. `228589568 / 2M = 109` pages (of the 128 reserved).
+> The systemd unit's `RequiresMountsFor` must list only `/mnt/accounts /mnt/ledger`
+> (no `/mnt/gigantic`) — see §9.
 
 **NUMA** (dual-socket hosts): don't `numactl --cpunodebind` the validator to one node
 — its accounts working set outgrows a single node's RAM and it wants all cores.
@@ -205,8 +202,8 @@ There is **no official "online tuner"** for agave. Apply the community tuning fr
   (`nofile` and `memlock` = `2000000`).
 - **CPU**: governor `performance`, enable Intel/AMD boost.
 - **Memory**: disable Transparent Huge Pages, KSM, and NUMA balancing
-  (`kernel.numa_balancing=0`). Hugepages (2 MB + 1 GB) and NUMA interleave are set up
-  in **§1b**.
+  (`kernel.numa_balancing=0`). The 2 MB hugepage pool and NUMA interleave are set up
+  in **§1b** (no 1 GB pool — see that section).
 - **NVMe** → `/etc/udev/rules.d/60-nvme-scheduler.rules`: I/O scheduler `none`,
   read-ahead `0`.
 - **NIC** → ring buffers to hardware max + interrupt coalescing off (fewer drops /
@@ -263,13 +260,20 @@ solana address && solana balance             # fund the new identity if needed
 
 ## 6. Build Antegen from source (plugin + CLI)
 
-Clone the v4 branch and build both the geyser plugin and the `antegen` CLI on this
-host:
+Clone the v4 branch. **Before building, confirm the memory-critical plugin setting:**
+
+> **Required for v4 memory.** `account_data_snapshot_notifications_enabled()` in
+> `plugin/src/plugin.rs` must return **`false`**. With it `true`, agave streams the
+> full data of *every* account on the chain to the plugin during snapshot load — which
+> the plugin discards (`update_account` skips `is_startup`) — a huge anonymous-memory
+> spike that OOM-killed the validator at load on a 256 GB host. The v4 branch should
+> already carry this; verify it before building.
 
 ```bash
 cd /home/sol
 git clone --branch feat/geyser-4.0.2 https://github.com/wuwei-labs/antegen.git
 cd antegen
+grep -A1 'fn account_data_snapshot_notifications_enabled' plugin/src/plugin.rs   # expect: false
 cargo build --release -p antegen-plugin -p antegen-cli
 
 # Install the built artifacts
@@ -306,23 +310,36 @@ chmod +x /home/sol/rpc.sh
 mkdir -p /home/sol/log && chown sol:sol /home/sol/log
 ```
 
-`setup/rpc.sh` is already v4-ready: `numactl --interleave=all` (NUMA, §1b),
-in-memory accounts index (no `--*-disk-index` flags), `unified-scheduler`, geyser
-plugin config, log to `/home/sol/log`. If
-`/mnt/accounts` storage rejects O_DIRECT on snapshot load, add
-`--no-accounts-db-snapshots-direct-io` (commented in the script).
+`setup/rpc.sh` is already v4-ready and tuned for **low memory on 256 GB** (see the
+memory note below): `numactl --interleave=all` (NUMA, §1b), **mmap storage access**
+(`--accounts-db-access-storages-method mmap`), **disk-backed accounts index**
+(`--accounts-index-limit minimal` + `--accounts-index-path /mnt/accounts/index`),
+**no `--full-rpc-api`** (crank-only RPC surface), `unified-scheduler`, geyser plugin
+config, log to `/home/sol/log`. If `/mnt/accounts` storage rejects O_DIRECT on
+snapshot load, add `--no-accounts-db-snapshots-direct-io` (commented in the script).
 
-**Fallback to disk-backed index** (if in-memory causes OOM / instability): add these
-two flags to `rpc.sh` and restart — uses the `/mnt/accounts/index` dir from step 1:
+> **v4 memory on 256 GB — four things, in order of impact.** v4 OOM-killed this host
+> at snapshot load (212 GB anon, `file-rss:0`). The fixes:
+> 1. **Plugin** `account_data_snapshot_notifications_enabled() → false` (§6) — stops
+>    agave streaming every account to the plugin at load. The keystone.
+> 2. **`--accounts-db-access-storages-method mmap`** — v4's default (`file`) reads
+>    account storages into *anonymous* RAM (non-reclaimable); mmap makes them
+>    file-backed/reclaimable. This was the bulk of the 212 GB anon.
+> 3. **No 1 GB hugepages** (§1b) — reclaims ~26 GB the disk-index build never uses.
+> 4. **`--accounts-index-limit minimal`** — keeps the index on the `/mnt/accounts`
+>    NVMe (mmap'd bucket map) instead of fully in RAM. Create the dir first:
+>    `mkdir -p /mnt/accounts/index && sudo chown sol:sol /mnt/accounts/index`.
+>
+> Note: `minimal` is [deprecated on agave master](https://github.com/anza-xyz/agave/blob/master/CHANGELOG.md)
+> and 256 GB is the [documented floor](https://docs.anza.xyz/operations/requirements)
+> for a mainnet full-RPC node — this config buys runway, not forever. Long term:
+> 512 GB RAM, or keep this node crank-only (no heavy RPC).
 
-```
-    --accounts-index-limit minimal \
-    --accounts-index-path /mnt/accounts/index \
-```
-
-(`--accounts-index-limit minimal` is the v4 replacement for the removed
-`--enable-accounts-disk-index`; the account data on `/mnt/accounts` is unaffected
-either way.)
+**Optional — switch back to in-memory index** (faster, but needs *much* more RAM than
+256 GB on mainnet): remove the two `--accounts-index-*` lines from `rpc.sh` and restart.
+Only do this on a high-RAM host and watch `free -h` available + swap during the startup
+index build. (`--accounts-index-limit minimal` is the v4 replacement for the removed
+`--enable-accounts-disk-index`; account data on `/mnt/accounts` is unaffected either way.)
 
 ## 9. systemd service
 
@@ -337,8 +354,8 @@ sudo systemctl enable antegen-crank.service
 ```
 
 Key settings baked into the unit:
-- `RequiresMountsFor=/mnt/accounts /mnt/ledger /mnt/gigantic` — won't start before the
-  data drives and the 1 GB hugepage pool (§1b) are mounted.
+- `RequiresMountsFor=/mnt/accounts /mnt/ledger` — won't start before the data drives
+  are mounted. (No `/mnt/gigantic` — the 1 GB pool was dropped in §1b.)
 - `LimitNOFILE=2000000`, `LimitMEMLOCK=2000000000`, `TasksMax=infinity`,
   `LimitNPROC=infinity` — fd / memlock / thread headroom.
 - `AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_BPF CAP_PERFMON` — **v4 XDP**.
@@ -396,10 +413,11 @@ cat /proc/$(pgrep -f agave-validator)/limits | grep -E 'open files|locked memory
 - **Reset state** (reclaim disk / clean restart):
   `sudo systemctl stop antegen-crank.service && sudo rm -rf /mnt/ledger/* /mnt/accounts/* && sudo systemctl start antegen-crank.service`
 - **Pool**: `antegen pool get 0`, `antegen pool rotate <id>` as needed.
-- **v4 flag changes from v3.1.9**: in-memory accounts index is default
-  (`--enable-accounts-disk-index` deprecated, `--disable-accounts-disk-index`
-  removed — use `--accounts-index-limit minimal` for disk-backed). Snapshot Direct-I/O
-  on by default. Removed flags we don't use: `--monitor`, `--use-quic`/`--use-udp`,
-  `--tpu-disable-quic`/`--tpu-enable-udp`,
+- **v4 flag changes from v3.1.9**: v4 makes the **in-memory** accounts index the
+  default (`--enable-accounts-disk-index` deprecated, `--disable-accounts-disk-index`
+  removed). We override back to **disk-backed** via `--accounts-index-limit minimal`
+  + `--accounts-index-path` because in-memory OOM'd 256 GB on mainnet. Snapshot
+  Direct-I/O on by default. Removed flags we don't use: `--monitor`,
+  `--use-quic`/`--use-udp`, `--tpu-disable-quic`/`--tpu-enable-udp`,
   `--block-verification-method blockstore-processor`.
 ```
