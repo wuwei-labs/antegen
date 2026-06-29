@@ -34,6 +34,18 @@ sudo apt install -y libssl-dev libudev-dev pkg-config zlib1g-dev llvm clang \
 
 Switch to the service user for everything below: `sudo -iu sol`.
 
+Clone the repo now — later steps copy config files (`rpc.sh`, `nic-tune.sh`, the
+systemd unit, sysctl/limits drop-ins) straight out of `/home/sol/antegen/setup/`, and
+§6 builds the plugin + CLI from it:
+
+```bash
+cd /home/sol
+git clone --branch feat/geyser-4.0.2 https://github.com/wuwei-labs/antegen.git
+```
+
+> All `cp /home/sol/antegen/setup/…` commands below assume this clone. Pull the latest
+> before deploying if the branch has moved: `git -C /home/sol/antegen pull`.
+
 ## 1. Provision storage
 
 Disk layout for this host (1× 500GB + 2× 4TB NVMe):
@@ -183,6 +195,23 @@ agave-validator --version                     # expect 4.0.x
 whatever version actually resolves on the host. `cargo install agave-validator@3.1.9`
 re-installs the old binary if rollback is ever needed.)
 
+**Install `perf-libs` next to the binary (required for the PoH gate).** `cargo install`
+builds only the bare binary — it does **not** include `libpoh-simd.so` (the SIMD PoH
+accelerator). Without it the validator logs `Unable to load "libpoh-simd.so"` and its
+single-core PoH rate can fall under the 10M h/s gate, so it refuses to start. The
+official release installer ships `perf-libs`; run it once to fetch them, then copy the
+dir next to the cargo binary (agave looks for `<dir-of-binary>/perf-libs/`):
+
+```bash
+sh -c "$(curl -sSfL https://release.anza.xyz/v4.0.2/install)"   # populates perf-libs
+cp -r ~/.local/share/solana/install/active_release/bin/perf-libs ~/.cargo/bin/
+ls ~/.cargo/bin/perf-libs/libpoh-simd.so                        # confirm present
+```
+
+(If you instead point `rpc.sh` at the installer binary directly —
+`~/.local/share/solana/install/active_release/bin/agave-validator` — perf-libs are
+already alongside it and no copy is needed.)
+
 ## 4. Host tuning (community tuner)
 
 There is **no official "online tuner"** for agave. Apply the community tuning from
@@ -198,9 +227,13 @@ There is **no official "online tuner"** for agave. Apply the community tuning fr
     `sudo sed -i '/fs.xfs.xfssyncd_centisecs/d' /etc/sysctl.d/21-agave-validator.conf`
 - **File limits** → install the repo drop-in (covers interactive `sol` sessions;
   the systemd unit sets its own limits for the service):
-  `sudo cp setup/90-solana-nofiles.conf /etc/security/limits.d/90-solana-nofiles.conf`
+  `sudo cp /home/sol/antegen/setup/90-solana-nofiles.conf /etc/security/limits.d/90-solana-nofiles.conf`
   (`nofile` and `memlock` = `2000000`).
-- **CPU**: governor `performance`, enable Intel/AMD boost.
+- **CPU**: governor `performance`, enable Intel/AMD boost. **Critical for the PoH
+  startup gate** — agave benchmarks single-core SHA-256 at startup and refuses to run
+  if it's below the 10M h/s cluster target; under `schedutil` the core clocks down and
+  fails the gate. The unit also pins `performance` as an `ExecStartPre` (§9) so it's
+  guaranteed at benchmark time even if a reboot reset the governor.
 - **Memory**: disable Transparent Huge Pages, KSM, and NUMA balancing
   (`kernel.numa_balancing=0`). The 2 MB hugepage pool and NUMA interleave are set up
   in **§1b** (no 1 GB pool — see that section).
@@ -212,7 +245,7 @@ There is **no official "online tuner"** for agave. Apply the community tuning fr
   `setup/nic-tune.sh`, run as an `ExecStartPre` of the validator unit (§9) so it
   re-applies on every start — no separate service needed:
   ```bash
-  sudo cp setup/nic-tune.sh /usr/local/bin/nic-tune.sh && sudo chmod +x /usr/local/bin/nic-tune.sh
+  sudo cp /home/sol/antegen/setup/nic-tune.sh /usr/local/bin/nic-tune.sh && sudo chmod +x /usr/local/bin/nic-tune.sh
   sudo systemctl disable --now irqbalance     # so IRQ affinity sticks
   sudo /usr/local/bin/nic-tune.sh             # apply now (or just (re)start the unit)
   ```
@@ -260,23 +293,21 @@ solana address && solana balance             # fund the new identity if needed
 
 ## 6. Build Antegen from source (plugin + CLI)
 
-Clone the v4 branch. **Before building, confirm the memory-critical plugin setting:**
+Build the plugin and `antegen` CLI from the repo cloned in §0. **The branch already
+carries every fix in this guide** — the plugin memory filter, `rpc.sh`, the systemd
+unit, and the tuning drop-ins — so there's nothing to edit here; just build.
 
-> **Required for v4 memory.** `plugin/src/plugin.rs` `update_account()` must drop
-> irrelevant accounts **before** spawning a task, during snapshot load:
-> `if is_startup && event.is_err() { return Ok(()); }`. Without it, agave streams every
-> account on the chain at load and the plugin spawns a task per account — a huge
-> anonymous-memory spike that OOM-killed the validator at load on a 256 GB host. Note
-> `account_data_snapshot_notifications_enabled()` must stay **`true`** — those snapshot
-> notifications are how the observer backfills threads that already exist on-chain
-> (otherwise a cron-triggered thread that never changes its account would never crank).
-> The v4 branch should already carry this; verify before building.
+> **Context (already in the branch, no action needed).** `plugin/src/plugin.rs`
+> `update_account()` drops irrelevant accounts before spawning a task during snapshot
+> load (`if is_startup && event.is_err()`). Without that, agave streams every account
+> on the chain at load and the plugin spawns a task per account — the anonymous-memory
+> spike that OOM-killed the validator at load on a 256 GB host.
+> `account_data_snapshot_notifications_enabled()` stays **`true`** so the observer can
+> backfill threads that already exist on-chain (a cron-triggered thread that never
+> changes its account would otherwise never crank).
 
 ```bash
-cd /home/sol
-git clone --branch feat/geyser-4.0.2 https://github.com/wuwei-labs/antegen.git
-cd antegen
-grep -A8 'let event = AccountUpdateEvent::try_from' plugin/src/plugin.rs   # expect the is_startup && event.is_err() guard
+cd /home/sol/antegen                                              # cloned in §0
 cargo build --release -p antegen-plugin -p antegen-cli
 
 # Install the built artifacts
@@ -288,7 +319,7 @@ antegen --version
 Place and edit the geyser config:
 
 ```bash
-cp setup/geyser-config.json /home/sol/geyser-config.json
+cp /home/sol/antegen/setup/geyser-config.json /home/sol/geyser-config.json
 ```
 
 Edit `/home/sol/geyser-config.json` so `keypath` points at the reused CRNK worker
@@ -308,7 +339,7 @@ antegen worker get 0                          # confirm the existing worker reso
 Copy the v4 launch script and make it executable:
 
 ```bash
-cp setup/rpc.sh /home/sol/rpc.sh
+cp /home/sol/antegen/setup/rpc.sh /home/sol/rpc.sh
 chmod +x /home/sol/rpc.sh
 mkdir -p /home/sol/log && chown sol:sol /home/sol/log
 ```
@@ -350,8 +381,8 @@ Install the repo unit (don't hand-write it — `setup/antegen-crank.service` car
 all the hardening) plus the NIC tuning script it calls:
 
 ```bash
-sudo cp setup/nic-tune.sh /usr/local/bin/nic-tune.sh && sudo chmod +x /usr/local/bin/nic-tune.sh
-sudo cp setup/antegen-crank.service /etc/systemd/system/antegen-crank.service
+sudo cp /home/sol/antegen/setup/nic-tune.sh /usr/local/bin/nic-tune.sh && sudo chmod +x /usr/local/bin/nic-tune.sh
+sudo cp /home/sol/antegen/setup/antegen-crank.service /etc/systemd/system/antegen-crank.service
 sudo systemctl daemon-reload
 sudo systemctl enable antegen-crank.service
 ```
@@ -362,6 +393,9 @@ Key settings baked into the unit:
 - `LimitNOFILE=2000000`, `LimitMEMLOCK=2000000000`, `TasksMax=infinity`,
   `LimitNPROC=infinity` — fd / memlock / thread headroom.
 - `AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_BPF CAP_PERFMON` — **v4 XDP**.
+- `ExecStartPre=…echo performance…scaling_governor` — pins all cores to the
+  performance governor before start so the PoH single-core gate (§4) isn't measured
+  under a clocked-down `schedutil`.
 - `ExecStartPre=-+/usr/local/bin/nic-tune.sh` — applies NIC tuning (§4) as root on
   every start; `-` so a NIC hiccup never blocks the validator.
 - `Restart=always` + `StartLimitIntervalSec=0` — never give up restarting.
@@ -378,8 +412,27 @@ Verify the running process got the limits after first start (§11):
 cat /proc/$(pgrep -f agave-validator)/limits | grep -E 'open files|locked memory'
 ```
 
-Optional log rotation → `/etc/logrotate.d/agave-validator` for
-`/home/sol/log/agave-validator.log`.
+### Log rotation
+
+The validator logs to `/home/sol/log/agave-validator.log` on the root partition,
+which is **separate** from `--limit-ledger-size` — nothing caps it by default, so on
+a small `/` it will fill the disk. Install the shipped config:
+
+```bash
+sudo cp setup/logrotate-agave-validator /etc/logrotate.d/agave-validator
+sudo logrotate -d /etc/logrotate.d/agave-validator   # dry-run: expect no errors
+sudo logrotate -f /etc/logrotate.d/agave-validator   # force one rotation
+ls -lh /home/sol/log/                                # see .1 / .gz appear, live log small
+```
+
+Tuned for a small `/` (`rotate 2` + `maxsize 2G` ≈ 2 days, ~4.5G worst case). It uses
+`copytruncate` because agave only reopens its log on `SIGUSR1`; a plain rename would
+leave the process writing to a deleted inode (disk fills via a handle `ls` can't see —
+check with `sudo lsof -p $(pgrep -f agave-validator) | grep 'log.*(deleted)'`).
+
+`maxsize` only triggers when logrotate runs (`logrotate.timer`, daily by default). If
+the log gains ≫2G/day, add an hourly logrotate timer so the cap is enforced between
+daily runs. Confirm the timer is live: `systemctl list-timers 'logrotate*'`.
 
 ## 10. (Optional) Snapshot bootstrap
 

@@ -13,6 +13,12 @@ Type=simple
 User=sol
 Group=sol
 
+# Pin all cores to the performance governor before start. The PoH startup gate
+# benchmarks single-core SHA-256; under schedutil the core clocks down and the
+# rate drops below the 10M h/s cluster target, so the validator refuses to start.
+# '+' runs as root despite User=sol; '-' so a CPU without cpufreq never blocks start.
+ExecStartPre=-+/bin/sh -c 'echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor'
+
 # Tune the NICs (ring buffers + coalescing) before the validator takes traffic.
 # '+' runs it as root despite User=sol; '-' means a NIC hiccup never blocks start.
 # The script is idempotent and skips work already done (no needless link flap).

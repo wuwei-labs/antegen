@@ -13,22 +13,15 @@
 #     kernel can reclaim them under pressure. This is the v3.1.9 default behavior.
 #   - Snapshot Direct-I/O is on by default in v4. If /mnt/accounts storage rejects
 #     O_DIRECT on snapshot load, add: --no-accounts-db-snapshots-direct-io
-#   - --full-rpc-api intentionally DROPPED. This node is a crank, not a public RPC.
-#     The plugin + antegen CLI only call getAccountInfo, getLatestBlockhash,
-#     simulateTransaction, sendTransaction -- all in the default RPC API. Re-add
-#     --full-rpc-api only if you also serve heavy RPC (getProgramAccounts, getBlock).
 #
-# NUMA: dual-socket host (2 nodes, ~128 GB each). Don't cpunodebind the
-# validator to one node -- the accounts working set outgrows 128 GB and agave
-# wants all cores. Interleave memory across both nodes instead, so neither node
-# fills and memory bandwidth stays balanced.
-exec numactl --interleave=all /home/sol/.cargo/bin/agave-validator \
+exec /home/sol/.cargo/bin/agave-validator \
     --identity /home/sol/rpc-keypair.json \
     --no-voting \
     --ledger /mnt/ledger \
     --accounts /mnt/accounts \
     --rpc-port 8899 \
     --only-known-rpc \
+    --full-rpc-api \
     --private-rpc \
     --gossip-port 8001 \
     --dynamic-port-range 8000-8025 \

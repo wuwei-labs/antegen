@@ -1,0 +1,31 @@
+# /etc/logrotate.d/agave-validator
+#
+# Bounds the agave-validator log so it can't fill the root disk on the crank node.
+# Tuned for a small `/` (logs live at /home/sol/log on the root partition).
+#
+# Worst case: live <=2G + .1 <=2G + .2.gz (~0.2-0.4G) ~= 4.5G total.
+#
+# Method: copytruncate. The validator holds the log file open and only reopens it
+# on SIGUSR1, so a plain rename would leave agave writing to the old (deleted)
+# inode -> disk fills via a handle `ls` can't see. copytruncate sidesteps that
+# without depending on the signal landing. (If you prefer rename + reopen instead,
+# drop `copytruncate` and add a `postrotate` that runs
+# `systemctl kill -s USR1 antegen-crank.service`.)
+#
+# maxsize is the real guard: logrotate.timer fires daily, but `maxsize 2G` makes
+# it rotate early on a busy day. If the log gains >>2G/day, add an hourly
+# logrotate timer so the cap is actually enforced between daily runs.
+
+sudo tee /etc/logrotate.d/agave-validator >/dev/null <<'EOF'
+/home/sol/log/agave-validator.log {
+    daily
+    rotate 2
+    maxsize 2G
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su sol sol
+}
+EOF
