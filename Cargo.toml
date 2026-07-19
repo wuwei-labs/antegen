@@ -60,7 +60,7 @@ anchor-spl = { version = "1.0.2", features = ["mint", "token"] }
 
 actix-cors = { version = "0.6.4" }
 actix-web = { version = "4.3.1" }
-agave-geyser-plugin-interface = { version = "=4.0.2" }
+agave-geyser-plugin-interface = { version = "=4.1.2" }
 anyhow = { version = "1.0.94" }
 async_once = { version = "0.2.6" }
 async-trait = { version = "0.1.83" }
