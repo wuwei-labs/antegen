@@ -31,7 +31,7 @@ Restart=always
 RestartSec=5
 
 # File descriptor limit -- Solana needs a very high limit (matches
-# fs.nr_open=2000000 in 21-agave-validator.conf and the solana-rpc guide).
+# fs.nr_open=2000000 in the tuned 'solana' profile and the solana-rpc guide).
 LimitNOFILE=2000000
 
 # Thread cap -- agave spawns hundreds of threads; systemd's default TasksMax

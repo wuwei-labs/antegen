@@ -185,15 +185,25 @@ rustup component add rustfmt
 
 ## 3. Install agave v4
 
+> **Version requirement — must be ≥ 4.1.2 (Alpenglow).** A `4.0.0`-era build
+> **crash-loops** on current mainnet: `solReplayStage` panics at `replay_stage.rs:1818`
+> crossing the Alpenglow consensus migration, so the node restarts → replays a few
+> minutes → panics → repeats, and can never stay caught up (looks like steady "drift"
+> after every fresh snapshot). Run the version the cluster runs (peers are on `4.1.2`).
+> Diagnose with `setup/replay-diag.sh` — its first block flags panics/restarts and the
+> `agave_votor` migration. **This branch (historically `feat/geyser-4.0.2`) now targets
+> 4.1.2**; the plugin's `agave-geyser-plugin-interface` pin is `=4.1.2` to match — rebuild
+> the plugin (§6) against the same version you install here.
+
 ```bash
-cargo install agave-validator@4.0.2          # use latest published 4.0.x
-# or: sh -c "$(curl -sSfL https://release.anza.xyz/v4.0.2/install)"
-agave-validator --version                     # expect 4.0.x
+cargo install agave-validator@4.1.2          # match the cluster (>= 4.1.2, Alpenglow)
+# or: sh -c "$(curl -sSfL https://release.anza.xyz/v4.1.2/install)"
+agave-validator --version                     # expect 4.1.x
 ```
 
-(Patch notes reference `4.0.0-rc.x`; `4.0.2` is the latest published crate — confirm
-whatever version actually resolves on the host. `cargo install agave-validator@3.1.9`
-re-installs the old binary if rollback is ever needed.)
+(Confirm whatever version actually resolves on the host, and that it matches what the
+cluster's known validators report in `solana gossip`. `cargo install agave-validator@<ver>`
+re-installs a specific binary if rollback is ever needed.)
 
 **Install `perf-libs` next to the binary (required for the PoH gate).** `cargo install`
 builds only the bare binary — it does **not** include `libpoh-simd.so` (the SIMD PoH
@@ -203,7 +213,7 @@ official release installer ships `perf-libs`; run it once to fetch them, then co
 dir next to the cargo binary (agave looks for `<dir-of-binary>/perf-libs/`):
 
 ```bash
-sh -c "$(curl -sSfL https://release.anza.xyz/v4.0.2/install)"   # populates perf-libs
+sh -c "$(curl -sSfL https://release.anza.xyz/v4.1.2/install)"   # populates perf-libs
 cp -r ~/.local/share/solana/install/active_release/bin/perf-libs ~/.cargo/bin/
 ls ~/.cargo/bin/perf-libs/libpoh-simd.so                        # confirm present
 ```
@@ -216,27 +226,37 @@ already alongside it and no copy is needed.)
 
 There is **no official "online tuner"** for agave. Apply the community tuning from
 [`sonicfromnewyoke/solana-rpc`](https://github.com/sonicfromnewyoke/solana-rpc)
-(no install script — copy/run the config blocks from its README):
+via a **`tuned` profile** — it applies the sysctl and CPU-governor settings as one
+named profile that reactivates automatically on every boot (no manual `sysctl -p`):
 
-- **sysctl** → `/etc/sysctl.d/21-agave-validator.conf`: UDP/TCP buffers
+- **tuned profile** → `setup/tuned-solana.conf` folds the sysctl block **and** the CPU
+  governor into a single profile: UDP/TCP buffers
   (`net.core.rmem_max=net.core.wmem_max=134217728`), connection backlogs, **BBR**
-  congestion control, `vm.max_map_count=2000000`, `fs.nr_open=2000000`, low swappiness.
-  Apply: `sudo sysctl -p /etc/sysctl.d/21-agave-validator.conf`
-  - On **ext4** accounts/ledger (this host), drop the XFS-only line or `sysctl -p`
-    errors `cannot stat /proc/sys/fs/xfs/...`:
-    `sudo sed -i '/fs.xfs.xfssyncd_centisecs/d' /etc/sysctl.d/21-agave-validator.conf`
+  congestion control, `vm.max_map_count=2000000`, `fs.nr_open=2000000`, low swappiness,
+  `kernel.numa_balancing=0`, governor `performance`. Install and activate:
+  ```bash
+  sudo apt-get install -y tuned                                    # if not present
+  sudo mkdir -p /etc/tuned/solana
+  sudo cp /home/sol/antegen/setup/tuned-solana.conf /etc/tuned/solana/tuned.conf
+  sudo tuned-adm profile solana
+  tuned-adm active                                                 # -> Current active profile: solana
+  ```
+  This **replaces** the old standalone `/etc/sysctl.d/21-agave-validator.conf` step —
+  `include=throughput-performance` gives its base, and the ported keys above cover the
+  rest. No XFS `fs.xfs.xfssyncd_centisecs` line (that host is **ext4**).
 - **File limits** → install the repo drop-in (covers interactive `sol` sessions;
   the systemd unit sets its own limits for the service):
   `sudo cp /home/sol/antegen/setup/90-solana-nofiles.conf /etc/security/limits.d/90-solana-nofiles.conf`
   (`nofile` and `memlock` = `2000000`).
-- **CPU**: governor `performance`, enable Intel/AMD boost. **Critical for the PoH
-  startup gate** — agave benchmarks single-core SHA-256 at startup and refuses to run
-  if it's below the 10M h/s cluster target; under `schedutil` the core clocks down and
-  fails the gate. The unit also pins `performance` as an `ExecStartPre` (§9) so it's
-  guaranteed at benchmark time even if a reboot reset the governor.
-- **Memory**: disable Transparent Huge Pages, KSM, and NUMA balancing
-  (`kernel.numa_balancing=0`). The 2 MB hugepage pool and NUMA interleave are set up
-  in **§1b** (no 1 GB pool — see that section).
+- **CPU**: governor `performance` (set by the tuned profile above), enable Intel/AMD
+  boost. **Critical for the PoH startup gate** — agave benchmarks single-core SHA-256
+  at startup and refuses to run if it's below the 10M h/s cluster target; under
+  `schedutil` the core clocks down and fails the gate. The unit *also* pins
+  `performance` as an `ExecStartPre` (§9) so it's guaranteed at benchmark time even if
+  something reset the governor after tuned applied.
+- **Memory**: disable Transparent Huge Pages and KSM. NUMA balancing is disabled by the
+  tuned profile (`kernel.numa_balancing=0`). The 2 MB hugepage pool and NUMA interleave
+  are set up in **§1b** (no 1 GB pool — see that section).
 - **NVMe** → `/etc/udev/rules.d/60-nvme-scheduler.rules`: I/O scheduler `none`,
   read-ahead `0`.
 - **NIC** → ring buffers to hardware max + interrupt coalescing off (fewer drops /
