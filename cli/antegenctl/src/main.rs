@@ -34,18 +34,6 @@ struct AntegenctlCli {
 
 #[derive(Subcommand)]
 enum AntegenctlCommands {
-    /// Run the executor directly (no service, blocking)
-    #[command(hide = true)]
-    Run {
-        /// Path to configuration file
-        #[arg(short, long)]
-        config: Option<PathBuf>,
-
-        /// Run a specific version (e.g., v4.4.0)
-        #[arg(long, value_name = "VERSION")]
-        version: Option<String>,
-    },
-
     /// Initialize config and keypair
     Init {
         /// RPC endpoint URL (prompts if not provided)
@@ -155,13 +143,6 @@ async fn run_antegenctl() -> Result<()> {
     let cli = AntegenctlCli::parse();
 
     match cli.command {
-        AntegenctlCommands::Run { config, version } => {
-            let cfg = match config {
-                Some(p) => p,
-                None => antegen_cli_core::commands::service::ensure_config()?,
-            };
-            antegen_cli_core::commands::run::execute(cfg, cli.rpc, cli.log_level, version).await
-        }
         AntegenctlCommands::Init { rpc, force } => {
             antegen_cli_core::commands::service::init(rpc, force)
         }

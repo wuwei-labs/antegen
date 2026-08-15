@@ -11,9 +11,22 @@ mod commands;
 // Antegen CLI (developer-facing: program, thread, geyser)
 // =============================================================================
 
+/// `<cli> (client <client>)` — the daemon ships inside this binary, so the
+/// runtime version is no longer visible from the package version alone.
+fn version_string() -> &'static str {
+    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    VERSION.get_or_init(|| {
+        format!(
+            "{} (client {})",
+            env!("CARGO_PKG_VERSION"),
+            antegen_client::VERSION
+        )
+    })
+}
+
 #[derive(Parser)]
 #[command(name = "antegen")]
-#[command(about = "Antegen automation client", version)]
+#[command(about = "Antegen automation client", version = version_string())]
 #[command(long_about = "
 Antegen automation client for Solana thread execution.
 
@@ -55,17 +68,9 @@ enum Commands {
     #[command(subcommand)]
     Geyser(GeyserCommands),
 
-    // =========================================================================
-    // Hidden: executor runtime (service invokes versioned binary with `run`)
-    // =========================================================================
-    /// Run the executor directly (no service, blocking)
-    #[command(hide = true)]
-    Run {
-        #[arg(short, long)]
-        config: Option<PathBuf>,
-        #[arg(long, value_name = "VERSION")]
-        version: Option<String>,
-    },
+    /// Executor node operations
+    #[command(subcommand)]
+    Node(NodeCommands),
 
     // =========================================================================
     // Hidden backwards-compatibility aliases (deprecated — use `antegenctl` instead)
@@ -158,6 +163,20 @@ enum Commands {
     /// Config file operations
     #[command(hide = true, subcommand)]
     Config(NodeConfigCommands),
+}
+
+// =============================================================================
+// Node commands
+// =============================================================================
+
+#[derive(Subcommand)]
+enum NodeCommands {
+    /// Run the executor in the foreground (no service, blocking)
+    Run {
+        /// Path to configuration file
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+    },
 }
 
 // =============================================================================
@@ -484,15 +503,17 @@ async fn run_antegen() -> Result<()> {
         },
 
         // =================================================================
-        // Hidden: executor runtime (service entry point, no deprecation warning)
+        // Node commands
         // =================================================================
-        Commands::Run { config, version } => {
-            let cfg = match config {
-                Some(p) => p,
-                None => antegen_cli_core::commands::service::ensure_config()?,
-            };
-            antegen_cli_core::commands::run::execute(cfg, cli.rpc, cli.log_level, version).await
-        }
+        Commands::Node(node_cmd) => match node_cmd {
+            NodeCommands::Run { config } => {
+                let cfg = match config {
+                    Some(p) => p,
+                    None => antegen_cli_core::commands::service::ensure_config()?,
+                };
+                commands::node::run(cfg, cli.rpc, cli.log_level).await
+            }
+        },
 
         // =================================================================
         // Hidden backwards-compatibility aliases (deprecated — use `antegenctl`)

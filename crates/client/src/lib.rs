@@ -31,6 +31,13 @@ pub mod tpu;
 pub mod trace;
 pub mod types;
 
+/// Version of the executor runtime linked into the calling binary.
+///
+/// The daemon ships inside `antegen`, which carries the CLI's version number,
+/// so `antegen --version` reports this alongside its own to keep "which client
+/// is my node running" answerable.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // Re-exports
 pub use clockref::ClockRef;
 pub use config::ClientConfig;

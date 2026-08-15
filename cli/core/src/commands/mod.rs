@@ -12,7 +12,6 @@ pub const MIN_BALANCE_LAMPORTS: u64 = 1_000_000;
 pub mod client;
 pub mod config;
 pub mod info;
-pub mod run;
 pub mod service;
 pub mod update;
 

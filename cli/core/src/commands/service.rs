@@ -177,7 +177,7 @@ async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()
         .context("Could not determine log directory")?;
     std::fs::create_dir_all(&log_dir)?;
 
-    // antegen-node takes --config directly (no "run" subcommand)
+    // The daemon is `antegen node run` — the executor ships inside the CLI.
     #[cfg(target_os = "macos")]
     let contents = Some(generate_launchd_plist(
         &binary,
@@ -194,6 +194,8 @@ async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()
             label: label.clone(),
             program: binary.clone(),
             args: vec![
+                OsString::from("node"),
+                OsString::from("run"),
                 OsString::from("--config"),
                 OsString::from(config_path.as_os_str()),
             ],
@@ -236,6 +238,8 @@ fn generate_launchd_plist(
     <key>ProgramArguments</key>
     <array>
         <string>{}</string>
+        <string>node</string>
+        <string>run</string>
         <string>--config</string>
         <string>{}</string>
     </array>
