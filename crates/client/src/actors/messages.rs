@@ -1,5 +1,6 @@
 //! Message types for actor communication
 
+use crate::trace::ExecTrace;
 use crate::types::AccountUpdate;
 use solana_sdk::{clock::Clock, pubkey::Pubkey};
 use tokio::sync::oneshot;
@@ -29,6 +30,8 @@ pub enum RpcSourceMessage {
     ClockReceived(Clock),
     /// Signal that WebSocket reconnected - trigger backfill
     Reconnected,
+    /// The spawned backfill task has finished, so another may start
+    BackfillFinished,
     /// A subscription background task has exited (name identifies which one)
     SubscriptionDied(String),
 }
@@ -116,6 +119,9 @@ pub struct ReadyThread {
     pub exec_count: u64,
     pub is_overdue: bool,
     pub overdue_seconds: i64,
+    /// Latency timeline for this execution attempt, anchored on the trigger
+    /// deadline. Travels with the attempt and is rendered on completion.
+    pub trace: ExecTrace,
 }
 
 /// Result of worker execution (sent from Worker to Processor)
@@ -127,36 +133,45 @@ pub struct ExecutionResult {
     pub skipped: bool,
     pub error: Option<String>,
     pub attempt_count: u32,
+    pub trace: ExecTrace,
 }
 
 impl ExecutionResult {
-    pub fn success(thread_pubkey: Pubkey) -> Self {
+    pub fn success(thread_pubkey: Pubkey, trace: ExecTrace) -> Self {
         Self {
             thread_pubkey,
             success: true,
             skipped: false,
             error: None,
             attempt_count: 0,
+            trace,
         }
     }
 
-    pub fn failed(thread_pubkey: Pubkey, error: String, attempt_count: u32) -> Self {
+    pub fn failed(
+        thread_pubkey: Pubkey,
+        error: String,
+        attempt_count: u32,
+        trace: ExecTrace,
+    ) -> Self {
         Self {
             thread_pubkey,
             success: false,
             skipped: false,
             error: Some(error),
             attempt_count,
+            trace,
         }
     }
 
-    pub fn skipped(thread_pubkey: Pubkey) -> Self {
+    pub fn skipped(thread_pubkey: Pubkey, trace: ExecTrace) -> Self {
         Self {
             thread_pubkey,
             success: true,
             skipped: true,
             error: None,
             attempt_count: 0,
+            trace,
         }
     }
 }

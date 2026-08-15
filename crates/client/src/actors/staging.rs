@@ -10,9 +10,12 @@
 use crate::actors::messages::{
     CompletionReason, ProcessorMessage, ReadyThread, ScheduledThread, StagingMessage, StagingStatus,
 };
+use crate::actors::processor::LATENCY_TARGET;
+use crate::clockref::ClockRef;
 use crate::config::ClientConfig;
 use crate::load_balancer::LoadBalancer;
 use crate::resources::SharedResources;
+use crate::trace::ExecTrace;
 use anchor_lang::AccountDeserialize;
 use antegen_thread_program::state::{Schedule, Thread, Trigger};
 use anyhow::Result;
@@ -24,6 +27,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::error::Error;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
 
 #[derive(Default)]
@@ -53,6 +57,10 @@ pub struct StagingState {
     // Clock deduplication (handle multiple datasources sending same clock)
     // Only track slot since slots are monotonically increasing
     last_processed_slot: u64,
+
+    // Maps on-chain time onto the local monotonic clock, so a trigger deadline
+    // can be expressed as a local instant.
+    clock_ref: ClockRef,
 
     // Communication
     processor_ref: Option<ActorRef<ProcessorMessage>>,
@@ -92,6 +100,7 @@ impl Actor for StagingActor {
             epoch_queue: Arc::new(Mutex::new(BinaryHeap::new())),
             queued_threads: DashSet::new(),
             last_processed_slot: 0,
+            clock_ref: ClockRef::new(),
             processor_ref: None, // Will be set by RootSupervisor after processor spawns
             resources,
             load_balancer,
@@ -265,6 +274,18 @@ impl StagingActor {
                     return Ok(());
                 }
 
+                // Ingest latency: frame decoded off the socket -> thread queued.
+                // Measured separately from execution latency because it is
+                // bounded by the actor loop, not by the trigger deadline. A
+                // large value here means this actor was blocked.
+                log::debug!(
+                    target: LATENCY_TARGET,
+                    "ingest thread={} slot={} ingest_ms={}",
+                    update.pubkey,
+                    update.slot,
+                    update.received_at.elapsed().as_millis()
+                );
+
                 // Schedule in appropriate priority queue
                 self.schedule_thread(state, update.pubkey, &thread).await?;
             }
@@ -291,6 +312,13 @@ impl StagingActor {
         state: &mut StagingState,
         clock: Clock,
     ) -> Result<(), ActorProcessingErr> {
+        // Anchor local time to on-chain time before the dedup, so every tick
+        // contributes to the projection even if it doesn't drive readiness.
+        // Stamping here rather than at the socket is deliberate: any delay
+        // getting into this actor is real scheduling delay, and folding it into
+        // the anchor is what makes `tick_ms` report it.
+        state.clock_ref.observe(&clock, Instant::now());
+
         // Dedup: Drop stale clocks (slots move forward only)
         if clock.slot <= state.last_processed_slot {
             debug!(
@@ -311,6 +339,24 @@ impl StagingActor {
                 state.tracked_threads.len(),
                 state.queued_threads.len()
             );
+
+            // Only worth reporting when more than one datasource is configured —
+            // with a single endpoint it wins every race by definition.
+            if state.resources.ingest_stats.is_racing() {
+                for s in state.resources.ingest_stats.snapshot() {
+                    info!(
+                        "ingest endpoint={} clock_win={}% ({}/{}) lag_avg_ms={} lag_max_ms={} account_win={}/{}",
+                        s.endpoint,
+                        s.clock_win_pct(),
+                        s.clocks_won,
+                        s.clocks_seen,
+                        s.clock_lag_avg_ms,
+                        s.clock_lag_max_ms,
+                        s.accounts_won,
+                        s.accounts_seen,
+                    );
+                }
+            }
         }
 
         // Periodic load balancer pruning every 1000 slots (~7 minutes)
@@ -376,11 +422,17 @@ impl StagingActor {
                         );
                     }
                 }
-                Err(e) => {
-                    // Thread no longer exists or RPC failed - clean up tracking
-                    debug!("Thread {} no longer exists or fetch failed: {}", pubkey, e);
+                Err(e) if e.is_gone() => {
+                    debug!("Thread {} no longer exists, dropping tracking", pubkey);
                     state.tracked_threads.remove(&pubkey);
                     state.queued_threads.remove(&pubkey);
+                }
+                Err(e) => {
+                    // A transport or decode failure says nothing about whether
+                    // the thread still exists. Keep tracking it — dropping it
+                    // here means nothing reschedules it until an unrelated
+                    // account update happens to arrive.
+                    warn!("Thread {} refetch failed, keeping tracking: {}", pubkey, e);
                 }
             }
         }
@@ -648,6 +700,16 @@ impl StagingActor {
                     scheduled.thread_pubkey, queue_name, scheduled.trigger_value, current_value
                 );
 
+                // Only time-triggered threads have a wall-clock deadline to
+                // measure against; slot/epoch triggers get a trace with no
+                // projected due instant.
+                let due_ts = scheduled.trigger_value as i64;
+                let due_at = if queue_name == "timestamp" {
+                    state.clock_ref.instant_for_ts(due_ts)
+                } else {
+                    None
+                };
+
                 // Create ready thread (pubkey + metadata only)
                 // ProcessorFactory will fetch full Thread from cache
                 let ready_thread = ReadyThread {
@@ -655,6 +717,7 @@ impl StagingActor {
                     exec_count: tracked.exec_count,
                     is_overdue: overdue_seconds > 0,
                     overdue_seconds,
+                    trace: ExecTrace::new(scheduled.thread_pubkey, due_ts, due_at),
                 };
 
                 ready.push(ready_thread);

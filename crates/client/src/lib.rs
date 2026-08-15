@@ -19,6 +19,7 @@
 //! ```
 
 pub mod actors;
+pub mod clockref;
 pub mod config;
 pub mod datasources;
 pub mod executor;
@@ -26,15 +27,18 @@ pub mod load_balancer;
 pub mod resources;
 pub mod rpc;
 pub mod tpu;
+pub mod trace;
 pub mod types;
 
 // Re-exports
+pub use clockref::ClockRef;
 pub use config::ClientConfig;
 pub use executor::ExecutorLogic;
 pub use load_balancer::{LoadBalancer, LoadBalancerConfig, LoadBalancerStats, ProcessDecision};
 pub use resources::{AccountCache, CachedAccount, SharedResources};
 pub use rpc::RpcPool;
 pub use tpu::{TpuClient, TpuClientConfig};
+pub use trace::{ExecTrace, Outcome, SendPath};
 pub use types::{AccountUpdate, DurableTransactionMessage, ProcessorMessage, TransactionMessage};
 
 use anyhow::Result;

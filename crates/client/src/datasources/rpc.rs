@@ -20,6 +20,7 @@ use std::time::Duration;
 use crate::actors::messages::RpcSourceMessage;
 use crate::rpc::response::decode_account_data;
 use crate::rpc::websocket::{build_account_subscribe_request, build_program_subscribe_request};
+use crate::resources::IngestStats;
 use crate::rpc::RpcPool;
 use crate::types::AccountUpdate;
 
@@ -30,15 +31,22 @@ pub struct RpcSubscription {
     ws_url: String,
     program_id: Pubkey,
     rpc_client: Arc<RpcPool>,
+    ingest_stats: Arc<IngestStats>,
 }
 
 impl RpcSubscription {
     /// Create a new RPC subscription manager
-    pub fn new(ws_url: String, program_id: Pubkey, rpc_client: Arc<RpcPool>) -> Self {
+    pub fn new(
+        ws_url: String,
+        program_id: Pubkey,
+        rpc_client: Arc<RpcPool>,
+        ingest_stats: Arc<IngestStats>,
+    ) -> Self {
         Self {
             ws_url,
             program_id,
             rpc_client,
+            ingest_stats,
         }
     }
 
@@ -64,7 +72,7 @@ impl RpcSubscription {
             }
         })];
 
-        let accounts = self
+        let (slot, accounts) = self
             .rpc_client
             .get_program_accounts(&self.program_id, Some(filters))
             .await?;
@@ -88,11 +96,11 @@ impl RpcSubscription {
                 }
             };
 
-            let update = AccountUpdate {
-                pubkey,
-                data,
-                slot: 0, // Backfill uses slot 0; live updates will supersede with real slots
-            };
+            // Stamp with the snapshot's real slot. Using 0 here makes every
+            // backfilled account look stale to the cache, so a reconnect
+            // backfill silently updates nothing that is already cached —
+            // exactly when it is most needed.
+            let update = AccountUpdate::new(pubkey, data, slot);
 
             trace!("[{}] Backfilling Thread account: {}", self.ws_url, pubkey);
 
@@ -139,14 +147,26 @@ impl RpcSubscription {
 
         let actor_on_connect = actor_ref.clone();
         let url_on_connect = ws_url.clone();
+        let stats_on_connect = self.ingest_stats.clone();
         let mut handle = match builder
             .keepalive(KEEPALIVE)
             .on_connect(move |tx| {
                 let msg = subscribe_msg.clone();
                 let actor = actor_on_connect.clone();
                 let url = url_on_connect.clone();
+                let stats = stats_on_connect.clone();
                 async move {
-                    debug!("[{}] WS program connected, subscribing...", url);
+                    // `on_connect` fires on the initial connect and on every
+                    // reconnect. Counting them is the only reconnect signal the
+                    // client currently has — the transport's lifecycle events
+                    // are emitted with `try_send` onto a channel nobody drains,
+                    // so they are silently discarded once it fills.
+                    let connects = stats.record_connect(&url);
+                    if connects > 1 {
+                        warn!("[{}] WS program reconnected (connect #{})", url, connects);
+                    } else {
+                        debug!("[{}] WS program connected, subscribing...", url);
+                    }
                     if let Err(e) = tx.send_text(msg).await {
                         error!("[{}] Failed to send program subscription: {e}", url);
                         return Ok(());
@@ -317,11 +337,11 @@ fn parse_program_notification(text: &str) -> Option<AccountUpdate> {
     let account_data = &params.result.value.account.data;
     let data = decode_account_data(&account_data.0, &account_data.1).ok()?;
 
-    Some(AccountUpdate {
+    Some(AccountUpdate::new(
         pubkey,
         data,
-        slot: params.result.context.slot,
-    })
+        params.result.context.slot,
+    ))
 }
 
 /// Parse a clock account notification message

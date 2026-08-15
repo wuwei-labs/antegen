@@ -8,8 +8,10 @@
 //! - Deduplication of account updates via `put_if_newer()`
 
 mod cache;
+mod ingest;
 
-pub use cache::{AccountCache, CacheTriggerType, CachedAccount};
+pub use cache::{AccountCache, CacheTriggerType, CachedAccount, FetchError};
+pub use ingest::{IngestSnapshot, IngestStats};
 
 use crate::config::{ClientConfig, EndpointRole};
 use crate::rpc::{EndpointConfig, RpcPool, RpcPoolConfig};
@@ -38,6 +40,8 @@ pub struct SharedResources {
     pub tpu_client: Option<Arc<TpuClient>>,
     /// Thread program ID (configurable, defaults to compiled-in value)
     pub program_id: Pubkey,
+    /// Per-endpoint ingest attribution — which datasource is winning the race.
+    pub ingest_stats: Arc<IngestStats>,
 }
 
 impl SharedResources {
@@ -102,6 +106,7 @@ impl SharedResources {
                 cache,
                 tpu_client,
                 program_id: config.datasources.program_id,
+                ingest_stats: Arc::new(IngestStats::new()),
             },
             eviction_rx,
         ))
@@ -115,6 +120,7 @@ impl SharedResources {
             cache,
             tpu_client: None,
             program_id: antegen_thread_program::ID,
+            ingest_stats: Arc::new(IngestStats::new()),
         }
     }
 }

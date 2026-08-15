@@ -115,6 +115,13 @@ async fn main() -> Result<()> {
         log::LevelFilter::Error,
     );
     builder.filter_module("antegen_ws", log::LevelFilter::Off);
+    // The per-execution latency line is emitted at DEBUG so it can be filtered
+    // independently, but it is the primary signal for diagnosing trigger delay —
+    // enable it even when the rest of the client is at INFO.
+    builder.filter_module(
+        antegen_client::actors::processor::LATENCY_TARGET,
+        log::LevelFilter::Debug,
+    );
     builder.format_timestamp_millis().init();
 
     log::info!("Antegen Node - Standalone Mode");

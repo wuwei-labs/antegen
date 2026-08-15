@@ -17,13 +17,18 @@ use crate::config::ClientConfig;
 use crate::executor::ExecutorLogic;
 use crate::load_balancer::LoadBalancer;
 use crate::resources::SharedResources;
+use crate::trace::Outcome;
 use log::warn;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use solana_sdk::pubkey::Pubkey;
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::sync::Arc;
-use tokio::sync::{broadcast, Semaphore};
+use tokio::sync::Semaphore;
+
+/// Log target for the per-execution latency line. Kept separate so it can be
+/// filtered up or down independently of the rest of the client's logging.
+pub const LATENCY_TARGET: &str = "antegen::latency";
 
 #[derive(Default)]
 pub struct ProcessorFactory;
@@ -42,7 +47,6 @@ pub struct ProcessorState {
 
     // Communication
     staging_ref: ActorRef<StagingMessage>,
-    clock_tx: broadcast::Sender<solana_sdk::clock::Clock>,
 
     // Shared resources (includes cache)
     resources: SharedResources,
@@ -77,16 +81,12 @@ impl Actor for ProcessorFactory {
         // Create semaphore for concurrency control
         let task_semaphore = Arc::new(Semaphore::new(max_concurrent_threads));
 
-        // Create broadcast channel for clock distribution
-        let (clock_tx, _clock_rx) = broadcast::channel(10);
-
         Ok(ProcessorState {
             pending_queue: VecDeque::new(),
             active_workers: HashMap::new(),
             task_semaphore,
             available_permits: max_concurrent_threads,
             staging_ref,
-            clock_tx,
             resources,
             executor,
             load_balancer,
@@ -205,7 +205,7 @@ impl ProcessorFactory {
         }
 
         // Check if queue has work
-        let Some(ready_thread) = state.pending_queue.pop_front() else {
+        let Some(mut ready_thread) = state.pending_queue.pop_front() else {
             return Ok(());
         };
 
@@ -237,20 +237,14 @@ impl ProcessorFactory {
                     Ok(thread) => {
                         // Verify exec_count matches (data might be stale)
                         if thread.exec_count != ready_thread.exec_count {
-                            log::debug!(
-                                "Thread {} exec_count mismatch (cache={}, expected={}), skipping",
-                                ready_thread.thread_pubkey,
-                                thread.exec_count,
-                                ready_thread.exec_count
+                            self.abandon(
+                                state,
+                                &ready_thread,
+                                &format!(
+                                    "exec_count mismatch (cache={}, expected={})",
+                                    thread.exec_count, ready_thread.exec_count
+                                ),
                             );
-                            // Notify staging that this thread is done (was stale)
-                            state
-                                .staging_ref
-                                .send_message(StagingMessage::ThreadCompleted {
-                                    thread_pubkey: ready_thread.thread_pubkey,
-                                    reason: CompletionReason::Executed,
-                                })
-                                .ok();
                             return Ok(());
                         }
                         thread
@@ -260,14 +254,7 @@ impl ProcessorFactory {
                             "Failed to deserialize thread {} from cache: {:?}",
                             ready_thread.thread_pubkey, e
                         );
-                        // Notify staging that this thread is done
-                        state
-                            .staging_ref
-                            .send_message(StagingMessage::ThreadCompleted {
-                                thread_pubkey: ready_thread.thread_pubkey,
-                                reason: CompletionReason::Executed,
-                            })
-                            .ok();
+                        self.abandon(state, &ready_thread, "cache deserialize failed");
                         return Ok(());
                     }
                 }
@@ -278,6 +265,7 @@ impl ProcessorFactory {
                     "Cache miss for thread {} during worker spawn, attempting RPC fetch",
                     ready_thread.thread_pubkey
                 );
+                ready_thread.trace.count_rpc();
 
                 match state
                     .resources
@@ -288,19 +276,14 @@ impl ProcessorFactory {
                     Ok(thread) => {
                         // Verify exec_count matches
                         if thread.exec_count != ready_thread.exec_count {
-                            log::debug!(
-                                "Thread {} exec_count mismatch after RPC fetch (fetched={}, expected={}), skipping",
-                                ready_thread.thread_pubkey,
-                                thread.exec_count,
-                                ready_thread.exec_count
+                            self.abandon(
+                                state,
+                                &ready_thread,
+                                &format!(
+                                    "exec_count mismatch after RPC fetch (fetched={}, expected={})",
+                                    thread.exec_count, ready_thread.exec_count
+                                ),
                             );
-                            state
-                                .staging_ref
-                                .send_message(StagingMessage::ThreadCompleted {
-                                    thread_pubkey: ready_thread.thread_pubkey,
-                                    reason: CompletionReason::Executed,
-                                })
-                                .ok();
                             return Ok(());
                         }
                         thread
@@ -310,14 +293,7 @@ impl ProcessorFactory {
                             "Failed to fetch thread {} from RPC: {}",
                             ready_thread.thread_pubkey, e
                         );
-                        // Notify staging that this thread is done
-                        state
-                            .staging_ref
-                            .send_message(StagingMessage::ThreadCompleted {
-                                thread_pubkey: ready_thread.thread_pubkey,
-                                reason: CompletionReason::Executed,
-                            })
-                            .ok();
+                        self.abandon(state, &ready_thread, "RPC fetch failed");
                         return Ok(());
                     }
                 }
@@ -334,6 +310,8 @@ impl ProcessorFactory {
 
         state.available_permits -= 1;
 
+        ready_thread.trace.mark_spawned();
+
         // Spawn WorkerActor with Thread data from cache
         let worker_args = crate::actors::worker::WorkerArgs {
             thread_pubkey: ready_thread.thread_pubkey,
@@ -342,10 +320,10 @@ impl ProcessorFactory {
             overdue_seconds: ready_thread.overdue_seconds,
             permit,
             processor_ref: myself.clone(),
-            clock_rx: state.clock_tx.subscribe(),
             resources: state.resources.clone(),
             executor: state.executor.clone(),
             load_balancer: state.load_balancer.clone(),
+            trace: ready_thread.trace.clone(),
         };
 
         let (worker_ref, _handle) = Actor::spawn(
@@ -362,6 +340,28 @@ impl ProcessorFactory {
             .insert(ready_thread.thread_pubkey, worker_ref);
 
         Ok(())
+    }
+
+    /// Abandon a ready thread before a worker was ever spawned.
+    ///
+    /// These paths would otherwise terminate an execution attempt with no trace
+    /// at all, which is exactly the case that is impossible to diagnose from the
+    /// logs today.
+    fn abandon(&self, state: &ProcessorState, ready: &ReadyThread, reason: &str) {
+        log::debug!(
+            "Thread {} abandoned before spawn: {}",
+            ready.thread_pubkey,
+            reason
+        );
+        log::debug!(target: LATENCY_TARGET, "{} reason={}", ready.trace.render(Outcome::Skip), reason);
+
+        state
+            .staging_ref
+            .send_message(StagingMessage::ThreadCompleted {
+                thread_pubkey: ready.thread_pubkey,
+                reason: CompletionReason::Executed,
+            })
+            .ok();
     }
 
     /// Handle execution result from worker
@@ -396,6 +396,18 @@ impl ProcessorFactory {
                 result.error
             );
         }
+
+        // The single latency line for this execution attempt.
+        let outcome = if result.skipped {
+            Outcome::Skip
+        } else if is_lb_skip {
+            Outcome::LbSkip
+        } else if result.success {
+            Outcome::Ok
+        } else {
+            Outcome::Fail
+        };
+        log::debug!(target: LATENCY_TARGET, "{}", result.trace.render(outcome));
 
         // Determine completion reason based on whether load balancer skipped
         let reason = if is_lb_skip {

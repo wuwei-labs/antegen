@@ -184,6 +184,26 @@ mod tests {
     }
 
     #[test]
+    fn zstd_encoded_account_data_round_trips() {
+        // `getAccountInfo`/`getProgramAccounts` are requested with
+        // "base64+zstd", so the decoder must honour the encoding tag. Decoding
+        // this as plain base64 yields the raw zstd frame, which then fails to
+        // deserialize with a misleading "bad account data" error.
+        let original: Vec<u8> = (0u8..=255).cycle().take(2048).collect();
+        let compressed = zstd::stream::encode_all(original.as_slice(), 0).unwrap();
+        let encoded = BASE64_STANDARD.encode(&compressed);
+
+        let decoded = decode_account_data(&encoded, "base64+zstd").unwrap();
+        assert_eq!(decoded, original);
+
+        // Same payload read as plain base64 is the compressed frame, not the
+        // account — this is exactly the bug the encoding tag prevents.
+        let mis_decoded = decode_account_data(&encoded, "base64").unwrap();
+        assert_ne!(mis_decoded, original);
+        assert_eq!(mis_decoded, compressed);
+    }
+
+    #[test]
     fn test_normal_u64() {
         let json = r#"{"lamports":1000,"data":["","base64"],"owner":"11111111111111111111111111111111","executable":false,"rentEpoch":12345}"#;
         let account: SafeUiAccount = serde_json::from_str(json).unwrap();

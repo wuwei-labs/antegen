@@ -32,7 +32,7 @@ use solana_sdk::{
 use std::collections::HashSet;
 
 use anyhow::{anyhow, Result};
-use log::{debug, info, warn};
+use log::{debug, warn};
 use std::sync::Arc;
 
 /// Maximum serialized transaction size in bytes (Solana's PACKET_DATA_SIZE)
@@ -116,7 +116,7 @@ impl ExecutorLogic {
         let mut current_fiber_cursor = override_fiber_cursor.unwrap_or(thread.fiber_cursor);
 
         // Build first instruction
-        info!(
+        debug!(
             "{}: starting build: thread.fiber_cursor={}, override={:?}, using={}",
             thread_pubkey, thread.fiber_cursor, override_fiber_cursor, current_fiber_cursor
         );
@@ -131,7 +131,7 @@ impl ExecutorLogic {
 
         // Empty fiber — nothing to submit
         let Some(first_ix) = first_ix else {
-            info!("{}: first fiber is empty, nothing to submit", thread_pubkey);
+            debug!("{}: first fiber is empty, nothing to submit", thread_pubkey);
             return Ok((vec![], 0, false, None));
         };
 
@@ -164,7 +164,7 @@ impl ExecutorLogic {
                 ixs.len()
             );
             let (signal, _units) = self.simulate_transaction(&ixs, thread_pubkey).await?;
-            info!(
+            debug!(
                 "{}: fiber {} simulation signal={:?}",
                 thread_pubkey, current_fiber_cursor, signal
             );
@@ -175,7 +175,7 @@ impl ExecutorLogic {
                     // Calculate next fiber in sequence
                     current_fiber_cursor =
                         Self::next_fiber_in_sequence(&thread.fiber_ids, current_fiber_cursor);
-                    info!(
+                    debug!(
                         "Batching: Signal::Chain, adding thread_exec for fiber {}",
                         current_fiber_cursor
                     );
@@ -190,7 +190,7 @@ impl ExecutorLogic {
 
                     // Empty fiber — stop chaining
                     let Some(next_ix) = next_ix else {
-                        info!(
+                        debug!(
                             "{}: chained fiber {} is empty, stopping chain",
                             thread_pubkey, current_fiber_cursor
                         );
@@ -208,7 +208,7 @@ impl ExecutorLogic {
                         // The worker will submit this batch, confirm it, re-fetch
                         // the thread, and call us again for the next batch.
                         let current_size = self.estimate_transaction_size_with_budget(&ixs);
-                        info!(
+                        debug!(
                             "{}: transaction full ({} ix, {} bytes), adding fiber {} would be {} bytes (max {}), needs continuation",
                             thread_pubkey,
                             ixs.len(),
@@ -224,7 +224,7 @@ impl ExecutorLogic {
                 }
                 Signal::Close => {
                     // Build thread_exec that executes the pre-compiled close_fiber
-                    info!("Signal::Close detected - building thread_exec with close_fiber");
+                    debug!("Signal::Close detected - building thread_exec with close_fiber");
                     let close_ix = self.build_close_thread_exec(thread_pubkey, thread).await?;
 
                     // Check if close instruction fits in current batch
@@ -233,7 +233,7 @@ impl ExecutorLogic {
                     if self.would_fit_in_transaction(&trial) {
                         ixs.push(close_ix);
                     } else {
-                        info!(
+                        debug!(
                             "{}: transaction full ({} ix), close deferred to continuation",
                             thread_pubkey,
                             ixs.len()
@@ -244,7 +244,7 @@ impl ExecutorLogic {
                 }
                 _ => {
                     // No batching needed for None, Repeat, Next, Update
-                    info!(
+                    debug!(
                         "{}: signal={:?}, no chaining needed ({} exec instruction(s))",
                         thread_pubkey,
                         signal,
@@ -260,7 +260,7 @@ impl ExecutorLogic {
             let mut all_pubkeys: HashSet<Pubkey> = HashSet::new();
             for (i, ix) in ixs.iter().enumerate() {
                 let ix_pubkeys: HashSet<Pubkey> = ix.accounts.iter().map(|a| a.pubkey).collect();
-                info!(
+                debug!(
                     "{}: ix[{}] has {} accounts ({} unique)",
                     thread_pubkey,
                     i,
@@ -270,7 +270,7 @@ impl ExecutorLogic {
                 all_pubkeys.extend(ix_pubkeys);
             }
             let message = Message::new(&ixs, Some(&self.keypair.pubkey()));
-            info!(
+            debug!(
                 "{}: batched transaction: {} instructions, {} unique accounts in message, {} account_keys",
                 thread_pubkey,
                 ixs.len(),
@@ -279,7 +279,7 @@ impl ExecutorLogic {
             );
         }
 
-        info!(
+        debug!(
             "{}: built {} instruction(s), priority_fee={}, continuation={}",
             thread_pubkey,
             ixs.len(),
@@ -395,7 +395,7 @@ impl ExecutorLogic {
 
         // Empty compiled_instruction = cleared fiber (e.g. after close). Skip.
         if fiber_read.compiled_instruction().is_empty() {
-            info!(
+            debug!(
                 "fiber_{} has empty compiled_instruction, skipping",
                 fiber_cursor
             );
@@ -538,7 +538,7 @@ impl ExecutorLogic {
 
         match decompile_instruction(&compiled) {
             Ok(decompiled) => {
-                info!(
+                debug!(
                     "fiber_{} account audit: compiled_table={} unique, decompiled_accounts={}, program_id={}",
                     fiber_cursor,
                     compiled.accounts.len(),
@@ -600,7 +600,7 @@ impl ExecutorLogic {
         }
         .data();
 
-        info!(
+        debug!(
             "fiber_{} instruction: program={}, base_accounts={}, remaining={}, total={}, data_len={}",
             fiber_cursor,
             self.program_id,
@@ -817,7 +817,7 @@ impl ExecutorLogic {
                         } else {
                             match Thread::try_deserialize(&mut data.as_slice()) {
                                 Ok(thread) => {
-                                    info!(
+                                    debug!(
                                         "{}: extracted signal={:?} from simulation",
                                         thread_pubkey, thread.fiber_signal
                                     );

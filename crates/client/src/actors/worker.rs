@@ -13,18 +13,19 @@ use crate::actors::messages::{ExecutionResult, ProcessorMessage, WorkerMessage};
 use crate::executor::ExecutorLogic;
 use crate::load_balancer::{LoadBalancer, ProcessDecision};
 use crate::resources::SharedResources;
+use crate::trace::{ExecTrace, SendPath};
 use antegen_thread_program::state::Thread;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
-    clock::Clock, instruction::Instruction, message::Message, pubkey::Pubkey, signature::Signature,
+    instruction::Instruction, message::Message, pubkey::Pubkey, signature::Signature,
     transaction::Transaction,
 };
 use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{broadcast, OwnedSemaphorePermit};
+use tokio::sync::OwnedSemaphorePermit;
 
 /// Maximum number of submission attempts
 const MAX_ATTEMPTS: u32 = 5;
@@ -52,6 +53,35 @@ fn is_thread_paused_error(error: &str) -> bool {
     error.contains("Custom(6006)") || error.contains("6006")
 }
 
+/// Errors that mean "try again", not "this execution is doomed".
+///
+/// These are cluster-level conditions, not program failures. Treating them as
+/// fatal aborts the retry loop and records a spurious loss against the load
+/// balancer.
+fn is_retryable_chain_error(error: &str) -> bool {
+    const RETRYABLE: &[&str] = &[
+        "BlockhashNotFound",
+        "AlreadyProcessed",
+        "AccountInUse",
+        "ClusterMaintenance",
+        "WouldExceedMaxBlockCostLimit",
+        "WouldExceedMaxAccountCostLimit",
+        "WouldExceedAccountDataBlockLimit",
+    ];
+    RETRYABLE.iter().any(|kind| error.contains(kind))
+}
+
+/// Blockhash expiry specifically — the one retryable error that requires
+/// re-signing rather than simply resending the same transaction.
+fn is_blockhash_expired(error: &str) -> bool {
+    error.contains("BlockhashNotFound")
+}
+
+/// How long a signed transaction is reused across retries before its blockhash
+/// is assumed stale. A blockhash is valid for ~150 slots; staying well inside
+/// that keeps the signature stable for the retries that actually matter.
+const BLOCKHASH_MAX_AGE: Duration = Duration::from_secs(45);
+
 pub struct WorkerActor;
 
 pub struct WorkerArgs {
@@ -61,10 +91,10 @@ pub struct WorkerArgs {
     pub overdue_seconds: i64,
     pub permit: OwnedSemaphorePermit,
     pub processor_ref: ActorRef<ProcessorMessage>,
-    pub clock_rx: broadcast::Receiver<Clock>,
     pub resources: SharedResources,
     pub executor: ExecutorLogic,
     pub load_balancer: Arc<LoadBalancer>,
+    pub trace: ExecTrace,
 }
 
 pub struct WorkerState {
@@ -110,6 +140,7 @@ impl Actor for WorkerActor {
         let load_balancer = args.load_balancer;
         let cancelled_flag = cancelled;
         let myself_ref = myself.clone();
+        let trace = args.trace;
 
         tokio::spawn(async move {
             let result = execute_thread(
@@ -121,6 +152,7 @@ impl Actor for WorkerActor {
                 &executor,
                 &load_balancer,
                 &cancelled_flag,
+                trace,
             )
             .await;
 
@@ -178,6 +210,7 @@ async fn execute_thread(
     executor: &ExecutorLogic,
     load_balancer: &LoadBalancer,
     cancelled: &AtomicBool,
+    mut trace: ExecTrace,
 ) -> ExecutionResult {
     // Check cancellation before starting
     if cancelled.load(Ordering::Relaxed) {
@@ -185,7 +218,12 @@ async fn execute_thread(
             "Worker cancelled before execution for thread: {}",
             thread_pubkey
         );
-        return ExecutionResult::failed(thread_pubkey, "Cancelled before execution".to_string(), 0);
+        return ExecutionResult::failed(
+            thread_pubkey,
+            "Cancelled before execution".to_string(),
+            0,
+            trace,
+        );
     }
 
     // Re-fetch thread from cache to get latest last_executor
@@ -207,6 +245,7 @@ async fn execute_thread(
                             thread_pubkey,
                             "Thread already executed (exec_count changed)".to_string(),
                             0,
+                            trace,
                         );
                     }
                     fresh_thread.last_executor
@@ -234,6 +273,7 @@ async fn execute_thread(
                 thread_pubkey,
                 format!("Load balancer error: {}", e),
                 0,
+                trace,
             );
         }
     };
@@ -248,6 +288,7 @@ async fn execute_thread(
                 thread_pubkey,
                 "Skipped by load balancer".to_string(),
                 0,
+                trace,
             );
         }
         ProcessDecision::AtCapacity => {
@@ -255,7 +296,7 @@ async fn execute_thread(
                 "Load balancer at capacity for thread {}, skipping",
                 thread_pubkey
             );
-            return ExecutionResult::failed(thread_pubkey, "At capacity".to_string(), 0);
+            return ExecutionResult::failed(thread_pubkey, "At capacity".to_string(), 0, trace);
         }
         ProcessDecision::Process => {
             log::debug!("Load balancer approved processing thread {}", thread_pubkey);
@@ -288,6 +329,7 @@ async fn execute_thread(
                             thread_pubkey,
                             "Claimed during delay".to_string(),
                             0,
+                            trace,
                         );
                     }
                 }
@@ -327,6 +369,7 @@ async fn execute_thread(
                         thread_pubkey,
                         "Cancelled during build".to_string(),
                         0,
+                        trace,
                     );
                 }
                 if Instant::now() > trigger_retry_deadline {
@@ -334,6 +377,7 @@ async fn execute_thread(
                         thread_pubkey,
                         "Trigger window expired while waiting for trigger time".to_string(),
                         0,
+                        trace,
                     );
                 }
                 match executor
@@ -359,6 +403,7 @@ async fn execute_thread(
                                 thread_pubkey,
                                 "Thread is paused".to_string(),
                                 0,
+                                trace,
                             );
                         } else {
                             log::error!(
@@ -370,6 +415,7 @@ async fn execute_thread(
                                 thread_pubkey,
                                 format!("Transaction build failed: {}", e),
                                 0,
+                                trace,
                             );
                         }
                     }
@@ -393,11 +439,13 @@ async fn execute_thread(
                         thread_pubkey,
                         format!("Continuation batch {} build failed: {}", batch_num, e),
                         0,
+                        trace,
                     );
                 }
             }
         };
 
+        trace.mark_built();
         max_priority_fee = max_priority_fee.max(priority_fee);
         pending_fiber_cursor = next_cursor;
 
@@ -408,7 +456,7 @@ async fn execute_thread(
                 thread_pubkey,
                 batch_num
             );
-            return ExecutionResult::skipped(thread_pubkey);
+            return ExecutionResult::skipped(thread_pubkey, trace);
         }
 
         log::info!(
@@ -420,8 +468,13 @@ async fn execute_thread(
         );
 
         // Simulate for accurate CU estimate
+        trace.count_rpc();
+        trace.count_rpc();
         let cu_estimate = match executor.estimate_compute_units(&ixs, &thread_pubkey).await {
-            Ok(units) => units,
+            Ok(units) => {
+                trace.mark_simulated();
+                units
+            }
             Err(e) => {
                 log::error!(
                     "{}: batch {} CU estimation failed: {:?}",
@@ -433,6 +486,7 @@ async fn execute_thread(
                     thread_pubkey,
                     format!("Batch {} CU estimation failed: {}", batch_num, e),
                     0,
+                    trace,
                 );
             }
         };
@@ -457,6 +511,7 @@ async fn execute_thread(
             cancelled,
             &thread_pubkey,
             load_balancer,
+            &mut trace,
         )
         .await
         {
@@ -468,6 +523,7 @@ async fn execute_thread(
                     thread_pubkey,
                     format!("Batch {} failed: {}", batch_num, error),
                     attempts,
+                    trace,
                 );
             }
         }
@@ -482,6 +538,7 @@ async fn execute_thread(
             "{}: re-fetching thread for continuation batch",
             thread_pubkey
         );
+        trace.count_rpc();
         thread = match executor.fetch_thread(&thread_pubkey).await {
             Ok(t) => t,
             Err(e) => {
@@ -494,12 +551,13 @@ async fn execute_thread(
                     thread_pubkey,
                     format!("Failed to re-fetch thread for continuation: {}", e),
                     0,
+                    trace,
                 );
             }
         };
     }
 
-    ExecutionResult::success(thread_pubkey)
+    ExecutionResult::success(thread_pubkey, trace)
 }
 
 /// Submit a batch of instructions as a transaction, with retries and confirmation.
@@ -515,12 +573,23 @@ async fn submit_and_confirm_batch(
     cancelled: &AtomicBool,
     thread_pubkey: &Pubkey,
     load_balancer: &LoadBalancer,
+    trace: &mut ExecTrace,
 ) -> Result<Signature, (String, u32)> {
     let mut attempt = 0u32;
     let mut last_error = String::new();
 
+    // Sign once, up front, and reuse the same transaction across retries.
+    //
+    // Re-signing per attempt produces a *different signature for the same
+    // logical execution*: if an earlier attempt was actually in flight, both
+    // land, the executor pays twice, and for a chained batch the ordering is no
+    // longer guaranteed. Resending an identical transaction is idempotent at the
+    // validator; resending a re-signed one is not.
+    let mut signed: Option<(Transaction, Signature, Instant)> = None;
+
     while attempt < MAX_ATTEMPTS {
         attempt += 1;
+        trace.attempts = attempt;
 
         // Check cancellation
         if cancelled.load(Ordering::Relaxed) {
@@ -538,39 +607,56 @@ async fn submit_and_confirm_batch(
             MAX_ATTEMPTS
         );
 
-        // Get recent blockhash using custom RPC client
-        let (blockhash, _) = match resources.rpc_client.get_latest_blockhash().await {
-            Ok(bh) => bh,
-            Err(e) => {
-                last_error = format!("Failed to get blockhash: {}", e);
-                log::warn!(
-                    "Failed to get blockhash for thread {} (attempt {}): {:?}",
-                    thread_pubkey,
-                    attempt,
-                    e
-                );
-                tokio::time::sleep(Duration::from_millis(
-                    BASE_RETRY_DELAY_MS * (1 << attempt.min(4)),
-                ))
-                .await;
-                continue;
-            }
+        // (Re-)sign only when we have nothing, or when the blockhash is old
+        // enough that it can no longer land.
+        let needs_signing = match &signed {
+            None => true,
+            Some((_, _, signed_at)) => signed_at.elapsed() > BLOCKHASH_MAX_AGE,
         };
 
-        // Build and sign transaction
-        let message = Message::new(instructions, Some(&executor.pubkey()));
-        let tx = Transaction::new(&[executor.keypair().as_ref()], message, blockhash);
+        if needs_signing {
+            trace.count_rpc();
+            let (blockhash, _) = match resources.rpc_client.get_latest_blockhash().await {
+                Ok(bh) => bh,
+                Err(e) => {
+                    last_error = format!("Failed to get blockhash: {}", e);
+                    log::warn!(
+                        "Failed to get blockhash for thread {} (attempt {}): {:?}",
+                        thread_pubkey,
+                        attempt,
+                        e
+                    );
+                    tokio::time::sleep(Duration::from_millis(
+                        BASE_RETRY_DELAY_MS * (1 << attempt.min(4)),
+                    ))
+                    .await;
+                    continue;
+                }
+            };
 
-        // Compute signature before sending (needed for confirmation polling)
-        // TPU submission is fire-and-forget so we need the signature upfront
-        let signature = tx.signatures[0];
+            let message = Message::new(instructions, Some(&executor.pubkey()));
+            let tx = Transaction::new(&[executor.keypair().as_ref()], message, blockhash);
+            // Signature is captured up front: TPU submission is fire-and-forget,
+            // so confirmation polling needs it before the send.
+            let signature = tx.signatures[0];
+            trace.mark_signed();
+            signed = Some((tx, signature, Instant::now()));
+        }
 
-        log::info!("{}: sent", thread_pubkey);
+        let (tx, signature, _) = signed.as_ref().expect("signed above");
+        let tx = tx.clone();
+        let signature = *signature;
+
+        log::debug!("{}: sent", thread_pubkey);
         log::debug!("  txn: {}", signature);
 
         // TPU retry loop: send via TPU and poll for confirmation, re-sending every 2s
         // This handles the case where TPU send appears to succeed but transaction doesn't land
         let mut tpu_confirmed = false;
+        // Set when the chain reported a condition that warrants another attempt
+        // rather than falling through to the RPC fallback with a transaction we
+        // already know will not land.
+        let mut retry_attempt = false;
         if let Some(tpu_client) = &resources.tpu_client {
             let start = Instant::now();
             let timeout = Duration::from_secs(CONFIRMATION_TIMEOUT_SECS);
@@ -580,6 +666,7 @@ async fn submit_and_confirm_batch(
             if let Err(e) = tpu_client.send_transaction(&tx).await {
                 log::debug!("Initial TPU send failed: {}", e);
             }
+            trace.mark_sent(SendPath::Tpu);
 
             // Combined send + confirmation polling loop
             loop {
@@ -604,8 +691,7 @@ async fn submit_and_confirm_batch(
                         tpu_confirmed = true;
                         break;
                     }
-                    Ok(Some(Err(e))) => {
-                        let error_str = format!("{:?}", e);
+                    Ok(Some(Err(error_str))) => {
                         if is_trigger_not_ready_error(&error_str) {
                             log::debug!(
                                 "{}: 6004 on-chain (trigger not ready), will retry",
@@ -622,8 +708,24 @@ async fn submit_and_confirm_batch(
                             return Err(("Thread is paused".to_string(), attempt));
                         }
 
-                        // Other on-chain error - don't retry, return failure
-                        log::warn!("{}: transaction failed on-chain: {:?}", thread_pubkey, e);
+                        // Cluster-level conditions are not program failures —
+                        // retry rather than abandoning the execution.
+                        if is_retryable_chain_error(&error_str) {
+                            log::debug!(
+                                "{}: retryable chain error, will retry: {}",
+                                thread_pubkey,
+                                error_str
+                            );
+                            if is_blockhash_expired(&error_str) {
+                                signed = None;
+                            }
+                            last_error = error_str;
+                            retry_attempt = true;
+                            break;
+                        }
+
+                        // Genuine program failure - don't retry, return failure
+                        log::warn!("{}: transaction failed on-chain: {}", thread_pubkey, error_str);
 
                         let _ = load_balancer
                             .record_execution_result(
@@ -633,7 +735,7 @@ async fn submit_and_confirm_batch(
                             )
                             .await;
 
-                        return Err((format!("Transaction failed on-chain: {:?}", e), attempt));
+                        return Err((format!("Transaction failed on-chain: {}", error_str), attempt));
                     }
                     Ok(None) => {
                         // Not yet confirmed, continue polling
@@ -649,7 +751,8 @@ async fn submit_and_confirm_batch(
         }
 
         if tpu_confirmed {
-            log::info!("{}: confirmed", thread_pubkey);
+            trace.mark_settled();
+            log::debug!("{}: confirmed", thread_pubkey);
             log::debug!("  txn: {}", signature);
 
             // Record success in load balancer
@@ -660,9 +763,23 @@ async fn submit_and_confirm_batch(
             return Ok(signature);
         }
 
+        // A retryable chain condition means this transaction cannot land as-is;
+        // back off and take another attempt rather than resending it over RPC.
+        if retry_attempt {
+            if attempt < MAX_ATTEMPTS {
+                tokio::time::sleep(Duration::from_millis(
+                    BASE_RETRY_DELAY_MS * (1 << attempt.min(4)),
+                ))
+                .await;
+            }
+            continue;
+        }
+
         // Fall back to RPC if TPU not available or TPU loop timed out
+        trace.count_rpc();
         match resources.rpc_client.send_transaction(&tx).await {
             Ok(sig) => {
+                trace.mark_sent(SendPath::Rpc);
                 log::debug!("Transaction sent via RPC: {}", sig);
             }
             Err(e) => {
@@ -692,7 +809,8 @@ async fn submit_and_confirm_batch(
             .await
         {
             Ok(()) => {
-                log::info!("{}: confirmed", thread_pubkey);
+                trace.mark_settled();
+                log::debug!("{}: confirmed", thread_pubkey);
                 log::debug!("  txn: {}", signature);
 
                 // Record success in load balancer
@@ -717,6 +835,15 @@ async fn submit_and_confirm_batch(
                         thread_pubkey
                     );
                     return Err(("Thread is paused".to_string(), attempt));
+                } else if is_retryable_chain_error(&e) {
+                    log::debug!(
+                        "{}: retryable chain error on RPC confirmation, will retry: {}",
+                        thread_pubkey,
+                        e
+                    );
+                    if is_blockhash_expired(&e) {
+                        signed = None;
+                    }
                 } else {
                     log::warn!(
                         "Transaction confirmation failed for thread {} (attempt {}): {:?}",
@@ -774,7 +901,7 @@ async fn wait_for_confirmation(
         match rpc_client.get_signature_status(signature).await {
             Ok(Some(result)) => match result {
                 Ok(()) => return Ok(()),
-                Err(e) => return Err(format!("Transaction failed: {:?}", e)),
+                Err(e) => return Err(format!("Transaction failed: {}", e)),
             },
             Ok(None) => {
                 // Not yet confirmed, wait and retry
@@ -786,5 +913,65 @@ async fn wait_for_confirmation(
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The RPC reports program errors as raw JSON. These are the shapes the
+    /// confirmation path actually receives.
+    const CUSTOM_6004: &str = r#"{"InstructionError":[0,{"Custom":6004}]}"#;
+    const CUSTOM_6006: &str = r#"{"InstructionError":[0,{"Custom":6006}]}"#;
+    const CUSTOM_OTHER: &str = r#"{"InstructionError":[2,{"Custom":1770}]}"#;
+
+    #[test]
+    fn program_errors_are_classified_by_code() {
+        assert!(is_trigger_not_ready_error(CUSTOM_6004));
+        assert!(!is_thread_paused_error(CUSTOM_6004));
+
+        assert!(is_thread_paused_error(CUSTOM_6006));
+        assert!(!is_trigger_not_ready_error(CUSTOM_6006));
+
+        assert!(!is_trigger_not_ready_error(CUSTOM_OTHER));
+        assert!(!is_thread_paused_error(CUSTOM_OTHER));
+    }
+
+    #[test]
+    fn cluster_conditions_are_retryable_not_fatal() {
+        // These used to collapse to Custom(0) and abort the retry loop.
+        for err in [
+            r#""BlockhashNotFound""#,
+            r#""AlreadyProcessed""#,
+            r#""AccountInUse""#,
+            r#"{"WouldExceedMaxBlockCostLimit":null}"#,
+        ] {
+            assert!(is_retryable_chain_error(err), "should retry: {err}");
+            assert!(
+                !is_trigger_not_ready_error(err) && !is_thread_paused_error(err),
+                "should not look like a program error: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn genuine_program_failure_is_not_retryable() {
+        assert!(!is_retryable_chain_error(CUSTOM_OTHER));
+    }
+
+    #[test]
+    fn only_blockhash_expiry_forces_resigning() {
+        assert!(is_blockhash_expired(r#""BlockhashNotFound""#));
+        assert!(!is_blockhash_expired(r#""AlreadyProcessed""#));
+        assert!(!is_blockhash_expired(CUSTOM_6004));
+    }
+
+    #[test]
+    fn blockhash_reuse_window_stays_inside_validity() {
+        // A blockhash is valid for ~150 slots (~60s). The reuse window must sit
+        // comfortably under that, or a retry resends a transaction that can no
+        // longer land.
+        assert!(BLOCKHASH_MAX_AGE < Duration::from_secs(60));
     }
 }

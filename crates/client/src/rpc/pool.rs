@@ -75,6 +75,19 @@ struct ProgramAccountsItem {
     account: SafeUiAccount,
 }
 
+/// `getProgramAccounts` with `withContext: true`, which wraps the array so the
+/// slot the snapshot was taken at is available.
+#[derive(Debug, serde::Deserialize)]
+struct ProgramAccountsWithContext {
+    context: ResponseContext,
+    value: Vec<ProgramAccountsItem>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ResponseContext {
+    slot: u64,
+}
+
 /// Core RPC client pool
 pub struct RpcPool {
     /// HTTP client with connection pooling
@@ -283,15 +296,21 @@ impl RpcPool {
         Ok(response.result.map(|r| r.value).unwrap_or_default())
     }
 
-    /// Get program accounts with optional filters
+    /// Get program accounts with optional filters.
+    ///
+    /// Returns the slot the snapshot was taken at alongside the accounts.
+    /// Callers need it: feeding these into the cache without a real slot makes
+    /// every entry look older than what is already cached, so the whole snapshot
+    /// is discarded as stale.
     pub async fn get_program_accounts(
         &self,
         program_id: &Pubkey,
         filters: Option<Vec<serde_json::Value>>,
-    ) -> Result<Vec<(Pubkey, SafeUiAccount)>> {
+    ) -> Result<(u64, Vec<(Pubkey, SafeUiAccount)>)> {
         let mut params = json!({
             "encoding": "base64+zstd",
-            "commitment": "confirmed"
+            "commitment": "confirmed",
+            "withContext": true
         });
 
         if let Some(f) = filters {
@@ -305,13 +324,17 @@ impl RpcPool {
             "params": [program_id.to_string(), params]
         });
 
-        let response: JsonRpcResponse<Vec<ProgramAccountsItem>> =
+        let response: JsonRpcResponse<ProgramAccountsWithContext> =
             self.execute_with_failover(&body, true).await?;
 
-        let items = response.result.unwrap_or_default();
-        let mut accounts = Vec::with_capacity(items.len());
+        let Some(result) = response.result else {
+            return Ok((0, Vec::new()));
+        };
 
-        for item in items {
+        let slot = result.context.slot;
+        let mut accounts = Vec::with_capacity(result.value.len());
+
+        for item in result.value {
             let pubkey: Pubkey = item
                 .pubkey
                 .parse()
@@ -319,7 +342,7 @@ impl RpcPool {
             accounts.push((pubkey, item.account));
         }
 
-        Ok(accounts)
+        Ok((slot, accounts))
     }
 
     /// Simulate a transaction and return accounts
@@ -365,11 +388,17 @@ impl RpcPool {
         Ok(response.result)
     }
 
-    /// Get signature status for confirmation checking
+    /// Get signature status for confirmation checking.
+    ///
+    /// On failure the raw `err` value is returned verbatim rather than being
+    /// coerced into a `TransactionError`. Coercing loses the error kind — every
+    /// non-`InstructionError` failure (`BlockhashNotFound`, `AlreadyProcessed`,
+    /// `AccountInUse`) collapses to `Custom(0)`, which callers cannot tell apart
+    /// from a genuine program error and so treat as permanently fatal.
     pub async fn get_signature_status(
         &self,
         signature: &Signature,
-    ) -> Result<Option<Result<(), solana_sdk::transaction::TransactionError>>> {
+    ) -> Result<Option<Result<(), String>>> {
         let body = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -405,22 +434,9 @@ impl RpcPool {
                 return Ok(None); // Not yet confirmed
             }
 
-            // Check for error
+            // Check for error — preserve it exactly as the RPC reported it.
             if let Some(err) = status.err {
-                // Try to parse into TransactionError
-                // For now, return a generic error
-                return Ok(Some(Err(
-                    solana_sdk::transaction::TransactionError::InstructionError(
-                        0,
-                        solana_sdk::instruction::InstructionError::Custom(
-                            err.get("InstructionError")
-                                .and_then(|e| e.get(1))
-                                .and_then(|e| e.get("Custom"))
-                                .and_then(|e| e.as_u64())
-                                .unwrap_or(0) as u32,
-                        ),
-                    ),
-                )));
+                return Ok(Some(Err(err.to_string())));
             }
 
             Ok(Some(Ok(())))
