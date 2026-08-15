@@ -509,6 +509,11 @@ pub fn is_installed() -> bool {
     )
 }
 
+/// How to update the CLI itself. The CLI no longer manages its own versions —
+/// the installer owns `~/.local/bin/antegen`, so re-running it is the update.
+pub const INSTALL_HINT: &str =
+    "Re-run: curl -sSfL https://raw.githubusercontent.com/wuwei-labs/antegen/main/scripts/install.sh | bash";
+
 /// Print update notices for CLI and node if newer versions are available
 async fn print_update_notices() {
     #[cfg(not(feature = "prod"))]
@@ -541,11 +546,11 @@ async fn print_update_notices() {
         println!();
     }
     if let Some(latest) = cli_update {
-        println!("CLI update available: {} -> Run `antegen update`", latest);
+        println!("CLI update available: {} -> {}", latest, INSTALL_HINT);
     }
     if let Some(latest) = node_update {
         println!(
-            "Node update available: {} -> Run `antegenctl update`",
+            "Node update available: {} -> Run `antegen node update`",
             latest
         );
     }

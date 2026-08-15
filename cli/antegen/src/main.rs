@@ -107,39 +107,6 @@ enum Commands {
     },
 
     // =========================================================================
-    // CLI version management (removed next — see `antegen node` for the daemon)
-    // =========================================================================
-    /// Update CLI to the latest version
-    Update {
-        /// Update to a specific version (e.g., v5.0.0)
-        #[arg(long, value_name = "VERSION")]
-        version: Option<String>,
-    },
-
-    /// List installed and available versions
-    List {
-        /// Also show available versions from GitHub
-        #[arg(long)]
-        remote: bool,
-    },
-
-    /// Switch CLI to a specific version
-    Use {
-        /// Version to switch to (e.g., v5.0.0)
-        version: String,
-    },
-
-    /// Download a specific CLI version (doesn't switch)
-    Install {
-        /// Version to install (e.g., v5.0.0)
-        #[arg(long, value_name = "VERSION")]
-        version: Option<String>,
-    },
-
-    /// Register locally-built binaries and verify configuration
-    Verify,
-
-    // =========================================================================
     // Hidden deprecated aliases — these moved under `antegen node`.
     // Kept for one release so existing runbooks keep working.
     // =========================================================================
@@ -608,28 +575,7 @@ async fn run_antegen() -> Result<()> {
         // =================================================================
         // Top-level operator commands
         // =================================================================
-        Commands::Verify => {
-            antegen_cli_core::commands::update::import_current_binary()?;
-            antegen_cli_core::commands::update::import_node_binary()?;
-            // Validate config if it exists
-            if let Ok(config_path) = antegen_cli_core::commands::default_config_path() {
-                if config_path.exists() {
-                    println!();
-                    antegen_cli_core::commands::config::validate(config_path)?;
-                }
-            }
-            Ok(())
-        }
         Commands::Init { rpc, force } => antegen_cli_core::commands::service::init(rpc, force),
-        Commands::Update { version } => antegen_cli_core::commands::update::update(version).await,
-        Commands::List { remote } => antegen_cli_core::commands::update::list_cli(remote).await,
-        Commands::Use { version } => {
-            antegen_cli_core::commands::update::use_cli_version(version).await
-        }
-        Commands::Install { version } => {
-            // Used by install script — no deprecation warning
-            antegen_cli_core::commands::update::install(version).await
-        }
         Commands::Info { json } => antegen_cli_core::commands::info::info(json).await,
         Commands::Fund { amount } => {
             let config = antegen_cli_core::commands::default_config_path()?;

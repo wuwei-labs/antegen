@@ -171,27 +171,6 @@ pub async fn fetch_latest_version() -> Result<String> {
     .context("Task failed")?
 }
 
-/// Fetch all available CLI versions from GitHub
-pub async fn fetch_all_versions() -> Result<Vec<String>> {
-    tokio::task::spawn_blocking(|| {
-        let releases = self_update::backends::github::ReleaseList::configure()
-            .repo_owner(REPO_OWNER)
-            .repo_name(REPO_NAME)
-            .build()
-            .context("Failed to build release list")?
-            .fetch()
-            .context("Failed to fetch releases from GitHub")?;
-
-        Ok(releases
-            .iter()
-            .filter(|r| !r.version.starts_with("geyser-") && !r.version.starts_with("node-"))
-            .map(|r| normalize_version(&r.version))
-            .collect())
-    })
-    .await
-    .context("Task failed")?
-}
-
 /// Fetch the latest node version from GitHub releases
 pub async fn fetch_latest_node_version() -> Result<String> {
     tokio::task::spawn_blocking(|| {
@@ -241,215 +220,9 @@ pub async fn fetch_all_node_versions() -> Result<Vec<String>> {
     .context("Task failed")?
 }
 
-/// Import a locally-built node binary into the version manager.
-/// Searches next to the current exe (cargo install) and in target/release/ (cargo build).
-/// Silently returns Ok if no node binary is found.
-pub fn import_node_binary() -> Result<()> {
-    let current_exe = std::env::current_exe().context("Failed to resolve current exe")?;
-
-    // Search for antegen-node next to current exe, then in workspace target/release/
-    let candidates = [current_exe.with_file_name("antegen-node"), {
-        // Walk up from current exe to find workspace root target/release/
-        let mut dir = current_exe.parent().map(|p| p.to_path_buf());
-        loop {
-            match dir {
-                Some(ref d) if d.file_name().is_some_and(|n| n == "target") => {
-                    break d.join("release/antegen-node");
-                }
-                Some(ref d) if d.parent().is_some() => {
-                    dir = d.parent().map(|p| p.to_path_buf());
-                }
-                _ => break PathBuf::from("/nonexistent"),
-            }
-        }
-    }];
-
-    let node_binary = match candidates.iter().find(|p| p.exists()) {
-        Some(p) => p,
-        None => return Ok(()), // silently skip — user can `antegenctlinstall` instead
-    };
-
-    // Run --version to extract version string ("antegen-node 4.1.3" → "v4.1.3")
-    let output = std::process::Command::new(node_binary)
-        .arg("--version")
-        .output()
-        .context("Failed to run antegen-node --version")?;
-    let version_str = String::from_utf8_lossy(&output.stdout);
-    let version = version_str
-        .split_whitespace()
-        .last()
-        .map(normalize_version)
-        .context("Could not parse node version")?;
-
-    let versioned_path = versioned_node_binary_path(&version)?;
-    let bin_dir = bin_dir()?;
-    fs::create_dir_all(&bin_dir)?;
-
-    fs::copy(node_binary, &versioned_path).context("Failed to copy node binary")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&versioned_path, fs::Permissions::from_mode(0o755))?;
-    }
-
-    #[cfg(unix)]
-    {
-        let symlink_path = node_binary_path()?;
-        update_symlink(&symlink_path, &versioned_path)?;
-    }
-
-    write_node_version(&version)?;
-    println!("Registered node {} in version manager", version);
-    Ok(())
-}
-
-/// Import the currently-running binary into the in-band version manager.
-/// Bridges cargo install (out-of-band) into the managed ~/.local/bin/ system.
-pub fn import_current_binary() -> Result<()> {
-    let version = current_version();
-    let current_exe = std::env::current_exe().context("Failed to resolve current exe")?;
-    let versioned_path = versioned_binary_path(version)?;
-    let bin_dir = bin_dir()?;
-
-    fs::create_dir_all(&bin_dir)?;
-
-    // Copy current binary to versioned path (e.g., ~/.local/bin/antegen-v5.0.0)
-    if !versioned_path.exists()
-        || versioned_path
-            .metadata()
-            .and_then(|m| current_exe.metadata().map(|cm| m.len() != cm.len()))
-            .unwrap_or(true)
-    {
-        fs::copy(&current_exe, &versioned_path).context("Failed to copy binary")?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&versioned_path, fs::Permissions::from_mode(0o755))?;
-        }
-    }
-
-    // Update symlinks so ~/.local/bin/antegen and ~/.local/bin/antegenctl resolve correctly
-    #[cfg(unix)]
-    {
-        let symlink_path = binary_path()?;
-        update_symlink(&symlink_path, &versioned_path)?;
-        let antegenctl_path = antegenctl_symlink_path()?;
-        update_symlink(&antegenctl_path, &versioned_path)?;
-    }
-
-    ensure_path_configured();
-
-    println!("Registered {} in version manager", version);
-    Ok(())
-}
-
-/// Shell script for ~/.antegen/env (rustup-style PATH setup)
-const ENV_SCRIPT: &str = r#"# Antegen PATH setup - sourced by shell rc files
-# Add ~/.local/bin to PATH if not already present
-case ":${PATH}:" in
-    *:"$HOME/.local/bin":*)
-        ;;
-    *)
-        export PATH="$HOME/.local/bin:$PATH"
-        ;;
-esac
-"#;
-
-/// Ensure ~/.local/bin is in PATH using rustup-style env file approach
-fn ensure_path_configured() {
-    use std::io::Write;
-
-    let Some(home) = dirs::home_dir() else {
-        return;
-    };
-
-    let antegen_dir = home.join(".antegen");
-    let env_file = antegen_dir.join("env");
-
-    if !env_file.exists() {
-        if fs::create_dir_all(&antegen_dir).is_err() {
-            return;
-        }
-        if fs::write(&env_file, ENV_SCRIPT).is_err() {
-            return;
-        }
-    }
-
-    if std::env::var("PATH")
-        .map(|p| p.contains(".local/bin"))
-        .unwrap_or(false)
-    {
-        return;
-    }
-
-    let rc_files = [".zshenv", ".zshrc", ".bashrc", ".bash_profile", ".profile"];
-
-    for rc_name in rc_files {
-        let rc_path = home.join(rc_name);
-        if !rc_path.exists() {
-            continue;
-        }
-
-        if let Ok(content) = fs::read_to_string(&rc_path) {
-            if content.contains(".antegen/env") {
-                return;
-            }
-        }
-
-        if let Ok(mut file) = fs::OpenOptions::new().append(true).open(&rc_path) {
-            if writeln!(file, "\n# Added by antegen\n. \"$HOME/.antegen/env\"").is_ok() {
-                println!("Added antegen to PATH in {}", rc_name);
-                println!("Run 'source ~/{}' or restart your shell to apply.", rc_name);
-                return;
-            }
-        }
-    }
-}
-
 // =============================================================================
-// CLI binary paths and management
+// Dev-build detection
 // =============================================================================
-
-/// Get the CLI binary symlink path (~/.local/bin/antegen)
-pub fn binary_path() -> Result<PathBuf> {
-    dirs::home_dir()
-        .map(|p| p.join(".local/bin/antegen"))
-        .context("Could not determine home directory")
-}
-
-/// Get the antegenctl symlink path (~/.local/bin/antegenctl)
-pub fn antegenctl_symlink_path() -> Result<PathBuf> {
-    dirs::home_dir()
-        .map(|p| p.join(".local/bin/antegenctl"))
-        .context("Could not determine home directory")
-}
-
-/// Get the versioned CLI binary path (e.g., ~/.local/bin/antegen-v5.0.0)
-fn versioned_binary_path(version: &str) -> Result<PathBuf> {
-    dirs::home_dir()
-        .map(|p| p.join(format!(".local/bin/antegen-{}", version)))
-        .context("Could not determine home directory")
-}
-
-/// Build the download URL for the CLI binary
-pub fn build_download_url(version: &str) -> String {
-    let target = get_platform_target();
-    format!(
-        "https://github.com/{}/{}/releases/download/{}/antegen-{}-{}",
-        REPO_OWNER, REPO_NAME, version, version, target
-    )
-}
-
-/// Get the installed CLI version from the symlink target
-fn get_installed_version() -> Option<String> {
-    let symlink_path = binary_path().ok()?;
-    if !symlink_path.is_symlink() {
-        return None;
-    }
-    let target = std::fs::read_link(&symlink_path).ok()?;
-    let filename = target.file_name()?.to_str()?;
-    filename.strip_prefix("antegen-").map(|v| v.to_string())
-}
 
 /// Check if we're running from a cargo target directory (dev mode)
 #[cfg(not(feature = "prod"))]
@@ -466,233 +239,6 @@ fn get_dev_binary() -> Option<PathBuf> {
 #[cfg(not(feature = "prod"))]
 pub fn is_dev_build() -> bool {
     get_dev_binary().is_some()
-}
-
-/// Update the CLI binary to latest or a specific version.
-/// Updates both `antegen` and `antegenctl` symlinks. Does not touch the node or service.
-pub async fn update(version: Option<String>) -> Result<()> {
-    let installed = get_installed_version().unwrap_or_else(|| current_version().to_string());
-    println!("Installed CLI version: {}", installed);
-
-    let latest = match &version {
-        Some(v) => normalize_version(v),
-        None => {
-            println!("Checking for CLI updates...");
-            fetch_latest_version().await?
-        }
-    };
-
-    if version.is_none() && !version_less_than(&installed, &latest) {
-        println!("Already up to date ({})", installed);
-        return Ok(());
-    }
-
-    if version.is_some() {
-        println!("Switching CLI to version: {}", latest);
-    } else {
-        println!("New CLI version available: {} -> {}", installed, latest);
-    }
-
-    let url = build_download_url(&latest);
-    let temp_path = download_binary(&url, "antegen-update").await?;
-
-    let symlink_path = binary_path()?;
-    let antegenctl_path = antegenctl_symlink_path()?;
-    let new_versioned_path = versioned_binary_path(&latest)?;
-    let old_versioned_path = versioned_binary_path(&installed)?;
-
-    install_binary_to(&temp_path, &new_versioned_path)?;
-
-    // If current binary is a regular file (not symlink), migrate it to versioned path
-    if symlink_path.exists() && !symlink_path.is_symlink() {
-        println!("Migrating existing binary to versioned path...");
-        fs::rename(&symlink_path, &old_versioned_path)
-            .context("Failed to migrate existing binary")?;
-    }
-
-    #[cfg(unix)]
-    {
-        update_symlink(&symlink_path, &new_versioned_path)?;
-        update_symlink(&antegenctl_path, &new_versioned_path)?;
-    }
-
-    let node_version = read_node_version();
-    if let Some(nv) = &node_version {
-        println!("Updated CLI to {}. Node still running {}.", latest, nv);
-    } else {
-        println!("Updated CLI to {}", latest);
-    }
-
-    ensure_path_configured();
-
-    Ok(())
-}
-
-/// Install the CLI binary (called by install script).
-/// Downloads if needed, sets up symlink, configures PATH.
-pub async fn install(version: Option<String>) -> Result<()> {
-    let target_version = match &version {
-        Some(v) => normalize_version(v),
-        None => {
-            println!("Fetching latest version...");
-            fetch_latest_version().await?
-        }
-    };
-
-    println!("Installing antegen {}...", target_version);
-    ensure_binary_installed(Some(&target_version)).await?;
-
-    println!("Installed antegen {}", target_version);
-    Ok(())
-}
-
-/// Ensure the CLI binary is installed at ~/.local/bin/antegen
-pub async fn ensure_binary_installed(version: Option<&str>) -> Result<PathBuf> {
-    let symlink_path = binary_path()?;
-    let bin_dir = bin_dir()?;
-
-    fs::create_dir_all(&bin_dir)?;
-
-    #[cfg(not(feature = "prod"))]
-    if version.is_none() {
-        if let Some(dev_binary) = get_dev_binary() {
-            let version = current_version();
-            let versioned_path = versioned_binary_path(version)?;
-
-            let needs_update = !versioned_path.exists()
-                || symlink_path
-                    .read_link()
-                    .ok()
-                    .map(|target| target != versioned_path)
-                    .unwrap_or(true);
-
-            if needs_update {
-                println!("Dev mode: installing {} ...", versioned_path.display());
-                fs::copy(&dev_binary, &versioned_path).context("Failed to copy dev binary")?;
-
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    fs::set_permissions(&versioned_path, fs::Permissions::from_mode(0o755))?;
-                }
-
-                #[cfg(unix)]
-                {
-                    update_symlink(&symlink_path, &versioned_path)?;
-                    let antegenctl_path = antegenctl_symlink_path()?;
-                    update_symlink(&antegenctl_path, &versioned_path)?;
-                }
-
-                println!("Installed dev binary {}", version);
-            }
-
-            return Ok(symlink_path);
-        }
-    }
-
-    let version = match version {
-        Some(v) => normalize_version(v),
-        None => {
-            if symlink_path.exists() {
-                return Ok(symlink_path);
-            }
-            println!("Binary not found at {}", symlink_path.display());
-            println!("Downloading latest release...");
-            fetch_latest_version().await?
-        }
-    };
-
-    let versioned_path = versioned_binary_path(&version)?;
-
-    if !versioned_path.exists() {
-        println!("Version {} not installed, downloading...", version);
-        let url = build_download_url(&version);
-        let temp_path = download_binary(&url, "antegen-update").await?;
-        install_binary_to(&temp_path, &versioned_path)?;
-        println!("Downloaded {}", version);
-    }
-
-    #[cfg(unix)]
-    {
-        update_symlink(&symlink_path, &versioned_path)?;
-        let antegenctl_path = antegenctl_symlink_path()?;
-        update_symlink(&antegenctl_path, &versioned_path)?;
-    }
-
-    println!("Switched CLI to {}", version);
-    ensure_path_configured();
-
-    Ok(symlink_path)
-}
-
-/// Switch CLI to a specific version (for `antegen use <version>`)
-/// Pass `"cargo"` to switch to the cargo-installed binary.
-pub async fn use_cli_version(version: String) -> Result<()> {
-    if version == "cargo" {
-        let cargo_bin = dirs::home_dir()
-            .map(|p| p.join(".cargo/bin/antegen"))
-            .context("Could not determine home directory")?;
-        anyhow::ensure!(
-            cargo_bin.exists(),
-            "No cargo-installed binary found at {}",
-            cargo_bin.display()
-        );
-
-        #[cfg(unix)]
-        {
-            let symlink_path = binary_path()?;
-            let antegenctl_path = antegenctl_symlink_path()?;
-            update_symlink(&symlink_path, &cargo_bin)?;
-            update_symlink(&antegenctl_path, &cargo_bin)?;
-        }
-
-        println!("Switched to cargo-installed version");
-        return Ok(());
-    }
-
-    let version = normalize_version(&version);
-    let versioned_path = versioned_binary_path(&version)?;
-
-    if !versioned_path.exists() {
-        println!("CLI version {} not installed, downloading...", version);
-        let url = build_download_url(&version);
-        let temp_path = download_binary(&url, "antegen-update").await?;
-        install_binary_to(&temp_path, &versioned_path)?;
-        println!("Downloaded {}", version);
-    }
-
-    #[cfg(unix)]
-    {
-        let symlink_path = binary_path()?;
-        let antegenctl_path = antegenctl_symlink_path()?;
-        update_symlink(&symlink_path, &versioned_path)?;
-        update_symlink(&antegenctl_path, &versioned_path)?;
-    }
-
-    println!("Switched CLI to {}", version);
-    Ok(())
-}
-
-/// Download a specific CLI version without switching (for `antegen install <version>`)
-#[allow(dead_code)]
-pub async fn install_cli_version(version: String) -> Result<()> {
-    let version = normalize_version(&version);
-    let versioned_path = versioned_binary_path(&version)?;
-
-    if versioned_path.exists() {
-        println!("{} is already installed.", version);
-        return Ok(());
-    }
-
-    let url = build_download_url(&version);
-    let temp_path = download_binary(&url, "antegen-update").await?;
-    install_binary_to(&temp_path, &versioned_path)?;
-
-    println!(
-        "Downloaded CLI {}. Use `antegen use {}` to switch.",
-        version, version
-    );
-    Ok(())
 }
 
 // =============================================================================
@@ -905,9 +451,9 @@ fn find_workspace_root() -> Result<PathBuf> {
     }
 }
 
-/// Update node to latest or a specific version (for `antegenctl update`).
+/// Update node to latest or a specific version (for `antegen node update`).
 /// Downloads the node binary, updates the `antegen-node` symlink, writes node-version.
-/// Does NOT touch `antegen`/`antegenctl` CLI symlinks.
+/// Does NOT touch the interactive CLI at ~/.local/bin/antegen.
 pub async fn update_node(version: Option<String>, local: bool) -> Result<()> {
     if local {
         let version = cargo_build_and_install_node()?;
@@ -989,7 +535,7 @@ pub async fn update_node(version: Option<String>, local: bool) -> Result<()> {
     Ok(())
 }
 
-/// Switch node to a specific version (for `antegenctluse <version>`).
+/// Switch node to a specific version (for `antegen node use <version>`).
 /// Downloads if needed, updates symlink, writes node-version, reinstalls service.
 /// Does NOT touch CLI symlinks.
 pub async fn use_node_version(version: String) -> Result<()> {
@@ -1054,17 +600,17 @@ pub async fn use_node_version(version: String) -> Result<()> {
         super::service::start(None, Some(version.clone())).await?;
     } else {
         println!("Node switched to {}", version);
-        println!("Run `antegenctl start` to start the service.");
+        println!("Run `antegen node start` to start the service.");
     }
 
     Ok(())
 }
 
-/// Download a specific node version without switching (for `antegenctl install <version>`)
+/// Download a specific node version without switching (for `antegen node install <version>`)
 pub async fn install_node_version(version: Option<String>, local: bool) -> Result<()> {
     if local {
         let version = cargo_build_and_install_node()?;
-        println!("Use `antegenctl use {}` to switch.", version);
+        println!("Use `antegen node use {}` to switch.", version);
         return Ok(());
     }
 
@@ -1090,7 +636,7 @@ pub async fn install_node_version(version: Option<String>, local: bool) -> Resul
     install_binary_to(&temp_path, &versioned_path)?;
 
     println!(
-        "Downloaded node {}. Use `antegenctl use {}` to switch.",
+        "Downloaded node {}. Use `antegen node use {}` to switch.",
         version, version
     );
     Ok(())
@@ -1100,111 +646,8 @@ pub async fn install_node_version(version: Option<String>, local: bool) -> Resul
 // List (shows both CLI and node versions)
 // =============================================================================
 
-/// List installed CLI versions (for `antegen list`)
-pub async fn list_cli(remote: bool) -> Result<()> {
-    let bin_dir = bin_dir()?;
-
-    // Detect cargo-installed version
-    let cargo_bin = dirs::home_dir().map(|p| p.join(".cargo/bin/antegen"));
-    let cargo_version: Option<String> = cargo_bin.as_ref().filter(|p| p.exists()).and_then(|p| {
-        std::process::Command::new(p)
-            .arg("--version")
-            .output()
-            .ok()
-            .and_then(|o| {
-                let out = String::from_utf8_lossy(&o.stdout);
-                // Parse "antegen 5.0.1" → "v5.0.1"
-                out.split_whitespace().nth(1).map(|v| format!("v{}", v))
-            })
-    });
-
-    // Determine active version from symlink target
-    let symlink_path = binary_path()?;
-    let symlink_target = if symlink_path.is_symlink() {
-        fs::read_link(&symlink_path).ok()
-    } else {
-        None
-    };
-
-    // If symlink → ~/.cargo/bin/antegen, cargo is active
-    // If symlink → ~/.local/bin/antegen-v5.0.0, that managed version is active
-    let cargo_is_active = symlink_target
-        .as_ref()
-        .is_some_and(|t| t.to_string_lossy().contains(".cargo/bin/"));
-    let managed_active = if !cargo_is_active {
-        symlink_target.as_ref().and_then(|t| {
-            t.file_name()?
-                .to_str()?
-                .strip_prefix("antegen-")
-                .map(String::from)
-        })
-    } else {
-        None
-    };
-
-    // Collect locally installed managed versions
-    let mut cli_versions: Vec<String> = Vec::new();
-    if let Ok(entries) = fs::read_dir(&bin_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            // Skip antegen-node-* entries
-            if name.starts_with("antegen-node-") {
-                continue;
-            }
-            if let Some(ver) = name.strip_prefix("antegen-") {
-                if ver.starts_with('v') {
-                    cli_versions.push(ver.to_string());
-                }
-            }
-        }
-    }
-
-    // Add cargo version to the list if present and not already there
-    if let Some(ref cv) = cargo_version {
-        if !cli_versions.contains(cv) {
-            cli_versions.push(cv.clone());
-        }
-    }
-
-    cli_versions.sort_by(|a, b| match (parse_version(a), parse_version(b)) {
-        (Some(va), Some(vb)) => vb.cmp(&va),
-        _ => b.cmp(a),
-    });
-
-    println!("Installed versions:");
-    for ver in &cli_versions {
-        let is_cargo = cargo_version.as_deref() == Some(ver.as_str());
-        let is_active = if is_cargo {
-            cargo_is_active
-        } else {
-            managed_active.as_deref() == Some(ver.as_str())
-        };
-        let prefix = if is_active { " *" } else { "  " };
-        let suffix = if is_cargo { " (cargo)" } else { "" };
-        println!("{}{}{}", prefix, ver, suffix);
-    }
-
-    if remote {
-        println!();
-        println!("Available versions:");
-        let versions = fetch_all_versions().await?;
-        let mut has_remote = false;
-        for ver in &versions {
-            if !cli_versions.contains(ver) {
-                println!("  {}", ver);
-                has_remote = true;
-            }
-        }
-        if !has_remote {
-            println!("  (all versions installed)");
-        }
-    }
-
-    Ok(())
-}
-
 /// Download the latest supported node binary and set it as active.
-/// Used by `antegen init` / `antegenctlinit` for out-of-box readiness.
+/// Used by `antegen init` for out-of-box readiness.
 pub async fn download_latest_node() -> Result<()> {
     let latest = fetch_latest_node_version().await?;
 
@@ -1228,7 +671,7 @@ pub async fn download_latest_node() -> Result<()> {
     Ok(())
 }
 
-/// List node versions (for `antegenctl list`)
+/// List node versions (for `antegen node list`)
 /// Shows installed versions, local cargo build (if detected), and available remote versions.
 pub async fn list_node() -> Result<()> {
     let bin_dir = bin_dir()?;
@@ -1285,7 +728,7 @@ pub async fn list_node() -> Result<()> {
             println!();
             println!("Local build:");
             println!("  {} ({})", ver, path.display());
-            println!("  Use `antegenctl use local` to switch.");
+            println!("  Use `antegen node use local` to switch.");
         }
     }
 

@@ -69,21 +69,13 @@ fn shorten_path(path: &std::path::Path) -> String {
     path.display().to_string()
 }
 
-/// Get the installed binary version from the symlink target
+/// Version of the binary the service is running.
+///
+/// This is the node version manager's tracking file, not the version of the
+/// CLI you just typed — the service holds an absolute path to whichever
+/// versioned binary it was installed against, so the two can differ.
 fn get_installed_binary_version() -> Option<String> {
-    let binary_path = super::update::binary_path().ok()?;
-
-    // Check if symlink exists
-    if !binary_path.is_symlink() {
-        return None;
-    }
-
-    // Read the symlink target (e.g., antegen-v4.4.0)
-    let target = std::fs::read_link(&binary_path).ok()?;
-    let filename = target.file_name()?.to_str()?;
-
-    // Extract version from filename like "antegen-v4.4.0"
-    filename.strip_prefix("antegen-").map(|v| v.to_string())
+    super::update::read_node_version()
 }
 
 /// Gather all info
@@ -278,7 +270,7 @@ fn print_info(info: &InfoOutput) {
 
     // Check if we have config
     if info.executor.is_none() && info.rpc.is_none() {
-        println!("Config not found. Run `antegenctl init` to get started.");
+        println!("Config not found. Run `antegen init` to get started.");
         return;
     }
 
@@ -308,11 +300,15 @@ fn print_info(info: &InfoOutput) {
         println!();
     }
     if let Some(version) = &info.cli_update_available {
-        println!("CLI update available: {} -> Run `antegen update`", version);
+        println!(
+            "CLI update available: {} -> {}",
+            version,
+            super::service::INSTALL_HINT
+        );
     }
     if let Some(version) = &info.node_update_available {
         println!(
-            "Node update available: {} -> Run `antegenctl update`",
+            "Node update available: {} -> Run `antegen node update`",
             version
         );
     }
