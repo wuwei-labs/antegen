@@ -139,8 +139,33 @@ fn do_init(rpc: Option<String>, force: bool) -> Result<PathBuf> {
     Ok(config_path)
 }
 
+/// Arguments the service should pass to a daemon binary.
+///
+/// The daemon used to be a separate `antegen-node` binary that took `--config`
+/// directly; it is now `antegen node run`. Both can be installed at once — an
+/// operator rolling back to a pre-consolidation version still has its binary on
+/// disk — so ask the binary which it is rather than guessing from a version
+/// number. `antegen-node` identifies itself in `--version`; anything else is
+/// assumed to be the consolidated CLI.
+fn daemon_args(binary: &Path, config_path: &Path) -> Vec<OsString> {
+    let legacy = std::process::Command::new(binary)
+        .arg("--version")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).starts_with("antegen-node"))
+        .unwrap_or(false);
+
+    let mut args = Vec::new();
+    if !legacy {
+        args.push(OsString::from("node"));
+        args.push(OsString::from("run"));
+    }
+    args.push(OsString::from("--config"));
+    args.push(OsString::from(config_path.as_os_str()));
+    args
+}
+
 /// Install the service (helper for start command).
-/// Uses the `antegen-node` binary directly instead of the CLI binary.
+/// Runs the versioned daemon binary, which is independent of the CLI on PATH.
 async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()> {
     let manager = get_service_manager()?;
     let label = get_label()?;
@@ -177,11 +202,12 @@ async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()
         .context("Could not determine log directory")?;
     std::fs::create_dir_all(&log_dir)?;
 
-    // The daemon is `antegen node run` — the executor ships inside the CLI.
+    let args = daemon_args(&binary, config_path);
+
     #[cfg(target_os = "macos")]
     let contents = Some(generate_launchd_plist(
         &binary,
-        config_path,
+        &args,
         &log_dir.join("antegen.out"),
         &log_dir.join("antegen.log"),
     ));
@@ -193,12 +219,7 @@ async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()
         .install(ServiceInstallCtx {
             label: label.clone(),
             program: binary.clone(),
-            args: vec![
-                OsString::from("node"),
-                OsString::from("run"),
-                OsString::from("--config"),
-                OsString::from(config_path.as_os_str()),
-            ],
+            args,
             contents,
             username: None,
             working_directory: None,
@@ -224,10 +245,16 @@ async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()
 #[cfg(target_os = "macos")]
 fn generate_launchd_plist(
     binary: &std::path::Path,
-    config_path: &std::path::Path,
+    args: &[OsString],
     stdout_log: &std::path::Path,
     stderr_log: &std::path::Path,
 ) -> String {
+    let program_arguments = std::iter::once(binary.to_string_lossy().into_owned())
+        .chain(args.iter().map(|a| a.to_string_lossy().into_owned()))
+        .map(|a| format!("        <string>{}</string>", a))
+        .collect::<Vec<_>>()
+        .join("\n");
+
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -237,11 +264,7 @@ fn generate_launchd_plist(
     <string>{}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{}</string>
-        <string>node</string>
-        <string>run</string>
-        <string>--config</string>
-        <string>{}</string>
+{}
     </array>
     <key>StandardOutPath</key>
     <string>{}</string>
@@ -259,8 +282,7 @@ fn generate_launchd_plist(
 </dict>
 </plist>"#,
         SERVICE_LABEL,
-        binary.display(),
-        config_path.display(),
+        program_arguments,
         stdout_log.display(),
         stderr_log.display(),
     )
@@ -324,21 +346,26 @@ pub async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
             println!("✓ Service started");
             println!();
             println!("Antegen is now running as a user service.");
-            println!("Use `antegenctl stop` to stop or `antegenctl restart` to restart.");
+            println!("Use `antegen node stop` to stop or `antegen node restart` to restart.");
 
             // Check for updates
             print_update_notices().await;
         }
+        // Report these as failures. `antegen node update` reinstalls the service
+        // to move the daemon onto a new binary; exiting 0 here would report a
+        // successful update while the node was not running at all.
         ServiceStatus::Stopped(reason) => {
-            println!("✗ Service started but crashed immediately");
-            if let Some(msg) = reason {
-                println!("  Reason: {}", msg);
-            }
-            println!();
-            println!("Check the configuration and try `antegenctl run` to see error output.");
+            anyhow::bail!(
+                "Service started but crashed immediately{}\n  \
+                 Run `antegen node run` to see the error output, or \
+                 `antegen node logs` for the service log.",
+                reason
+                    .map(|m| format!("\n  Reason: {}", m))
+                    .unwrap_or_default()
+            );
         }
         ServiceStatus::NotInstalled => {
-            println!("✗ Service failed to install");
+            anyhow::bail!("Service failed to install");
         }
     }
 

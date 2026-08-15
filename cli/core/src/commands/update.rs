@@ -277,6 +277,34 @@ pub fn is_dev_build() -> bool {
 // Node binary paths and management
 // =============================================================================
 
+/// Remove artefacts of the pre-consolidation layout.
+///
+/// `antegenctl` was never a real binary on a scripted install — it was a
+/// symlink into `~/.local/bin` pointing at the `antegen` binary — so leaving it
+/// behind means `antegenctl <cmd>` keeps resolving to whatever version it was
+/// last pointed at, silently running an old CLI. Only symlinks we created are
+/// removed; a real file there belongs to someone else.
+///
+/// Idempotent, and never fatal: failing to tidy up must not stop an update.
+pub fn clean_legacy_layout() {
+    #[cfg(unix)]
+    {
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
+        let stale = home.join(".local/bin/antegenctl");
+        if !stale.is_symlink() {
+            return;
+        }
+        let points_into_bin = fs::read_link(&stale)
+            .map(|t| t.starts_with(home.join(".local/bin")))
+            .unwrap_or(false);
+        if points_into_bin && fs::remove_file(&stale).is_ok() {
+            println!("Removed the deprecated antegenctl symlink; use `antegen node` instead.");
+        }
+    }
+}
+
 /// Get the node binary symlink path (~/.local/bin/antegen-node)
 pub fn node_binary_path() -> Result<PathBuf> {
     dirs::home_dir()
@@ -303,6 +331,38 @@ pub fn build_node_download_url(version: &str) -> String {
         version,
         target
     )
+}
+
+/// Download URL for a pre-consolidation daemon, published as its own binary on
+/// a `node-v*` tag. Kept so an operator can still roll back to a version that
+/// predates the merge into `antegen`.
+fn build_legacy_node_download_url(version: &str) -> String {
+    let target = get_platform_target();
+    format!(
+        "https://github.com/{}/{}/releases/download/node-{}/antegen-node-{}-{}",
+        REPO_OWNER, REPO_NAME, version, version, target
+    )
+}
+
+/// Download a daemon binary, falling back to the pre-consolidation layout.
+async fn download_node_binary(version: &str) -> Result<PathBuf> {
+    let url = build_node_download_url(version);
+    match download_binary(&url, "antegen-node-update").await {
+        Ok(path) => Ok(path),
+        Err(err) => {
+            let legacy = build_legacy_node_download_url(version);
+            println!("Not published as {}; trying {}", url, legacy);
+            download_binary(&legacy, "antegen-node-update")
+                .await
+                .map_err(|legacy_err| {
+                    anyhow::anyhow!(
+                        "Could not download node {version}.\n  \
+                         {url}\n    {err}\n  \
+                         {legacy}\n    {legacy_err}"
+                    )
+                })
+        }
+    }
 }
 
 /// Path to the node version tracking file
@@ -375,8 +435,7 @@ pub async fn ensure_node_downloaded(version: &str) -> Result<PathBuf> {
 
     if !versioned_path.exists() {
         println!("Node version {} not installed, downloading...", version);
-        let url = build_node_download_url(&version);
-        let temp_path = download_binary(&url, "antegen-node-update").await?;
+        let temp_path = download_node_binary(&version).await?;
         install_binary_to(&temp_path, &versioned_path)?;
         println!("Downloaded node {}", version);
     }
@@ -485,6 +544,7 @@ fn find_workspace_root() -> Result<PathBuf> {
 /// Downloads the node binary, updates the `antegen-node` symlink, writes node-version.
 /// Does NOT touch the interactive CLI at ~/.local/bin/antegen.
 pub async fn update_node(version: Option<String>, local: bool) -> Result<()> {
+    clean_legacy_layout();
     if local {
         let version = cargo_build_and_install_node()?;
         let versioned_path = versioned_node_binary_path(&version)?;
@@ -569,6 +629,7 @@ pub async fn update_node(version: Option<String>, local: bool) -> Result<()> {
 /// Downloads if needed, updates symlink, writes node-version, reinstalls service.
 /// Does NOT touch CLI symlinks.
 pub async fn use_node_version(version: String) -> Result<()> {
+    clean_legacy_layout();
     // Handle "local" keyword — copy workspace build into version manager
     if version == "local" {
         let (built_binary, ver) = detect_local_node_build()
@@ -638,6 +699,7 @@ pub async fn use_node_version(version: String) -> Result<()> {
 
 /// Download a specific node version without switching (for `antegen node install <version>`)
 pub async fn install_node_version(version: Option<String>, local: bool) -> Result<()> {
+    clean_legacy_layout();
     if local {
         let version = cargo_build_and_install_node()?;
         println!("Use `antegen node use {}` to switch.", version);
@@ -661,8 +723,7 @@ pub async fn install_node_version(version: Option<String>, local: bool) -> Resul
         return Ok(());
     }
 
-    let url = build_node_download_url(&version);
-    let temp_path = download_binary(&url, "antegen-node-update").await?;
+    let temp_path = download_node_binary(&version).await?;
     install_binary_to(&temp_path, &versioned_path)?;
 
     println!(
