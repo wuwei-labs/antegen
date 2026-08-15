@@ -239,7 +239,9 @@ async fn execute_thread(
             "Worker cancelled before execution for thread: {}",
             thread_pubkey
         );
-        return ExecutionResult::failed(
+        // Cancellation follows a schedule change; the resulting account update
+        // will re-arm this thread, but keep it retryable in case it does not.
+        return ExecutionResult::retryable(
             thread_pubkey,
             "Cancelled before execution".to_string(),
             0,
@@ -262,10 +264,9 @@ async fn execute_thread(
                             thread.exec_count,
                             fresh_thread.exec_count
                         );
-                        return ExecutionResult::failed(
+                        return ExecutionResult::superseded(
                             thread_pubkey,
                             "Thread already executed (exec_count changed)".to_string(),
-                            0,
                             trace,
                         );
                     }
@@ -290,7 +291,7 @@ async fn execute_thread(
         Ok(d) => d,
         Err(e) => {
             log::error!("Load balancer error for thread {}: {:?}", thread_pubkey, e);
-            return ExecutionResult::failed(
+            return ExecutionResult::retryable(
                 thread_pubkey,
                 format!("Load balancer error: {}", e),
                 0,
@@ -305,10 +306,9 @@ async fn execute_thread(
                 "Load balancer decided to skip thread {} (owned by another executor)",
                 thread_pubkey
             );
-            return ExecutionResult::failed(
+            return ExecutionResult::lb_skip(
                 thread_pubkey,
                 "Skipped by load balancer".to_string(),
-                0,
                 trace,
             );
         }
@@ -317,7 +317,7 @@ async fn execute_thread(
                 "Load balancer at capacity for thread {}, skipping",
                 thread_pubkey
             );
-            return ExecutionResult::failed(thread_pubkey, "At capacity".to_string(), 0, trace);
+            return ExecutionResult::lb_skip(thread_pubkey, "At capacity".to_string(), trace);
         }
         ProcessDecision::Process => {
             log::debug!("Load balancer approved processing thread {}", thread_pubkey);
@@ -346,10 +346,9 @@ async fn execute_thread(
                             thread_pubkey,
                             t.last_executor
                         );
-                        return ExecutionResult::failed(
+                        return ExecutionResult::superseded(
                             thread_pubkey,
                             "Claimed during delay".to_string(),
-                            0,
                             trace,
                         );
                     }
@@ -403,7 +402,7 @@ async fn execute_thread(
                     Instant::now() + Duration::from_secs(TRIGGER_RETRY_DEADLINE_SECS);
                 loop {
                     if cancelled.load(Ordering::Relaxed) {
-                        return ExecutionResult::failed(
+                        return ExecutionResult::retryable(
                             thread_pubkey,
                             "Cancelled during build".to_string(),
                             0,
@@ -411,7 +410,7 @@ async fn execute_thread(
                         );
                     }
                     if Instant::now() > trigger_retry_deadline {
-                        return ExecutionResult::failed(
+                        return ExecutionResult::retryable(
                             thread_pubkey,
                             "Trigger window expired while waiting for trigger time".to_string(),
                             0,
@@ -447,7 +446,9 @@ async fn execute_thread(
                                     "Thread {} is paused (6006), skipping execution",
                                     thread_pubkey
                                 );
-                                return ExecutionResult::failed(
+                                // Unpausing writes to the thread account, so an
+                                // update will re-arm this; parking is correct.
+                                return ExecutionResult::fatal(
                                     thread_pubkey,
                                     "Thread is paused".to_string(),
                                     0,
@@ -459,7 +460,7 @@ async fn execute_thread(
                                     thread_pubkey,
                                     e
                                 );
-                                return ExecutionResult::failed(
+                                return ExecutionResult::retryable(
                                     thread_pubkey,
                                     format!("Transaction build failed: {}", e),
                                     0,
@@ -483,7 +484,7 @@ async fn execute_thread(
                             batch_num,
                             e
                         );
-                        return ExecutionResult::failed(
+                        return ExecutionResult::retryable(
                             thread_pubkey,
                             format!("Continuation batch {} build failed: {}", batch_num, e),
                             0,
@@ -504,7 +505,7 @@ async fn execute_thread(
                 thread_pubkey,
                 batch_num
             );
-            return ExecutionResult::skipped(thread_pubkey, trace);
+            return ExecutionResult::empty_fiber(thread_pubkey, trace);
         }
 
         log::info!(
@@ -534,7 +535,7 @@ async fn execute_thread(
                             batch_num,
                             e
                         );
-                        return ExecutionResult::failed(
+                        return ExecutionResult::retryable(
                             thread_pubkey,
                             format!("Batch {} CU estimation failed: {}", batch_num, e),
                             0,
@@ -573,7 +574,7 @@ async fn execute_thread(
                 log::info!("{}: batch {} confirmed ({})", thread_pubkey, batch_num, sig);
             }
             Err((error, attempts)) => {
-                return ExecutionResult::failed(
+                return ExecutionResult::retryable(
                     thread_pubkey,
                     format!("Batch {} failed: {}", batch_num, error),
                     attempts,
@@ -601,7 +602,7 @@ async fn execute_thread(
                     thread_pubkey,
                     e
                 );
-                return ExecutionResult::failed(
+                return ExecutionResult::retryable(
                     thread_pubkey,
                     format!("Failed to re-fetch thread for continuation: {}", e),
                     0,

@@ -1,5 +1,6 @@
 //! Message types for actor communication
 
+use crate::actors::sched::Outcome;
 use crate::trace::ExecTrace;
 use crate::types::AccountUpdate;
 use solana_sdk::{clock::Clock, pubkey::Pubkey};
@@ -46,15 +47,6 @@ pub enum GeyserSourceMessage {
 // Staging Actor Messages
 // ============================================================================
 
-/// Reason for thread completion - determines if re-scheduling is needed
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CompletionReason {
-    /// Successfully executed (or failed execution) - will be re-scheduled when account updates
-    Executed,
-    /// Load balancer skipped - re-queue for later takeover attempt
-    Skipped,
-}
-
 #[derive(Debug)]
 pub enum StagingMessage {
     AccountUpdate(AccountUpdate),
@@ -62,9 +54,13 @@ pub enum StagingMessage {
     /// The projected on-chain clock has reached the earliest pending trigger.
     /// Emitted by the staging actor's own timer, not by a datasource.
     Fire,
+    /// Results of an off-actor cache-eviction refetch. `None` means the account
+    /// is genuinely gone; failures are simply omitted so the thread stays
+    /// tracked.
+    Refetched(Vec<(Pubkey, Option<antegen_thread_program::state::Thread>)>),
     ThreadCompleted {
         thread_pubkey: Pubkey,
-        reason: CompletionReason,
+        outcome: Outcome,
     },
     SetProcessorRef(ractor::ActorRef<ProcessorMessage>),
     QueryStatus(oneshot::Sender<StagingStatus>),
@@ -74,7 +70,8 @@ pub enum StagingMessage {
 #[derive(Debug, Clone)]
 pub struct StagingStatus {
     pub total_threads: usize,
-    pub queued_threads: usize,
+    /// Threads dispatched and awaiting a completion report.
+    pub in_flight: usize,
     pub time_queue_size: usize,
     pub slot_queue_size: usize,
     pub epoch_queue_size: usize,
@@ -132,84 +129,86 @@ pub struct ReadyThread {
 #[derive(Debug, Clone)]
 pub struct ExecutionResult {
     pub thread_pubkey: Pubkey,
-    pub success: bool,
-    pub skipped: bool,
+    /// What this means for scheduling. Set where the failure happens, rather
+    /// than inferred downstream by matching on the error text.
+    pub outcome: Outcome,
     pub error: Option<String>,
     pub attempt_count: u32,
     pub trace: ExecTrace,
 }
 
 impl ExecutionResult {
-    pub fn success(thread_pubkey: Pubkey, trace: ExecTrace) -> Self {
-        Self {
-            thread_pubkey,
-            success: true,
-            skipped: false,
-            error: None,
-            attempt_count: 0,
-            trace,
-        }
-    }
-
-    pub fn failed(
+    fn new(
         thread_pubkey: Pubkey,
-        error: String,
+        outcome: Outcome,
+        error: Option<String>,
         attempt_count: u32,
         trace: ExecTrace,
     ) -> Self {
         Self {
             thread_pubkey,
-            success: false,
-            skipped: false,
-            error: Some(error),
+            outcome,
+            error,
             attempt_count,
             trace,
         }
     }
 
-    pub fn skipped(thread_pubkey: Pubkey, trace: ExecTrace) -> Self {
-        Self {
+    /// Landed on-chain.
+    pub fn success(thread_pubkey: Pubkey, trace: ExecTrace) -> Self {
+        Self::new(thread_pubkey, Outcome::Succeeded, None, 0, trace)
+    }
+
+    /// Nothing to submit — the fiber had no compiled instruction.
+    pub fn empty_fiber(thread_pubkey: Pubkey, trace: ExecTrace) -> Self {
+        Self::new(thread_pubkey, Outcome::EmptyFiber, None, 0, trace)
+    }
+
+    /// The chain moved under us; an account update is already on its way.
+    pub fn superseded(thread_pubkey: Pubkey, error: String, trace: ExecTrace) -> Self {
+        Self::new(thread_pubkey, Outcome::Superseded, Some(error), 0, trace)
+    }
+
+    /// Declined by the load balancer.
+    pub fn lb_skip(thread_pubkey: Pubkey, error: String, trace: ExecTrace) -> Self {
+        Self::new(
             thread_pubkey,
-            success: true,
-            skipped: true,
-            error: None,
-            attempt_count: 0,
+            Outcome::LoadBalancerSkip,
+            Some(error),
+            0,
             trace,
-        }
+        )
     }
-}
 
-// ============================================================================
-// Internal Types (for queue management)
-// ============================================================================
-
-/// Scheduled thread in priority queue
-#[derive(Debug, Clone)]
-pub(crate) struct ScheduledThread {
-    /// The trigger value (timestamp, slot, or epoch) when this thread should execute
-    pub trigger_value: u64,
-    /// The thread's public key
-    pub thread_pubkey: Pubkey,
-    /// The expected exec_count (for stale detection)
-    pub exec_count: u64,
-}
-
-impl PartialEq for ScheduledThread {
-    fn eq(&self, other: &Self) -> bool {
-        self.trigger_value == other.trigger_value
+    /// Failed, but worth another attempt.
+    pub fn retryable(
+        thread_pubkey: Pubkey,
+        error: String,
+        attempt_count: u32,
+        trace: ExecTrace,
+    ) -> Self {
+        Self::new(
+            thread_pubkey,
+            Outcome::Retryable,
+            Some(error),
+            attempt_count,
+            trace,
+        )
     }
-}
 
-impl Eq for ScheduledThread {}
-
-impl PartialOrd for ScheduledThread {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for ScheduledThread {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.trigger_value.cmp(&other.trigger_value)
+    /// Failed in a way retrying cannot fix.
+    pub fn fatal(
+        thread_pubkey: Pubkey,
+        error: String,
+        attempt_count: u32,
+        trace: ExecTrace,
+    ) -> Self {
+        Self::new(
+            thread_pubkey,
+            Outcome::Fatal,
+            Some(error),
+            attempt_count,
+            trace,
+        )
     }
 }

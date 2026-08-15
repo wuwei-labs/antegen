@@ -9,9 +9,9 @@
 //! The cache is the single source of truth for account data.
 
 use crate::actors::messages::{
-    CompletionReason, ExecutionResult, ProcessorMessage, ProcessorStatus, ReadyThread,
-    StagingMessage,
+    ExecutionResult, ProcessorMessage, ProcessorStatus, ReadyThread, StagingMessage,
 };
+use crate::actors::sched::Outcome as SchedOutcome;
 use crate::actors::WorkerActor;
 use crate::config::ClientConfig;
 use crate::executor::ExecutorLogic;
@@ -132,10 +132,9 @@ impl Actor for ProcessorFactory {
             }
             ProcessorMessage::WorkerCompleted(result) => {
                 log::debug!(
-                    "Worker completed for thread {}: success={} skipped={}",
+                    "Worker completed for thread {}: {:?}",
                     result.thread_pubkey,
-                    result.success,
-                    result.skipped
+                    result.outcome
                 );
 
                 // Remove from active workers and stop the actor
@@ -244,6 +243,7 @@ impl ProcessorFactory {
                                     "exec_count mismatch (cache={}, expected={})",
                                     thread.exec_count, ready_thread.exec_count
                                 ),
+                                SchedOutcome::Superseded,
                             );
                             return Ok(());
                         }
@@ -254,7 +254,13 @@ impl ProcessorFactory {
                             "Failed to deserialize thread {} from cache: {:?}",
                             ready_thread.thread_pubkey, e
                         );
-                        self.abandon(state, &ready_thread, "cache deserialize failed");
+                        // Corrupt cache entry; a fresh update is the only fix.
+                        self.abandon(
+                            state,
+                            &ready_thread,
+                            "cache deserialize failed",
+                            SchedOutcome::Fatal,
+                        );
                         return Ok(());
                     }
                 }
@@ -283,6 +289,7 @@ impl ProcessorFactory {
                                     "exec_count mismatch after RPC fetch (fetched={}, expected={})",
                                     thread.exec_count, ready_thread.exec_count
                                 ),
+                                SchedOutcome::Superseded,
                             );
                             return Ok(());
                         }
@@ -293,7 +300,13 @@ impl ProcessorFactory {
                             "Failed to fetch thread {} from RPC: {}",
                             ready_thread.thread_pubkey, e
                         );
-                        self.abandon(state, &ready_thread, "RPC fetch failed");
+                        // A transport failure says nothing about the thread.
+                        self.abandon(
+                            state,
+                            &ready_thread,
+                            "RPC fetch failed",
+                            SchedOutcome::Retryable,
+                        );
                         return Ok(());
                     }
                 }
@@ -347,7 +360,13 @@ impl ProcessorFactory {
     /// These paths would otherwise terminate an execution attempt with no trace
     /// at all, which is exactly the case that is impossible to diagnose from the
     /// logs today.
-    fn abandon(&self, state: &ProcessorState, ready: &ReadyThread, reason: &str) {
+    fn abandon(
+        &self,
+        state: &ProcessorState,
+        ready: &ReadyThread,
+        reason: &str,
+        outcome: SchedOutcome,
+    ) {
         log::debug!(
             "Thread {} abandoned before spawn: {}",
             ready.thread_pubkey,
@@ -359,7 +378,7 @@ impl ProcessorFactory {
             .staging_ref
             .send_message(StagingMessage::ThreadCompleted {
                 thread_pubkey: ready.thread_pubkey,
-                reason: CompletionReason::Executed,
+                outcome,
             })
             .ok();
     }
@@ -370,58 +389,41 @@ impl ProcessorFactory {
         state: &mut ProcessorState,
         result: ExecutionResult,
     ) -> Result<(), ActorProcessingErr> {
-        // Check if this was a load balancer skip
-        let is_lb_skip = result
-            .error
-            .as_ref()
-            .map(|e| e.contains("load balancer") || e.contains("At capacity"))
-            .unwrap_or(false);
-
-        // Log the result
-        if result.skipped {
-            log::debug!("Thread {} skipped: empty fiber", result.thread_pubkey);
-        } else if result.success {
-            log::info!("Thread {} execution succeeded", result.thread_pubkey);
-        } else if is_lb_skip {
-            log::debug!(
-                "Thread {} skipped: {:?}",
+        match result.outcome {
+            SchedOutcome::Succeeded => {
+                log::info!("Thread {} execution succeeded", result.thread_pubkey)
+            }
+            SchedOutcome::EmptyFiber => {
+                log::debug!("Thread {} skipped: empty fiber", result.thread_pubkey)
+            }
+            SchedOutcome::LoadBalancerSkip | SchedOutcome::Superseded => log::debug!(
+                "Thread {} not executed: {:?}",
                 result.thread_pubkey,
                 result.error
-            );
-        } else {
-            log::warn!(
+            ),
+            SchedOutcome::Retryable | SchedOutcome::Fatal => log::warn!(
                 "Thread {} execution failed after {} attempts: {:?}",
                 result.thread_pubkey,
                 result.attempt_count,
                 result.error
-            );
+            ),
         }
 
         // The single latency line for this execution attempt.
-        let outcome = if result.skipped {
-            Outcome::Skip
-        } else if is_lb_skip {
-            Outcome::LbSkip
-        } else if result.success {
-            Outcome::Ok
-        } else {
-            Outcome::Fail
+        let trace_outcome = match result.outcome {
+            SchedOutcome::Succeeded => Outcome::Ok,
+            SchedOutcome::EmptyFiber | SchedOutcome::Superseded => Outcome::Skip,
+            SchedOutcome::LoadBalancerSkip => Outcome::LbSkip,
+            SchedOutcome::Retryable | SchedOutcome::Fatal => Outcome::Fail,
         };
-        log::debug!(target: LATENCY_TARGET, "{}", result.trace.render(outcome));
-
-        // Determine completion reason based on whether load balancer skipped
-        let reason = if is_lb_skip {
-            CompletionReason::Skipped
-        } else {
-            CompletionReason::Executed
-        };
+        log::debug!(target: LATENCY_TARGET, "{}", result.trace.render(trace_outcome));
 
         // Notify StagingActor that thread completed
         state
             .staging_ref
             .send_message(StagingMessage::ThreadCompleted {
                 thread_pubkey: result.thread_pubkey,
-                reason,
+                outcome: result.outcome,
             })
             .map_err(|e| format!("Failed to notify staging of completion: {:?}", e))?;
 
