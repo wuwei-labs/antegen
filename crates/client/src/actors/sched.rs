@@ -125,6 +125,21 @@ pub struct Dispatched {
     pub due: u64,
 }
 
+/// How long a parked thread waits for its account update before we fetch the
+/// state ourselves.
+///
+/// Purely a safety net for an RPC that does not deliver program notifications;
+/// a healthy subscription re-arms the thread in ~100ms. Set aggressively (1.5s)
+/// this fires constantly on threads that were merely a little slow, and the
+/// redundant fetches saturate the same RPC pool the execution path needs —
+/// measurably worse under load than not having it at all. Long enough to stay
+/// silent in normal operation, far shorter than the watchdog it backs up.
+const REFRESH_AFTER: Duration = Duration::from_secs(10);
+
+/// Cap on how many parked threads are refreshed in one pass, so a large fleet
+/// cannot turn the safety net into a request storm.
+const MAX_REFRESH_PER_PASS: usize = 32;
+
 /// Backoff schedule for retryable failures: ~1s, 2s, 4s … capped.
 fn retry_backoff(attempts: u32) -> Duration {
     const CAP: Duration = Duration::from_secs(60);
@@ -171,6 +186,15 @@ impl Sched {
     /// Every tracked thread.
     pub fn tracked(&self) -> impl Iterator<Item = Pubkey> + '_ {
         self.entries.keys().copied()
+    }
+
+    /// Entries eligible to run right now, ignoring their due value. A large
+    /// backlog here means dispatch, not scheduling, is the bottleneck.
+    pub fn count_due(&self) -> usize {
+        self.entries
+            .values()
+            .filter(|e| e.phase == Phase::Due && !e.paused)
+            .count()
     }
 
     /// Number of entries currently dispatched.
@@ -279,6 +303,29 @@ impl Sched {
         out
     }
 
+    /// Parked threads whose account update has not arrived in time.
+    ///
+    /// Clearing the marker as they are handed out means each parked thread is
+    /// refreshed at most once per execution, so a provider that never pushes
+    /// notifications costs one extra fetch per execution rather than a poll
+    /// loop.
+    pub fn take_stale_parked(&mut self, now: Instant) -> Vec<Pubkey> {
+        let stale: Vec<Pubkey> = self
+            .entries
+            .iter()
+            .filter(|(_, e)| e.phase == Phase::Parked && e.retry_after.is_some_and(|t| t <= now))
+            .map(|(pk, _)| *pk)
+            .take(MAX_REFRESH_PER_PASS)
+            .collect();
+
+        for pk in &stale {
+            if let Some(e) = self.entries.get_mut(pk) {
+                e.retry_after = None;
+            }
+        }
+        stale
+    }
+
     /// Return anything stuck in flight past its watchdog to `Due`.
     ///
     /// A worker that dies without reporting would otherwise leave the thread
@@ -308,25 +355,50 @@ impl Sched {
 
     /// Record the result of a dispatch.
     ///
+    /// `dispatched_exec_count` is the value the entry had when it was handed
+    /// out. If the entry has since advanced, the thread's account update already
+    /// arrived and re-armed it with the real next deadline, and this completion
+    /// is describing a run that is now history — applying it would overwrite a
+    /// correct schedule with a stale one.
+    ///
+    /// That race is the common case, not the exception: the account
+    /// notification lands as soon as the transaction confirms, while the
+    /// completion still has to travel worker -> processor -> staging. Without
+    /// this guard every successful execution parks a thread that was already
+    /// correctly scheduled, and it stays parked until a watchdog fires.
+    ///
     /// `current` is the present value of the entry's clock, used to place the
     /// watchdog. Every branch leaves the entry with a due value — that is what
     /// makes a lost execution recoverable without depending on cache eviction.
-    pub fn complete(&mut self, pk: &Pubkey, outcome: Outcome, current: u64, now: Instant) {
+    pub fn complete(
+        &mut self,
+        pk: &Pubkey,
+        outcome: Outcome,
+        dispatched_exec_count: u64,
+        current: u64,
+        now: Instant,
+    ) {
         let Some(entry) = self.entries.get(pk) else {
             return;
         };
+        if entry.exec_count != dispatched_exec_count {
+            return; // superseded by a fresher account update
+        }
         let kind = entry.kind;
         let attempts = entry.attempts;
 
         match outcome {
-            // The chain advanced; the resulting account update will carry the
-            // real next deadline. Park with a watchdog in case it never arrives.
+            // The chain advanced, so the next deadline arrives with the account
+            // update. Park on a watchdog in case it never does — and mark the
+            // entry for a cheap refresh well before that watchdog, since an RPC
+            // that does not push program notifications would otherwise leave the
+            // thread idle for the whole watchdog period on every execution.
             Outcome::Succeeded | Outcome::Superseded => {
                 self.reschedule(
                     pk,
                     current.saturating_add(kind.parked_watchdog()),
                     Phase::Parked,
-                    None,
+                    Some(now + REFRESH_AFTER),
                 );
                 if let Some(e) = self.entries.get_mut(pk) {
                     e.attempts = 0;
@@ -468,7 +540,7 @@ mod tests {
         let now = Instant::now();
         s.take_due(Kind::Time, 200, now);
 
-        s.complete(&pk(1), Outcome::Retryable, 200, now);
+        s.complete(&pk(1), Outcome::Retryable, 0, 200, now);
 
         let e = s.get(&pk(1)).unwrap();
         assert_eq!(e.phase, Phase::Due);
@@ -500,7 +572,7 @@ mod tests {
         let now = Instant::now();
         s.take_due(Kind::Time, 200, now);
 
-        s.complete(&pk(1), Outcome::LoadBalancerSkip, 200, now);
+        s.complete(&pk(1), Outcome::LoadBalancerSkip, 0, 200, now);
 
         assert!(s
             .take_due(Kind::Time, 200, now + Duration::from_millis(400))
@@ -522,7 +594,7 @@ mod tests {
         let now = Instant::now();
         s.take_due(Kind::Time, 200, now);
 
-        s.complete(&pk(1), Outcome::EmptyFiber, 200, now);
+        s.complete(&pk(1), Outcome::EmptyFiber, 0, 200, now);
 
         let e = s.get(&pk(1)).unwrap();
         assert_eq!(e.phase, Phase::Parked);
@@ -536,7 +608,7 @@ mod tests {
         s.upsert(pk(1), Kind::Time, 100, 0, false);
         let now = Instant::now();
         s.take_due(Kind::Time, 200, now);
-        s.complete(&pk(1), Outcome::Fatal, 200, now);
+        s.complete(&pk(1), Outcome::Fatal, 0, 200, now);
 
         assert!(s.contains(&pk(1)));
         assert!(s.get(&pk(1)).unwrap().due > 200);
@@ -562,7 +634,7 @@ mod tests {
         s.upsert(pk(1), Kind::Time, 100, 0, false);
         let now = Instant::now();
         s.take_due(Kind::Time, 200, now);
-        s.complete(&pk(1), Outcome::Retryable, 200, now);
+        s.complete(&pk(1), Outcome::Retryable, 0, 200, now);
         assert_eq!(s.get(&pk(1)).unwrap().attempts, 1);
 
         // Fresh on-chain state supersedes whatever this node had decided.
@@ -590,11 +662,116 @@ mod tests {
         let now = Instant::now();
 
         s.take_due(Kind::Time, 500, now);
-        s.complete(&pk(1), Outcome::Retryable, 500, now);
+        s.complete(&pk(1), Outcome::Retryable, 0, 500, now);
         let got = s.take_due(Kind::Time, 500, now + Duration::from_secs(10));
 
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].due, 100, "should remain the original deadline");
+    }
+
+    #[test]
+    fn parked_threads_are_refreshed_when_no_update_arrives() {
+        // An RPC that acknowledges programSubscribe but never delivers leaves a
+        // thread parked after every execution. Without this it would idle for
+        // the whole watchdog period each time.
+        let mut s = Sched::new();
+        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        let now = Instant::now();
+        s.take_due(Kind::Time, 200, now);
+        s.complete(&pk(1), Outcome::Succeeded, 0, 200, now);
+
+        assert!(s.take_stale_parked(now).is_empty(), "not stale yet");
+        assert!(
+            s.take_stale_parked(now + Duration::from_secs(2)).is_empty(),
+            "must stay quiet while a healthy subscription would still deliver"
+        );
+
+        let later = now + REFRESH_AFTER + Duration::from_millis(1);
+        assert_eq!(s.take_stale_parked(later), vec![pk(1)]);
+
+        // Marked once per execution, not repeatedly.
+        assert!(s.take_stale_parked(later).is_empty());
+    }
+
+    #[test]
+    fn refresh_is_capped_per_pass() {
+        // A large fleet parking at once must not turn the safety net into a
+        // request storm against the pool the execution path depends on.
+        let mut s = Sched::new();
+        let now = Instant::now();
+        for i in 0..100u8 {
+            s.upsert(pk(i), Kind::Time, 100, 0, false);
+        }
+        s.take_due(Kind::Time, 200, now);
+        for i in 0..100u8 {
+            s.complete(&pk(i), Outcome::Succeeded, 0, 200, now);
+        }
+
+        let later = now + REFRESH_AFTER + Duration::from_millis(1);
+        assert_eq!(s.take_stale_parked(later).len(), MAX_REFRESH_PER_PASS);
+    }
+
+    #[test]
+    fn an_arriving_update_cancels_the_refresh() {
+        let mut s = Sched::new();
+        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        let now = Instant::now();
+        s.take_due(Kind::Time, 200, now);
+        s.complete(&pk(1), Outcome::Succeeded, 0, 200, now);
+
+        // The subscription delivered, so no fetch is needed.
+        s.upsert(pk(1), Kind::Time, 300, 1, false);
+        let later = now + REFRESH_AFTER + Duration::from_millis(1);
+        assert!(s.take_stale_parked(later).is_empty());
+    }
+
+    #[test]
+    fn a_completion_cannot_overwrite_a_fresher_schedule() {
+        // The account notification lands as soon as the transaction confirms,
+        // while the completion still has to travel worker -> processor ->
+        // staging. The update almost always wins, so an unguarded completion
+        // would park a thread that was already correctly re-armed, losing the
+        // wake-up until a watchdog fired.
+        let mut s = Sched::new();
+        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        let now = Instant::now();
+
+        let dispatched = s.take_due(Kind::Time, 200, now);
+        assert_eq!(dispatched[0].exec_count, 0);
+
+        // The chain's update arrives first, re-arming for the next deadline.
+        s.upsert(pk(1), Kind::Time, 500, 1, false);
+        assert_eq!(s.get(&pk(1)).unwrap().phase, Phase::Due);
+
+        // The now-stale completion must not undo that.
+        s.complete(
+            &pk(1),
+            Outcome::Succeeded,
+            dispatched[0].exec_count,
+            200,
+            now,
+        );
+
+        let e = s.get(&pk(1)).unwrap();
+        assert_eq!(e.phase, Phase::Due, "must stay armed");
+        assert_eq!(e.due, 500, "must keep the new deadline");
+    }
+
+    #[test]
+    fn a_completion_still_applies_when_no_update_arrived() {
+        let mut s = Sched::new();
+        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        let now = Instant::now();
+        let dispatched = s.take_due(Kind::Time, 200, now);
+
+        s.complete(
+            &pk(1),
+            Outcome::Succeeded,
+            dispatched[0].exec_count,
+            200,
+            now,
+        );
+        assert_eq!(s.get(&pk(1)).unwrap().phase, Phase::Parked);
     }
 
     #[test]
@@ -603,7 +780,7 @@ mod tests {
         s.upsert(pk(1), Kind::Time, 100, 0, false);
         let now = Instant::now();
         s.take_due(Kind::Time, 200, now);
-        s.complete(&pk(1), Outcome::Superseded, 200, now);
+        s.complete(&pk(1), Outcome::Superseded, 0, 200, now);
 
         let e = s.get(&pk(1)).unwrap();
         assert_eq!(e.phase, Phase::Parked);

@@ -458,14 +458,25 @@ impl RpcPool {
             .execute_with_deadline(&body, true, Some(HOT_PATH_TIMEOUT))
             .await?;
 
-        // Check for simulation error — surface program logs before returning
+        // Check for simulation error — surface program logs before returning.
+        //
+        // A trigger-not-ready simulation is a routine consequence of firing on a
+        // projected clock that can be marginally ahead of the chain: the caller
+        // simply waits and retries. Logging it at WARN, with the full program
+        // log, made an expected control-flow path look like a fault.
         if let Some(err) = &response.result.value.err {
+            let rendered = format!("{:?}", err);
+            let expected = rendered.contains("6004") || rendered.contains("6006");
             if let Some(logs) = &response.result.value.logs {
                 for log in logs {
-                    log::warn!("  SIM LOG: {}", log);
+                    if expected {
+                        log::debug!("  SIM LOG: {}", log);
+                    } else {
+                        log::warn!("  SIM LOG: {}", log);
+                    }
                 }
             }
-            return Err(anyhow!("Simulation error: {:?}", err));
+            return Err(anyhow!("Simulation error: {}", rendered));
         }
 
         Ok(response.result)
@@ -658,23 +669,46 @@ impl RpcPool {
 
     /// Select endpoints for a request based on load balancing strategy
     fn select_endpoints(&self, read_only: bool) -> Vec<Arc<EndpointState>> {
+        let role_ok = |e: &Arc<EndpointState>| {
+            if read_only {
+                e.can_fetch()
+            } else {
+                e.can_submit()
+            }
+        };
+
         // Filter by role and health
         let available: Vec<_> = self
             .endpoints
             .iter()
-            .filter(|e| {
-                let role_ok = if read_only {
-                    e.can_fetch()
-                } else {
-                    e.can_submit()
-                };
-                role_ok && e.is_available()
-            })
+            .filter(|e| role_ok(e) && e.is_available())
             .cloned()
             .collect();
 
         if available.is_empty() {
-            return vec![];
+            // Every eligible endpoint is marked unhealthy. Health only improves
+            // on a *successful* request, so refusing to send here means no
+            // request is ever attempted, nothing can succeed, and the pool stays
+            // wedged permanently — fatal for the common single-endpoint
+            // deployment, and recoverable only by restarting the process.
+            //
+            // Attempt them anyway. A failure re-marks them; a success restores
+            // health. Unhealthy should mean deprioritised, not unusable when it
+            // is all we have.
+            let last_resort: Vec<_> = self
+                .endpoints
+                .iter()
+                .filter(|e| role_ok(e))
+                .cloned()
+                .collect();
+
+            if !last_resort.is_empty() {
+                log::debug!(
+                    "All {} eligible endpoint(s) marked unhealthy; trying anyway to allow recovery",
+                    last_resort.len()
+                );
+            }
+            return last_resort;
         }
 
         match self.config.load_balance_strategy {
@@ -783,6 +817,50 @@ mod tests {
 
         // Past the TTL it must go to the network, which here cannot succeed.
         assert!(pool.get_latest_blockhash().await.is_err());
+    }
+
+    #[test]
+    fn unhealthy_endpoints_are_still_attempted_as_a_last_resort() {
+        // Regression: health only improves on a successful request, so
+        // returning no endpoints here meant nothing was ever attempted, nothing
+        // could succeed, and a single-endpoint pool stayed wedged until the
+        // process restarted.
+        let pool = RpcPool::with_url("http://127.0.0.1:1").unwrap();
+
+        for e in &pool.endpoints {
+            for _ in 0..50 {
+                e.record_failure();
+            }
+            assert!(!e.is_available(), "endpoint should be marked unhealthy");
+        }
+
+        assert_eq!(
+            pool.select_endpoints(true).len(),
+            1,
+            "an unhealthy endpoint must still be tried so it can recover"
+        );
+        assert_eq!(pool.select_endpoints(false).len(), 1);
+    }
+
+    #[test]
+    fn healthy_endpoints_are_preferred_over_unhealthy_ones() {
+        let pool = RpcPool::new(
+            vec![
+                EndpointConfig::new("http://127.0.0.1:1"),
+                EndpointConfig::new("http://127.0.0.1:2"),
+            ],
+            RpcPoolConfig::default(),
+        )
+        .unwrap();
+
+        for _ in 0..50 {
+            pool.endpoints[0].record_failure();
+        }
+
+        // While a healthy endpoint exists, the unhealthy one stays excluded.
+        let selected = pool.select_endpoints(true);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].url(), "http://127.0.0.1:2");
     }
 
     #[test]

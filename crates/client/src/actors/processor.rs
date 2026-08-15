@@ -387,6 +387,7 @@ impl ProcessorFactory {
             .send_message(StagingMessage::ThreadCompleted {
                 thread_pubkey: ready.thread_pubkey,
                 outcome,
+                exec_count: ready.exec_count,
             })
             .ok();
     }
@@ -432,6 +433,7 @@ impl ProcessorFactory {
             .send_message(StagingMessage::ThreadCompleted {
                 thread_pubkey: result.thread_pubkey,
                 outcome: result.outcome,
+                exec_count: result.exec_count,
             })
             .map_err(|e| format!("Failed to notify staging of completion: {:?}", e))?;
 

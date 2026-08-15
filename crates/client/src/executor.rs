@@ -792,19 +792,25 @@ impl ExecutorLogic {
         {
             Ok(r) => r,
             Err(e) => {
-                // Log each instruction's accounts for diagnosis on simulation error
-                for (i, ix) in instructions.iter().enumerate() {
-                    warn!(
-                        "  IX[{}] program={}, {} accounts:",
-                        i,
-                        ix.program_id,
-                        ix.accounts.len()
-                    );
-                    for (j, acc) in ix.accounts.iter().enumerate() {
+                // Dump the account list for diagnosis — but only for genuine
+                // failures. Trigger-not-ready and paused are expected outcomes
+                // of firing on a projected clock, and the caller retries them;
+                // logging a full account dump each time buries real problems.
+                let rendered = e.to_string();
+                if !rendered.contains("6004") && !rendered.contains("6006") {
+                    for (i, ix) in instructions.iter().enumerate() {
                         warn!(
-                            "    [{}]: {} signer={} writable={}",
-                            j, acc.pubkey, acc.is_signer, acc.is_writable
+                            "  IX[{}] program={}, {} accounts:",
+                            i,
+                            ix.program_id,
+                            ix.accounts.len()
                         );
+                        for (j, acc) in ix.accounts.iter().enumerate() {
+                            warn!(
+                                "    [{}]: {} signer={} writable={}",
+                                j, acc.pubkey, acc.is_signer, acc.is_writable
+                            );
+                        }
                     }
                 }
                 return Err(e);

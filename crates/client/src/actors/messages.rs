@@ -28,13 +28,29 @@ pub enum DatasourceMessage {
 #[derive(Debug, Clone)]
 pub enum RpcSourceMessage {
     UpdateReceived(AccountUpdate),
-    ClockReceived(Clock),
+    ClockReceived(Clock, ClockSource),
     /// Signal that WebSocket reconnected - trigger backfill
     Reconnected,
     /// The spawned backfill task has finished, so another may start
     BackfillFinished,
     /// A subscription background task has exited (name identifies which one)
     SubscriptionDied(String),
+}
+
+/// Where a clock reading came from.
+///
+/// Not all RPC implementations push `accountSubscribe` notifications for the
+/// Clock sysvar — some acknowledge the subscription and then never send
+/// anything. Since the clock is the only thing that advances scheduling, that
+/// failure is silent and total: the node connects, backfills, reports no errors,
+/// and never fires a single thread. Tracking the source lets a polling fallback
+/// engage only when the subscription is actually delivering nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClockSource {
+    /// Pushed by the WebSocket subscription — the fast path.
+    Subscription,
+    /// Fetched by the fallback poller because the subscription went quiet.
+    Poll,
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +77,9 @@ pub enum StagingMessage {
     ThreadCompleted {
         thread_pubkey: Pubkey,
         outcome: Outcome,
+        /// The exec_count this attempt was dispatched with, so a completion that
+        /// has been overtaken by a fresher account update can be discarded.
+        exec_count: u64,
     },
     SetProcessorRef(ractor::ActorRef<ProcessorMessage>),
     QueryStatus(oneshot::Sender<StagingStatus>),
@@ -129,6 +148,9 @@ pub struct ReadyThread {
 #[derive(Debug, Clone)]
 pub struct ExecutionResult {
     pub thread_pubkey: Pubkey,
+    /// exec_count at dispatch, carried back so staging can tell whether this
+    /// result still describes the thread's current state.
+    pub exec_count: u64,
     /// What this means for scheduling. Set where the failure happens, rather
     /// than inferred downstream by matching on the error text.
     pub outcome: Outcome,
@@ -147,6 +169,7 @@ impl ExecutionResult {
     ) -> Self {
         Self {
             thread_pubkey,
+            exec_count: trace.exec_count,
             outcome,
             error,
             attempt_count,

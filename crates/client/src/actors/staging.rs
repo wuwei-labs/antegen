@@ -155,6 +155,7 @@ impl Actor for StagingActor {
             StagingMessage::ThreadCompleted {
                 thread_pubkey,
                 outcome,
+                exec_count,
             } => {
                 let kind = state
                     .sched
@@ -164,7 +165,7 @@ impl Actor for StagingActor {
                 let current = state.current(kind);
                 state
                     .sched
-                    .complete(&thread_pubkey, outcome, current, Instant::now());
+                    .complete(&thread_pubkey, outcome, exec_count, current, Instant::now());
 
                 debug!("Thread {} completed: {:?}", thread_pubkey, outcome);
                 self.rearm_timer(state);
@@ -429,7 +430,7 @@ impl StagingActor {
             exec_count: d.exec_count,
             is_overdue: overdue_seconds > 0,
             overdue_seconds,
-            trace: ExecTrace::new(d.pubkey, due_ts, due_at),
+            trace: ExecTrace::new(d.pubkey, d.exec_count, due_ts, due_at),
         }
     }
 
@@ -468,6 +469,7 @@ impl StagingActor {
                 state.sched.complete(
                     &ready_thread.thread_pubkey,
                     Outcome::Retryable,
+                    ready_thread.exec_count,
                     current,
                     Instant::now(),
                 );
@@ -476,6 +478,7 @@ impl StagingActor {
 
             let pubkey = ready_thread.thread_pubkey;
             let overdue = ready_thread.overdue_seconds;
+            let exec_count = ready_thread.exec_count;
             if let Err(e) = processor_ref.send_message(ProcessorMessage::ProcessReady(ready_thread))
             {
                 warn!("Failed to send thread {} to processor: {:?}", pubkey, e);
@@ -485,9 +488,13 @@ impl StagingActor {
                     .map(|e| e.kind)
                     .unwrap_or(Kind::Time);
                 let current = state.current(kind);
-                state
-                    .sched
-                    .complete(&pubkey, Outcome::Retryable, current, Instant::now());
+                state.sched.complete(
+                    &pubkey,
+                    Outcome::Retryable,
+                    exec_count,
+                    current,
+                    Instant::now(),
+                );
             } else {
                 info!(
                     "Pushed thread {} to processor (overdue_seconds={})",
@@ -517,10 +524,14 @@ impl StagingActor {
         if now.duration_since(state.last_heartbeat) >= HEARTBEAT_INTERVAL {
             state.last_heartbeat = now;
             info!(
-                "Scheduler heartbeat: slot={}, tracked={}, in_flight={}",
+                "Scheduler heartbeat: slot={}, tracked={}, in_flight={}, due={}, clock_anchor_age_ms={}, anchor_ts={}, projected_ts={}",
                 state.last_slot,
                 state.sched.len(),
-                state.sched.in_flight()
+                state.sched.in_flight(),
+                state.sched.count_due(),
+                state.clock_ref.anchor_age().as_millis(),
+                state.clock_ref.anchor_ts(),
+                state.clock_ref.anchor_ts_projected(),
             );
 
             // Only worth reporting when more than one datasource is configured —
@@ -548,6 +559,17 @@ impl StagingActor {
             state.load_balancer.prune_stale(&known).await;
         }
 
+        // Threads whose post-execution account update never arrived. Batched
+        // and run off the actor loop, same as cache evictions.
+        let stale = state.sched.take_stale_parked(now);
+        if !stale.is_empty() {
+            log::debug!(
+                "Refreshing {} parked thread(s) with no account update",
+                stale.len()
+            );
+            self.spawn_refetch(myself.clone(), state, stale);
+        }
+
         self.drain_evictions(myself, state);
     }
 
@@ -572,12 +594,25 @@ impl StagingActor {
             return;
         }
 
+        self.spawn_refetch(myself, state, pubkeys);
+    }
+
+    /// Fetch fresh state for a set of threads off the actor loop.
+    ///
+    /// Bypasses the cache: the whole point is that our cached copy is stale.
+    fn spawn_refetch(
+        &self,
+        myself: ActorRef<StagingMessage>,
+        state: &StagingState,
+        pubkeys: Vec<Pubkey>,
+    ) {
         let cache = state.resources.cache.clone();
         let rpc = state.resources.rpc_client.clone();
 
         tokio::spawn(async move {
             let mut results = Vec::with_capacity(pubkeys.len());
             for pk in pubkeys {
+                cache.invalidate(&pk).await;
                 match cache.get_thread_or_fetch(&pk, &rpc).await {
                     Ok(thread) => results.push((pk, Some(thread))),
                     Err(e) if e.is_gone() => results.push((pk, None)),

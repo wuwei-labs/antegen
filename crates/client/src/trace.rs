@@ -77,6 +77,8 @@ fn opt_delta(from: Instant, to: Option<Instant>) -> String {
 #[derive(Debug, Clone)]
 pub struct ExecTrace {
     pub thread: Pubkey,
+    /// The thread's exec_count when this attempt was dispatched.
+    pub exec_count: u64,
     /// `Schedule::Timed { next }` — the on-chain deadline, in unix seconds.
     pub due_ts: i64,
     /// Projected local instant of that deadline, via `ClockRef`. `None` when no
@@ -99,9 +101,10 @@ pub struct ExecTrace {
 }
 
 impl ExecTrace {
-    pub fn new(thread: Pubkey, due_ts: i64, due_at: Option<Instant>) -> Self {
+    pub fn new(thread: Pubkey, exec_count: u64, due_ts: i64, due_at: Option<Instant>) -> Self {
         Self {
             thread,
+            exec_count,
             due_ts,
             due_at,
             released: Instant::now(),
@@ -234,6 +237,7 @@ mod tests {
     fn trace_at(due_at: Instant) -> ExecTrace {
         ExecTrace {
             thread: Pubkey::new_unique(),
+            exec_count: 0,
             due_ts: 1_700_000_000,
             due_at: Some(due_at),
             released: due_at + Duration::from_millis(600),

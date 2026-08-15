@@ -101,6 +101,14 @@ impl ClockRef {
         self.high_slot
     }
 
+    /// How long since the anchor was last refreshed by a clock reading.
+    ///
+    /// A large value means the tick source has gone quiet and readiness is
+    /// running on extrapolation alone.
+    pub fn anchor_age(&self) -> Duration {
+        self.anchor_at.map(|at| at.elapsed()).unwrap_or_default()
+    }
+
     /// Estimated current on-chain unix timestamp, as a continuous value.
     pub fn now_ts(&self) -> Option<f64> {
         let at = self.anchor_at?;

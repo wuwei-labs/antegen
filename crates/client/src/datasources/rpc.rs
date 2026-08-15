@@ -17,7 +17,7 @@ use solana_sdk::{clock::Clock, pubkey::Pubkey, sysvar};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::actors::messages::RpcSourceMessage;
+use crate::actors::messages::{ClockSource, RpcSourceMessage};
 use crate::resources::IngestStats;
 use crate::rpc::response::decode_account_data;
 use crate::rpc::websocket::{build_account_subscribe_request, build_program_subscribe_request};
@@ -263,7 +263,10 @@ impl RpcSubscription {
         while let Some(msg) = handle.recv().await {
             if let WsMessage::Text(text) = msg {
                 if let Some(clock) = parse_clock_notification(&text) {
-                    if let Err(e) = actor_ref.send_message(RpcSourceMessage::ClockReceived(clock)) {
+                    if let Err(e) = actor_ref.send_message(RpcSourceMessage::ClockReceived(
+                        clock,
+                        ClockSource::Subscription,
+                    )) {
                         error!("[{}] Failed to send clock update: {:?}", ws_url, e);
                         break;
                     }
