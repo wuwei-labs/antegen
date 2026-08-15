@@ -82,6 +82,21 @@ fn is_blockhash_expired(error: &str) -> bool {
 /// that keeps the signature stable for the retries that actually matter.
 const BLOCKHASH_MAX_AGE: Duration = Duration::from_secs(45);
 
+/// Solana's per-transaction compute ceiling.
+const MAX_COMPUTE_UNITS: u32 = 1_400_000;
+
+/// Convert a simulated compute-unit measurement into the limit to request.
+///
+/// The simulation ran against the `processed` bank at a different clock and
+/// possibly different account state, so the estimate is indicative rather than
+/// exact. `ComputeBudgetExceeded` costs the whole trigger window plus a retry,
+/// which is far more expensive than slightly over-reserving — a request above
+/// what is consumed is not charged for the difference.
+fn compute_unit_limit(estimate: u64) -> u32 {
+    let scaled = (estimate as f64 * 1.25) as u64 + 10_000;
+    scaled.min(MAX_COMPUTE_UNITS as u64) as u32
+}
+
 pub struct WorkerActor;
 
 pub struct WorkerArgs {
@@ -360,90 +375,91 @@ async fn execute_thread(
         }
 
         // Build batch — first iteration uses trigger retry, subsequent don't need it
-        let (ixs, priority_fee, needs_continuation, next_cursor) = if batch_num == 1 {
-            let trigger_retry_deadline =
-                Instant::now() + Duration::from_secs(TRIGGER_RETRY_DEADLINE_SECS);
-            loop {
-                if cancelled.load(Ordering::Relaxed) {
-                    return ExecutionResult::failed(
-                        thread_pubkey,
-                        "Cancelled during build".to_string(),
-                        0,
-                        trace,
-                    );
+        let (ixs, priority_fee, needs_continuation, next_cursor, simulated_units) =
+            if batch_num == 1 {
+                let trigger_retry_deadline =
+                    Instant::now() + Duration::from_secs(TRIGGER_RETRY_DEADLINE_SECS);
+                loop {
+                    if cancelled.load(Ordering::Relaxed) {
+                        return ExecutionResult::failed(
+                            thread_pubkey,
+                            "Cancelled during build".to_string(),
+                            0,
+                            trace,
+                        );
+                    }
+                    if Instant::now() > trigger_retry_deadline {
+                        return ExecutionResult::failed(
+                            thread_pubkey,
+                            "Trigger window expired while waiting for trigger time".to_string(),
+                            0,
+                            trace,
+                        );
+                    }
+                    match executor
+                        .build_execute_transaction(&thread_pubkey, &thread, pending_fiber_cursor)
+                        .await
+                    {
+                        Ok(result) => break result,
+                        Err(e) => {
+                            let error_str = e.to_string();
+                            if is_trigger_not_ready_error(&error_str) {
+                                log::debug!(
+                                    "Thread {} trigger not ready (6004), retrying in 500ms",
+                                    thread_pubkey
+                                );
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                continue;
+                            } else if is_thread_paused_error(&error_str) {
+                                log::debug!(
+                                    "Thread {} is paused (6006), skipping execution",
+                                    thread_pubkey
+                                );
+                                return ExecutionResult::failed(
+                                    thread_pubkey,
+                                    "Thread is paused".to_string(),
+                                    0,
+                                    trace,
+                                );
+                            } else {
+                                log::error!(
+                                    "Failed to build transaction for thread {}: {:?}",
+                                    thread_pubkey,
+                                    e
+                                );
+                                return ExecutionResult::failed(
+                                    thread_pubkey,
+                                    format!("Transaction build failed: {}", e),
+                                    0,
+                                    trace,
+                                );
+                            }
+                        }
+                    }
                 }
-                if Instant::now() > trigger_retry_deadline {
-                    return ExecutionResult::failed(
-                        thread_pubkey,
-                        "Trigger window expired while waiting for trigger time".to_string(),
-                        0,
-                        trace,
-                    );
-                }
+            } else {
+                // Continuation batch — build against fresh on-chain state
                 match executor
                     .build_execute_transaction(&thread_pubkey, &thread, pending_fiber_cursor)
                     .await
                 {
-                    Ok(result) => break result,
+                    Ok(result) => result,
                     Err(e) => {
-                        let error_str = e.to_string();
-                        if is_trigger_not_ready_error(&error_str) {
-                            log::debug!(
-                                "Thread {} trigger not ready (6004), retrying in 500ms",
-                                thread_pubkey
-                            );
-                            tokio::time::sleep(Duration::from_millis(500)).await;
-                            continue;
-                        } else if is_thread_paused_error(&error_str) {
-                            log::debug!(
-                                "Thread {} is paused (6006), skipping execution",
-                                thread_pubkey
-                            );
-                            return ExecutionResult::failed(
-                                thread_pubkey,
-                                "Thread is paused".to_string(),
-                                0,
-                                trace,
-                            );
-                        } else {
-                            log::error!(
-                                "Failed to build transaction for thread {}: {:?}",
-                                thread_pubkey,
-                                e
-                            );
-                            return ExecutionResult::failed(
-                                thread_pubkey,
-                                format!("Transaction build failed: {}", e),
-                                0,
-                                trace,
-                            );
-                        }
+                        log::error!(
+                            "{}: continuation batch {} build failed: {:?}",
+                            thread_pubkey,
+                            batch_num,
+                            e
+                        );
+                        return ExecutionResult::failed(
+                            thread_pubkey,
+                            format!("Continuation batch {} build failed: {}", batch_num, e),
+                            0,
+                            trace,
+                        );
                     }
                 }
-            }
-        } else {
-            // Continuation batch — build against fresh on-chain state
-            match executor
-                .build_execute_transaction(&thread_pubkey, &thread, pending_fiber_cursor)
-                .await
-            {
-                Ok(result) => result,
-                Err(e) => {
-                    log::error!(
-                        "{}: continuation batch {} build failed: {:?}",
-                        thread_pubkey,
-                        batch_num,
-                        e
-                    );
-                    return ExecutionResult::failed(
-                        thread_pubkey,
-                        format!("Continuation batch {} build failed: {}", batch_num, e),
-                        0,
-                        trace,
-                    );
-                }
-            }
-        };
+            };
 
         trace.mark_built();
         max_priority_fee = max_priority_fee.max(priority_fee);
@@ -467,32 +483,38 @@ async fn execute_thread(
             needs_continuation
         );
 
-        // Simulate for accurate CU estimate
-        trace.count_rpc();
-        trace.count_rpc();
-        let cu_estimate = match executor.estimate_compute_units(&ixs, &thread_pubkey).await {
-            Ok(units) => {
-                trace.mark_simulated();
-                units
-            }
-            Err(e) => {
-                log::error!(
-                    "{}: batch {} CU estimation failed: {:?}",
-                    thread_pubkey,
-                    batch_num,
-                    e
-                );
-                return ExecutionResult::failed(
-                    thread_pubkey,
-                    format!("Batch {} CU estimation failed: {}", batch_num, e),
-                    0,
-                    trace,
-                );
+        // Reuse the compute units the batching simulation already measured.
+        // A separate estimate is only needed when that simulation did not cover
+        // the final instruction set.
+        let cu_estimate = match simulated_units {
+            Some(units) => units,
+            None => {
+                trace.count_rpc();
+                match executor.estimate_compute_units(&ixs, &thread_pubkey).await {
+                    Ok(units) => {
+                        trace.mark_simulated();
+                        units
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "{}: batch {} CU estimation failed: {:?}",
+                            thread_pubkey,
+                            batch_num,
+                            e
+                        );
+                        return ExecutionResult::failed(
+                            thread_pubkey,
+                            format!("Batch {} CU estimation failed: {}", batch_num, e),
+                            0,
+                            trace,
+                        );
+                    }
+                }
             }
         };
 
         // Prepend compute budget instructions
-        let compute_units = ((cu_estimate as f64) * 1.1) as u32;
+        let compute_units = compute_unit_limit(cu_estimate);
         let mut final_ixs = vec![ComputeBudgetInstruction::set_compute_unit_limit(
             compute_units,
         )];
@@ -725,7 +747,11 @@ async fn submit_and_confirm_batch(
                         }
 
                         // Genuine program failure - don't retry, return failure
-                        log::warn!("{}: transaction failed on-chain: {}", thread_pubkey, error_str);
+                        log::warn!(
+                            "{}: transaction failed on-chain: {}",
+                            thread_pubkey,
+                            error_str
+                        );
 
                         let _ = load_balancer
                             .record_execution_result(
@@ -735,7 +761,10 @@ async fn submit_and_confirm_batch(
                             )
                             .await;
 
-                        return Err((format!("Transaction failed on-chain: {}", error_str), attempt));
+                        return Err((
+                            format!("Transaction failed on-chain: {}", error_str),
+                            attempt,
+                        ));
                     }
                     Ok(None) => {
                         // Not yet confirmed, continue polling
@@ -965,6 +994,25 @@ mod tests {
         assert!(is_blockhash_expired(r#""BlockhashNotFound""#));
         assert!(!is_blockhash_expired(r#""AlreadyProcessed""#));
         assert!(!is_blockhash_expired(CUSTOM_6004));
+    }
+
+    #[test]
+    fn compute_unit_limit_adds_headroom() {
+        // Headroom must exceed the estimate, since the simulate ran against a
+        // different bank state.
+        assert!(compute_unit_limit(200_000) > 200_000);
+        assert_eq!(compute_unit_limit(200_000), 260_000);
+
+        // A trivial estimate still gets a usable floor.
+        assert_eq!(compute_unit_limit(0), 10_000);
+    }
+
+    #[test]
+    fn compute_unit_limit_is_clamped_to_the_chain_maximum() {
+        // Scaling a near-ceiling estimate must not request more than Solana
+        // permits, which would be rejected outright.
+        assert_eq!(compute_unit_limit(1_400_000), MAX_COMPUTE_UNITS);
+        assert_eq!(compute_unit_limit(u64::MAX / 2), MAX_COMPUTE_UNITS);
     }
 
     #[test]

@@ -5,7 +5,8 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 
 use anyhow::{anyhow, Result};
 use base64::prelude::*;
@@ -88,6 +89,23 @@ struct ResponseContext {
     slot: u64,
 }
 
+/// How long a cached blockhash is served before being refreshed.
+///
+/// A blockhash is valid for ~150 slots (~60s), so a value a couple of seconds
+/// old is indistinguishable in practice from a freshly fetched one — but
+/// fetching it sits on the critical path between a trigger firing and the
+/// transaction going out.
+const BLOCKHASH_TTL: Duration = Duration::from_secs(2);
+
+/// Deadline for RPC calls that sit between a trigger firing and the transaction
+/// going out.
+///
+/// The pool-wide HTTP timeout is sized for bulk calls like `getProgramAccounts`;
+/// applying it here means a single hung endpoint stalls an execution for that
+/// long before failover even begins. These calls are cheap, so anything slower
+/// than this is better served by moving to the next endpoint.
+const HOT_PATH_TIMEOUT: Duration = Duration::from_millis(1_500);
+
 /// Core RPC client pool
 pub struct RpcPool {
     /// HTTP client with connection pooling
@@ -98,6 +116,8 @@ pub struct RpcPool {
     config: RpcPoolConfig,
     /// Round-robin index for load balancing
     round_robin_idx: AtomicUsize,
+    /// Most recent blockhash, with the instant it was fetched.
+    blockhash: RwLock<Option<(Hash, u64, Instant)>>,
 }
 
 impl RpcPool {
@@ -126,6 +146,7 @@ impl RpcPool {
             endpoints,
             config,
             round_robin_idx: AtomicUsize::new(0),
+            blockhash: RwLock::new(None),
         })
     }
 
@@ -134,8 +155,23 @@ impl RpcPool {
         Self::new(vec![EndpointConfig::new(url)], RpcPoolConfig::default())
     }
 
-    /// Get the latest blockhash
+    /// Get the latest blockhash, served from a short-lived cache.
+    ///
+    /// Callers on the execution path hit this repeatedly; going to the network
+    /// each time added round trips after the trigger deadline had already
+    /// passed. Use [`RpcPool::refresh_blockhash`] from a background task to keep
+    /// the cache warm.
     pub async fn get_latest_blockhash(&self) -> Result<(Hash, u64)> {
+        if let Some((hash, height, fetched_at)) = *self.blockhash.read().await {
+            if fetched_at.elapsed() < BLOCKHASH_TTL {
+                return Ok((hash, height));
+            }
+        }
+        self.refresh_blockhash().await
+    }
+
+    /// Fetch a blockhash from the network and update the cache.
+    pub async fn refresh_blockhash(&self) -> Result<(Hash, u64)> {
         let body = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -145,8 +181,9 @@ impl RpcPool {
             }]
         });
 
-        let response: JsonRpcResponse<BlockhashResponse> =
-            self.execute_with_failover(&body, true).await?;
+        let response: JsonRpcResponse<BlockhashResponse> = self
+            .execute_with_deadline(&body, true, Some(HOT_PATH_TIMEOUT))
+            .await?;
 
         let result = response
             .result
@@ -158,7 +195,36 @@ impl RpcPool {
             .parse()
             .map_err(|e| anyhow!("Failed to parse blockhash: {}", e))?;
 
-        Ok((hash, result.value.last_valid_block_height))
+        let height = result.value.last_valid_block_height;
+        *self.blockhash.write().await = Some((hash, height, Instant::now()));
+
+        Ok((hash, height))
+    }
+
+    /// Seed the blockhash cache directly. Test-only.
+    #[cfg(test)]
+    pub(crate) async fn prime_blockhash(&self, hash: Hash, height: u64, fetched_at: Instant) {
+        *self.blockhash.write().await = Some((hash, height, fetched_at));
+    }
+
+    /// Keep the blockhash cache warm so the execution path never has to fetch
+    /// one synchronously. Runs until the pool is dropped.
+    pub fn spawn_blockhash_refresher(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let pool = Arc::downgrade(self);
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(BLOCKHASH_TTL);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                ticker.tick().await;
+                let Some(pool) = pool.upgrade() else {
+                    log::debug!("RPC pool dropped, stopping blockhash refresher");
+                    return;
+                };
+                if let Err(e) = pool.refresh_blockhash().await {
+                    log::debug!("Blockhash refresh failed: {}", e);
+                }
+            }
+        })
     }
 
     /// Send a transaction
@@ -172,13 +238,15 @@ impl RpcPool {
             "method": "sendTransaction",
             "params": [tx_base64, {
                 "encoding": "base64",
-                "skipPreflight": false,
+                "skipPreflight": self.config.skip_preflight,
                 "preflightCommitment": "confirmed",
                 "maxRetries": 3
             }]
         });
 
-        let response: JsonRpcResponse<String> = self.execute_with_failover(&body, false).await?;
+        let response: JsonRpcResponse<String> = self
+            .execute_with_deadline(&body, false, Some(HOT_PATH_TIMEOUT))
+            .await?;
 
         let signature_str = response
             .result
@@ -237,8 +305,9 @@ impl RpcPool {
             }]
         });
 
-        let response: JsonRpcResponse<AccountResponse> =
-            self.execute_with_failover(&body, true).await?;
+        let response: JsonRpcResponse<AccountResponse> = self
+            .execute_with_deadline(&body, true, Some(HOT_PATH_TIMEOUT))
+            .await?;
 
         Ok(response.result.and_then(|r| r.value))
     }
@@ -290,8 +359,9 @@ impl RpcPool {
             value: Vec<Option<SafeUiAccount>>,
         }
 
-        let response: JsonRpcResponse<MultipleAccountsResponse> =
-            self.execute_with_failover(&body, true).await?;
+        let response: JsonRpcResponse<MultipleAccountsResponse> = self
+            .execute_with_deadline(&body, true, Some(HOT_PATH_TIMEOUT))
+            .await?;
 
         Ok(response.result.map(|r| r.value).unwrap_or_default())
     }
@@ -372,8 +442,9 @@ impl RpcPool {
             }]
         });
 
-        let response: RpcResponse<SafeSimulationResult> =
-            self.execute_with_failover(&body, true).await?;
+        let response: RpcResponse<SafeSimulationResult> = self
+            .execute_with_deadline(&body, true, Some(HOT_PATH_TIMEOUT))
+            .await?;
 
         // Check for simulation error — surface program logs before returning
         if let Some(err) = &response.result.value.err {
@@ -418,8 +489,9 @@ impl RpcPool {
             confirmation_status: Option<String>,
         }
 
-        let response: JsonRpcResponse<SignatureStatusResponse> =
-            self.execute_with_failover(&body, true).await?;
+        let response: JsonRpcResponse<SignatureStatusResponse> = self
+            .execute_with_deadline(&body, true, Some(HOT_PATH_TIMEOUT))
+            .await?;
 
         let statuses = response.result.map(|r| r.value).unwrap_or_default();
 
@@ -450,6 +522,20 @@ impl RpcPool {
     where
         T: serde::de::DeserializeOwned,
     {
+        self.execute_with_deadline(body, read_only, None).await
+    }
+
+    /// Execute with an explicit per-call deadline, overriding the pool-wide
+    /// HTTP timeout. `None` keeps the pool default.
+    async fn execute_with_deadline<T>(
+        &self,
+        body: &serde_json::Value,
+        read_only: bool,
+        timeout: Option<Duration>,
+    ) -> Result<T>
+    where
+        T: serde::de::DeserializeOwned,
+    {
         let endpoints = self.select_endpoints(read_only);
 
         if endpoints.is_empty() {
@@ -461,7 +547,7 @@ impl RpcPool {
         for endpoint in &endpoints {
             let start = Instant::now();
 
-            match self.execute_request(endpoint, body).await {
+            match self.execute_request(endpoint, body, timeout).await {
                 Ok(response) => {
                     endpoint.record_success(start.elapsed());
                     return Ok(response);
@@ -482,16 +568,16 @@ impl RpcPool {
         &self,
         endpoint: &EndpointState,
         body: &serde_json::Value,
+        timeout: Option<Duration>,
     ) -> Result<T>
     where
         T: serde::de::DeserializeOwned,
     {
-        let response = self
-            .http_client
-            .post(endpoint.url())
-            .json(body)
-            .send()
-            .await?;
+        let mut request = self.http_client.post(endpoint.url()).json(body);
+        if let Some(deadline) = timeout {
+            request = request.timeout(deadline);
+        }
+        let response = request.send().await?;
 
         if !response.status().is_success() {
             return Err(anyhow!(
@@ -627,6 +713,45 @@ impl std::fmt::Debug for RpcPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn fresh_blockhash_is_served_from_cache() {
+        // Endpoint is unroutable, so any network attempt would fail. A cache
+        // hit must not touch it.
+        let pool = RpcPool::with_url("http://127.0.0.1:1").unwrap();
+        let hash = Hash::new_unique();
+        pool.prime_blockhash(hash, 4242, Instant::now()).await;
+
+        let (got, height) = pool.get_latest_blockhash().await.unwrap();
+        assert_eq!(got, hash);
+        assert_eq!(height, 4242);
+    }
+
+    #[tokio::test]
+    async fn stale_blockhash_is_not_served_from_cache() {
+        let pool = RpcPool::with_url("http://127.0.0.1:1").unwrap();
+        let stale = Instant::now()
+            .checked_sub(BLOCKHASH_TTL * 2)
+            .expect("clock far enough from start");
+        pool.prime_blockhash(Hash::new_unique(), 1, stale).await;
+
+        // Past the TTL it must go to the network, which here cannot succeed.
+        assert!(pool.get_latest_blockhash().await.is_err());
+    }
+
+    #[test]
+    fn skip_preflight_defaults_on() {
+        // The client already simulates before signing; preflight is a third,
+        // server-side simulation on the critical path.
+        assert!(RpcPoolConfig::default().skip_preflight);
+    }
+
+    #[test]
+    fn hot_path_timeout_is_well_under_the_pool_default() {
+        // Otherwise a hung endpoint stalls an execution for the bulk-call
+        // timeout before failover even begins.
+        assert!(HOT_PATH_TIMEOUT < RpcPoolConfig::default().http.request_timeout);
+    }
 
     #[test]
     fn test_pool_creation() {

@@ -57,7 +57,14 @@ impl SharedResources {
 
         // Custom RPC client with safe deserialization
         let endpoint_configs = EndpointConfig::from_rpc_config(&config.rpc);
-        let rpc_client = Arc::new(RpcPool::new(endpoint_configs, RpcPoolConfig::default())?);
+        let pool_config = RpcPoolConfig {
+            skip_preflight: config.rpc.skip_preflight,
+            ..RpcPoolConfig::default()
+        };
+        let rpc_client = Arc::new(RpcPool::new(endpoint_configs, pool_config)?);
+        // Keep a blockhash ready so the execution path never fetches one after
+        // the trigger deadline has already passed.
+        rpc_client.spawn_blockhash_refresher();
 
         let cache = Arc::new(AccountCache::with_config(
             &config.cache,

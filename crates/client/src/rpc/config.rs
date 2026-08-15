@@ -7,6 +7,10 @@ use std::time::Duration;
 /// Main configuration for the RPC pool
 #[derive(Debug, Clone)]
 pub struct RpcPoolConfig {
+    /// Skip the RPC node's preflight simulation on submission.
+    /// The client simulates before signing, so preflight is a redundant
+    /// server-side simulation on the critical path.
+    pub skip_preflight: bool,
     /// HTTP client settings
     pub http: HttpConfig,
     /// Circuit breaker settings
@@ -24,6 +28,7 @@ pub struct RpcPoolConfig {
 impl Default for RpcPoolConfig {
     fn default() -> Self {
         Self {
+            skip_preflight: true,
             http: HttpConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),
             rate_limit: RateLimitConfig::default(),

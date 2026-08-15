@@ -53,6 +53,19 @@ impl Default for ExecutorConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RpcConfig {
     pub endpoints: Vec<RpcEndpoint>,
+    /// Skip the RPC node's preflight simulation when submitting.
+    ///
+    /// The client already simulates before signing, so preflight is a third,
+    /// server-side simulation on the critical path. Skipping it means paying
+    /// the fee for a transaction that would have been rejected at preflight —
+    /// set to `false` if that shows up as meaningful fee waste. Note that TPU
+    /// submission never preflights, so this only affects the RPC fallback.
+    #[serde(default = "default_skip_preflight")]
+    pub skip_preflight: bool,
+}
+
+fn default_skip_preflight() -> bool {
+    true
 }
 
 /// Individual RPC endpoint
@@ -431,6 +444,7 @@ impl Default for ClientConfig {
                     role: EndpointRole::Both,
                     priority: 1,
                 }],
+                skip_preflight: default_skip_preflight(),
             },
             datasources: DatasourceConfig {
                 commitment: "confirmed".to_string(),

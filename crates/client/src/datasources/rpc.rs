@@ -18,9 +18,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::actors::messages::RpcSourceMessage;
+use crate::resources::IngestStats;
 use crate::rpc::response::decode_account_data;
 use crate::rpc::websocket::{build_account_subscribe_request, build_program_subscribe_request};
-use crate::resources::IngestStats;
 use crate::rpc::RpcPool;
 use crate::types::AccountUpdate;
 
@@ -337,11 +337,7 @@ fn parse_program_notification(text: &str) -> Option<AccountUpdate> {
     let account_data = &params.result.value.account.data;
     let data = decode_account_data(&account_data.0, &account_data.1).ok()?;
 
-    Some(AccountUpdate::new(
-        pubkey,
-        data,
-        params.result.context.slot,
-    ))
+    Some(AccountUpdate::new(pubkey, data, params.result.context.slot))
 }
 
 /// Parse a clock account notification message

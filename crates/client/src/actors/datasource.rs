@@ -387,10 +387,7 @@ impl Actor for RpcSourceActor {
                 // account update from this endpoint. Run it off the actor loop;
                 // it already reports results back by message.
                 if state.backfill_in_flight {
-                    log::debug!(
-                        "[{}] Backfill already in flight, skipping",
-                        state.ws_url
-                    );
+                    log::debug!("[{}] Backfill already in flight, skipping", state.ws_url);
                     return Ok(());
                 }
 
@@ -550,8 +547,7 @@ fn spawn_clock_subscription(
     let sub_actor_ref = actor_ref.clone();
 
     let handle = tokio::spawn(async move {
-        let subscription =
-            RpcSubscription::new(clock_ws_url, program_id, rpc_client, ingest_stats);
+        let subscription = RpcSubscription::new(clock_ws_url, program_id, rpc_client, ingest_stats);
         tokio::select! {
             _ = subscription.subscribe_to_clock(sub_actor_ref) => {}
             _ = cancel_token.cancelled() => {

@@ -87,7 +87,10 @@ impl IngestStats {
     /// Record a successful connect. Returns the total connect count for this
     /// endpoint — 1 is startup, anything higher is a reconnect.
     pub fn record_connect(&self, endpoint: &str) -> u64 {
-        self.entry(endpoint).connects.fetch_add(1, Ordering::Relaxed) + 1
+        self.entry(endpoint)
+            .connects
+            .fetch_add(1, Ordering::Relaxed)
+            + 1
     }
 
     /// Claim the right to run a backfill, debounced across all datasources.

@@ -21,6 +21,7 @@ use antegen_thread_program::{
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
     account::Account,
+    hash::Hash,
     instruction::{AccountMeta, Instruction},
     message::Message,
     pubkey::Pubkey,
@@ -92,16 +93,25 @@ impl ExecutorLogic {
     /// Returns (instructions, priority_fee, needs_continuation)
     /// Build a single transaction batch to execute a thread.
     ///
-    /// Returns (instructions, priority_fee, needs_continuation, next_fiber_cursor).
+    /// Returns (instructions, priority_fee, needs_continuation, next_fiber_cursor,
+    /// simulated_units).
+    ///
     /// When `needs_continuation` is true, `next_fiber_cursor` holds the cursor
     /// that the next batch should start from (needed because on-chain Chain
     /// signal doesn't advance `fiber_cursor`).
+    ///
+    /// `simulated_units` carries the compute units observed by the batching
+    /// simulation, but only when that simulation covered the *final* instruction
+    /// set. It is `None` when the loop appended an instruction after its last
+    /// simulate, in which case the caller must estimate separately. Reusing it
+    /// saves a full simulate round trip on the single-fiber path, which is the
+    /// overwhelming majority of executions.
     pub async fn build_execute_transaction(
         &self,
         thread_pubkey: &Pubkey,
         thread: &Thread,
         override_fiber_cursor: Option<u8>,
-    ) -> Result<(Vec<Instruction>, u64, bool, Option<u8>)> {
+    ) -> Result<(Vec<Instruction>, u64, bool, Option<u8>, Option<u64>)> {
         // Log thread state for debugging
         self.log_thread_debug(thread, thread_pubkey);
 
@@ -110,6 +120,9 @@ impl ExecutorLogic {
         let mut ixs: Vec<Instruction> = Vec::new();
         let mut needs_continuation = false;
         let mut next_fiber_cursor: Option<u8> = None;
+        // Units from the most recent simulate, valid only while `ixs` is
+        // unchanged since. Cleared on every push.
+        let mut simulated_units: Option<u64> = None;
 
         // Track fiber_cursor through the chaining loop
         // Signal::Chain tells us to execute next fiber in sequence
@@ -132,7 +145,7 @@ impl ExecutorLogic {
         // Empty fiber — nothing to submit
         let Some(first_ix) = first_ix else {
             debug!("{}: first fiber is empty, nothing to submit", thread_pubkey);
-            return Ok((vec![], 0, false, None));
+            return Ok((vec![], 0, false, None, None));
         };
 
         debug!(
@@ -163,7 +176,8 @@ impl ExecutorLogic {
                 "Simulating transaction with {} instruction(s) to check for batching...",
                 ixs.len()
             );
-            let (signal, _units) = self.simulate_transaction(&ixs, thread_pubkey).await?;
+            let (signal, units) = self.simulate_transaction(&ixs, thread_pubkey).await?;
+            simulated_units = Some(units);
             debug!(
                 "{}: fiber {} simulation signal={:?}",
                 thread_pubkey, current_fiber_cursor, signal
@@ -203,6 +217,10 @@ impl ExecutorLogic {
                     let trial_size = self.estimate_transaction_size_with_budget(&trial);
                     if trial_size <= MAX_TRANSACTION_SIZE {
                         ixs.push(next_ix);
+                        // The batch grew; the estimate no longer covers it. If
+                        // the loop now exits on MAX_BATCHED_EXECS this stays
+                        // None and the caller estimates properly.
+                        simulated_units = None;
                     } else {
                         // Doesn't fit — return what we have and signal continuation.
                         // The worker will submit this batch, confirm it, re-fetch
@@ -232,6 +250,8 @@ impl ExecutorLogic {
                     trial.push(close_ix.clone());
                     if self.would_fit_in_transaction(&trial) {
                         ixs.push(close_ix);
+                        // close_ix was never simulated.
+                        simulated_units = None;
                     } else {
                         debug!(
                             "{}: transaction full ({} ix), close deferred to continuation",
@@ -287,7 +307,13 @@ impl ExecutorLogic {
             needs_continuation
         );
 
-        Ok((ixs, priority_fee, needs_continuation, next_fiber_cursor))
+        Ok((
+            ixs,
+            priority_fee,
+            needs_continuation,
+            next_fiber_cursor,
+            simulated_units,
+        ))
     }
 
     /// Fetch thread account from RPC and deserialize.
@@ -744,23 +770,20 @@ impl ExecutorLogic {
             }
         }
 
-        // 1. Get blockhash from RPC pool
-        let (blockhash, _) = self
-            .resources
-            .rpc_client
-            .get_latest_blockhash()
-            .await
-            .map_err(|e| anyhow!("Failed to get blockhash for simulation: {}", e))?;
-        debug!("Got blockhash for simulation: {}", blockhash);
-
-        // 2. Build transaction with generous CU limit for simulation headroom.
-        // The actual CU limit is set precisely later by the worker (cu_estimate * 1.1).
+        // 1. Build transaction with generous CU limit for simulation headroom.
+        // The actual CU limit is set precisely later by the worker.
+        //
+        // No blockhash is fetched: the simulation request sets
+        // `replaceRecentBlockhash: true` and `sigVerify: false`, so the
+        // validator substitutes its own and ignores whatever we send. Fetching
+        // one here was a round trip on the critical path whose result was
+        // discarded server-side.
         let mut sim_ixs = vec![ComputeBudgetInstruction::set_compute_unit_limit(1_400_000)];
         sim_ixs.extend_from_slice(instructions);
         let message = Message::new(&sim_ixs, Some(&self.keypair.pubkey()));
-        let tx = Transaction::new(&[self.keypair.as_ref()], message, blockhash);
+        let tx = Transaction::new(&[self.keypair.as_ref()], message, Hash::default());
 
-        // 3. Simulate via RPC pool (handles failover, returns result with accounts)
+        // 2. Simulate via RPC pool (handles failover, returns result with accounts)
         let result = match self
             .resources
             .rpc_client
