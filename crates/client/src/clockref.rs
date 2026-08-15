@@ -107,6 +107,18 @@ impl ClockRef {
         Some(self.anchor_ts as f64 + at.elapsed().as_secs_f64())
     }
 
+    /// Estimated current on-chain unix timestamp, floored to whole seconds.
+    ///
+    /// Use this when evaluating readiness between ticks: the on-chain gate
+    /// compares whole seconds, and the anchor alone would lag by up to a second
+    /// because it only advances when a tick carrying a new value arrives.
+    pub fn anchor_ts_projected(&self) -> i64 {
+        match self.now_ts() {
+            Some(ts) => ts.floor() as i64,
+            None => self.anchor_ts,
+        }
+    }
+
     /// Local instant at which the on-chain clock is projected to reach `ts`.
     ///
     /// For a `ts` already in the past this returns an instant in the past, which
@@ -200,6 +212,27 @@ mod tests {
 
         // Just inside the window is still accepted.
         assert!(c.observe(&clock(1_000 - FORK_TOLERANCE_SLOTS, 1_000), t0));
+    }
+
+    #[test]
+    fn projected_timestamp_advances_between_ticks() {
+        // The anchor only moves when a tick carrying a new second arrives, so
+        // readiness evaluated on the raw anchor would lag by up to a second.
+        // The projection must advance with local time instead.
+        let mut c = ClockRef::new();
+        let t0 = Instant::now() - Duration::from_millis(1_500);
+        c.observe(&clock(100, 1_000), t0);
+
+        assert_eq!(c.anchor_ts(), 1_000);
+        assert_eq!(c.anchor_ts_projected(), 1_001);
+    }
+
+    #[test]
+    fn projection_falls_back_to_anchor_before_any_tick() {
+        let c = ClockRef::new();
+        assert_eq!(c.anchor_ts_projected(), 0);
+        assert!(c.now_ts().is_none());
+        assert!(c.instant_for_ts(1_000).is_none());
     }
 
     #[test]

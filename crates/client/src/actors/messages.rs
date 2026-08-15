@@ -59,6 +59,9 @@ pub enum CompletionReason {
 pub enum StagingMessage {
     AccountUpdate(AccountUpdate),
     ClockTick(Clock),
+    /// The projected on-chain clock has reached the earliest pending trigger.
+    /// Emitted by the staging actor's own timer, not by a datasource.
+    Fire,
     ThreadCompleted {
         thread_pubkey: Pubkey,
         reason: CompletionReason,

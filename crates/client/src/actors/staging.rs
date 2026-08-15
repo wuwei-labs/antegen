@@ -28,7 +28,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::error::Error;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, watch, Mutex};
 
 #[derive(Default)]
 pub struct StagingActor;
@@ -73,6 +73,10 @@ pub struct StagingState {
 
     // Cache eviction receiver - threads to refetch after TTL expiry
     eviction_rx: mpsc::UnboundedReceiver<Pubkey>,
+
+    // Drives the single scheduling timer. Holds the local instant at which the
+    // earliest pending time trigger is projected to become due.
+    timer_tx: watch::Sender<Option<Instant>>,
 }
 
 impl Actor for StagingActor {
@@ -87,11 +91,14 @@ impl Actor for StagingActor {
 
     async fn pre_start(
         &self,
-        _myself: ActorRef<Self::Msg>,
+        myself: ActorRef<Self::Msg>,
         (_config, resources, load_balancer, eviction_rx): Self::Arguments,
     ) -> Result<Self::State, Box<dyn Error + Send + Sync>> {
         log::debug!("StagingActor starting...");
         log::debug!("Thread program ID: {}", resources.program_id);
+
+        let (timer_tx, timer_rx) = watch::channel(None);
+        spawn_scheduling_timer(myself.clone(), timer_rx);
 
         Ok(StagingState {
             tracked_threads: HashMap::new(),
@@ -101,6 +108,7 @@ impl Actor for StagingActor {
             queued_threads: DashSet::new(),
             last_processed_slot: 0,
             clock_ref: ClockRef::new(),
+            timer_tx,
             processor_ref: None, // Will be set by RootSupervisor after processor spawns
             resources,
             load_balancer,
@@ -117,10 +125,17 @@ impl Actor for StagingActor {
         match message {
             StagingMessage::AccountUpdate(update) => {
                 self.handle_account_update(state, update).await?;
+                // An update may have introduced an earlier deadline than the one
+                // the timer is currently armed on.
+                self.rearm_timer(state).await;
                 Ok(())
             }
             StagingMessage::ClockTick(clock) => {
                 self.handle_clock_tick(state, clock).await?;
+                Ok(())
+            }
+            StagingMessage::Fire => {
+                self.handle_fire(state).await?;
                 Ok(())
             }
             StagingMessage::ThreadCompleted {
@@ -151,6 +166,7 @@ impl Actor for StagingActor {
                         debug!("Thread {} executed, removed from queued set", thread_pubkey);
                     }
                 }
+                self.rearm_timer(state).await;
                 Ok(())
             }
             StagingMessage::SetProcessorRef(processor_ref) => {
@@ -317,18 +333,30 @@ impl StagingActor {
         // Stamping here rather than at the socket is deliberate: any delay
         // getting into this actor is real scheduling delay, and folding it into
         // the anchor is what makes `tick_ms` report it.
-        state.clock_ref.observe(&clock, Instant::now());
-
-        // Dedup: Drop stale clocks (slots move forward only)
-        if clock.slot <= state.last_processed_slot {
+        //
+        // `observe` also rejects a datasource that has fallen far behind, which
+        // a plain high-water mark cannot distinguish from a fork.
+        if !state.clock_ref.observe(&clock, Instant::now()) {
             debug!(
-                "Dropping stale clock tick (slot={} <= last_processed={})",
-                clock.slot, state.last_processed_slot
+                "Dropping clock tick from a lagging source (slot={}, high={})",
+                clock.slot,
+                state.clock_ref.high_slot()
             );
             return Ok(());
         }
 
-        // Update last processed slot
+        // Dedup: skip only an exact repeat of the slot we just handled.
+        //
+        // At `processed` commitment slots are not monotone — they can be skipped
+        // or rolled back — so a strict high-water mark would let one forked-ahead
+        // tick blackhole every subsequent tick from the canonical chain until it
+        // caught up. Readiness evaluation is cheap and idempotent (queued_threads
+        // guards against double-dispatch), so processing an out-of-order tick is
+        // harmless where dropping a real one is not.
+        if clock.slot == state.last_processed_slot {
+            return Ok(());
+        }
+
         state.last_processed_slot = clock.slot;
 
         // Periodic heartbeat at INFO level every 100 slots
@@ -437,16 +465,72 @@ impl StagingActor {
             }
         }
 
+        // Evaluate readiness against the monotone anchor rather than this tick's
+        // raw timestamp. At `processed` a rolled-back tick can carry an older
+        // timestamp, and letting readiness move backwards would un-ready threads
+        // that are legitimately due.
+        let now_ts = state.clock_ref.anchor_ts();
+
         // Get ready threads from all priority queues
         let ready_threads = self
-            .get_ready_threads(state, clock.unix_timestamp, clock.slot, clock.epoch)
+            .get_ready_threads(state, now_ts, clock.slot, clock.epoch)
             .await;
 
+        self.dispatch(state, ready_threads);
+        self.rearm_timer(state).await;
+
+        Ok(())
+    }
+
+    /// Fire because the projected on-chain clock has reached the earliest
+    /// deadline, rather than because a WebSocket message happened to arrive.
+    ///
+    /// Only the time queue is evaluated: slot and epoch triggers have no
+    /// wall-clock deadline to project, so they stay tick-driven.
+    async fn handle_fire(&self, state: &mut StagingState) -> Result<(), ActorProcessingErr> {
+        let now_ts = state.clock_ref.anchor_ts_projected();
+
+        let mut ready = Vec::new();
+        let mut processed: HashSet<Pubkey> = HashSet::new();
+        self.check_queue(
+            &state.time_queue,
+            now_ts.max(0) as u64,
+            now_ts,
+            state,
+            &mut ready,
+            &mut processed,
+            "timestamp",
+        )
+        .await;
+
+        self.dispatch(state, ready);
+        self.rearm_timer(state).await;
+
+        Ok(())
+    }
+
+    /// Arm the single scheduling timer on the earliest pending time trigger.
+    ///
+    /// One timer for the whole actor, re-armed whenever the head of the queue
+    /// may have changed — not one timer per thread.
+    async fn rearm_timer(&self, state: &StagingState) {
+        let next_due = state
+            .time_queue
+            .lock()
+            .await
+            .peek()
+            .map(|Reverse(s)| s.trigger_value);
+
+        let target = next_due.and_then(|due| state.clock_ref.instant_for_ts(due as i64));
+        let _ = state.timer_tx.send(target);
+    }
+
+    /// Push ready threads to the ProcessorFactory.
+    fn dispatch(&self, state: &mut StagingState, ready_threads: Vec<ReadyThread>) {
         if !ready_threads.is_empty() {
             info!("Found {} ready threads", ready_threads.len());
         }
 
-        // Push each ready thread to ProcessorFactory
         for ready_thread in ready_threads {
             // Check if already queued (additional dedup safety)
             if state.queued_threads.contains(&ready_thread.thread_pubkey) {
@@ -486,8 +570,6 @@ impl StagingActor {
                 state.queued_threads.remove(&ready_thread.thread_pubkey);
             }
         }
-
-        Ok(())
     }
 
     /// Schedule a thread in the appropriate priority queue
@@ -792,6 +874,51 @@ impl StagingActor {
 
         AccountType::Other
     }
+}
+
+/// Drive a single timer that fires when the projected on-chain clock reaches the
+/// earliest pending trigger.
+///
+/// One task for the whole actor, re-armed via a watch channel whenever the head
+/// of the time queue may have changed — not one timer per thread. Firing on a
+/// timer rather than on the next clock notification is what removes the tick
+/// source from the critical path: without it, a thread due at T is not noticed
+/// until the next WebSocket message happens to arrive.
+fn spawn_scheduling_timer(
+    actor: ActorRef<StagingMessage>,
+    mut target_rx: watch::Receiver<Option<Instant>>,
+) {
+    tokio::spawn(async move {
+        loop {
+            let target = *target_rx.borrow_and_update();
+
+            let Some(at) = target else {
+                // Nothing scheduled; wait for an arm.
+                if target_rx.changed().await.is_err() {
+                    return; // actor gone
+                }
+                continue;
+            };
+
+            tokio::select! {
+                _ = tokio::time::sleep_until(at.into()) => {
+                    if actor.send_message(StagingMessage::Fire).is_err() {
+                        return; // actor gone
+                    }
+                    // Wait to be re-armed rather than re-firing on the same
+                    // deadline, which is now in the past and would spin.
+                    if target_rx.changed().await.is_err() {
+                        return;
+                    }
+                }
+                changed = target_rx.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    });
 }
 
 #[derive(Debug)]

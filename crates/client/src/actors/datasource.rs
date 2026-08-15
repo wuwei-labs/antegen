@@ -404,12 +404,8 @@ impl Actor for RpcSourceActor {
                 }
                 state.backfill_in_flight = true;
 
-                let subscription = RpcSubscription::new(
-                    state.ws_url.clone(),
-                    state.resources.program_id,
-                    state.resources.rpc_client.clone(),
-                    state.resources.ingest_stats.clone(),
-                );
+                let subscription =
+                    RpcSubscription::from_resources(state.ws_url.clone(), &state.resources);
                 let ws_url = state.ws_url.clone();
                 let actor_ref = myself.clone();
                 tokio::spawn(async move {
@@ -509,14 +505,11 @@ fn spawn_program_subscription(
     cancel_token: CancellationToken,
 ) {
     let program_ws_url = ws_url.to_string();
-    let program_id = resources.program_id;
-    let rpc_client = resources.rpc_client.clone();
-    let ingest_stats = resources.ingest_stats.clone();
+    let sub_resources = resources.clone();
     let sub_actor_ref = actor_ref.clone();
 
     let handle = tokio::spawn(async move {
-        let subscription =
-            RpcSubscription::new(program_ws_url, program_id, rpc_client, ingest_stats);
+        let subscription = RpcSubscription::from_resources(program_ws_url, &sub_resources);
         tokio::select! {
             _ = subscription.subscribe_to_program_accounts(sub_actor_ref) => {}
             _ = cancel_token.cancelled() => {
@@ -541,13 +534,11 @@ fn spawn_clock_subscription(
     cancel_token: CancellationToken,
 ) {
     let clock_ws_url = ws_url.to_string();
-    let program_id = resources.program_id;
-    let rpc_client = resources.rpc_client.clone();
-    let ingest_stats = resources.ingest_stats.clone();
+    let sub_resources = resources.clone();
     let sub_actor_ref = actor_ref.clone();
 
     let handle = tokio::spawn(async move {
-        let subscription = RpcSubscription::new(clock_ws_url, program_id, rpc_client, ingest_stats);
+        let subscription = RpcSubscription::from_resources(clock_ws_url, &sub_resources);
         tokio::select! {
             _ = subscription.subscribe_to_clock(sub_actor_ref) => {}
             _ = cancel_token.cancelled() => {
@@ -619,6 +610,32 @@ impl Actor for GeyserSourceActor {
                             update.slot,
                             update.data.len()
                         );
+
+                        // The clock sysvar drives scheduling and must arrive as a
+                        // ClockTick. Sent as a plain AccountUpdate it is classified
+                        // as AccountType::Clock and discarded, which left plugin
+                        // deployments depending entirely on a remote WebSocket
+                        // subscription while a bank-local clock — the lowest
+                        // latency source available — went unused.
+                        //
+                        // It is deliberately not cached: it changes every slot, so
+                        // caching it only churns a no-TTL entry.
+                        if update.pubkey == solana_sdk::sysvar::clock::ID {
+                            match bincode::deserialize::<solana_sdk::clock::Clock>(&update.data) {
+                                Ok(clock) => {
+                                    if let Err(e) =
+                                        staging.send_message(StagingMessage::ClockTick(clock))
+                                    {
+                                        log::error!("[Geyser] Failed to send clock to staging: {}", e);
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!("[Geyser] Failed to decode clock sysvar: {}", e);
+                                }
+                            }
+                            continue;
+                        }
 
                         // Push to cache first - this deduplicates and stores the data
                         let is_new = cache

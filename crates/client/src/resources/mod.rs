@@ -42,6 +42,10 @@ pub struct SharedResources {
     pub program_id: Pubkey,
     /// Per-endpoint ingest attribution — which datasource is winning the race.
     pub ingest_stats: Arc<IngestStats>,
+    /// Commitment for the thread program subscription.
+    pub commitment: Arc<str>,
+    /// Commitment for the clock sysvar subscription.
+    pub clock_commitment: Arc<str>,
 }
 
 impl SharedResources {
@@ -114,6 +118,8 @@ impl SharedResources {
                 tpu_client,
                 program_id: config.datasources.program_id,
                 ingest_stats: Arc::new(IngestStats::new()),
+                commitment: config.datasources.commitment.as_str().into(),
+                clock_commitment: config.datasources.clock_commitment.as_str().into(),
             },
             eviction_rx,
         ))
@@ -128,6 +134,8 @@ impl SharedResources {
             tpu_client: None,
             program_id: antegen_thread_program::ID,
             ingest_stats: Arc::new(IngestStats::new()),
+            commitment: "confirmed".into(),
+            clock_commitment: "processed".into(),
         }
     }
 }

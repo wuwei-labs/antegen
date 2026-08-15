@@ -32,6 +32,8 @@ pub struct RpcSubscription {
     program_id: Pubkey,
     rpc_client: Arc<RpcPool>,
     ingest_stats: Arc<IngestStats>,
+    commitment: Arc<str>,
+    clock_commitment: Arc<str>,
 }
 
 impl RpcSubscription {
@@ -41,13 +43,29 @@ impl RpcSubscription {
         program_id: Pubkey,
         rpc_client: Arc<RpcPool>,
         ingest_stats: Arc<IngestStats>,
+        commitment: Arc<str>,
+        clock_commitment: Arc<str>,
     ) -> Self {
         Self {
             ws_url,
             program_id,
             rpc_client,
             ingest_stats,
+            commitment,
+            clock_commitment,
         }
+    }
+
+    /// Build a subscription manager from shared resources.
+    pub fn from_resources(ws_url: String, resources: &crate::resources::SharedResources) -> Self {
+        Self::new(
+            ws_url,
+            resources.program_id,
+            resources.rpc_client.clone(),
+            resources.ingest_stats.clone(),
+            resources.commitment.clone(),
+            resources.clock_commitment.clone(),
+        )
     }
 
     /// Perform backfill using getProgramAccounts via custom RpcPool
@@ -135,7 +153,7 @@ impl RpcSubscription {
             }
         })];
         let (_, subscribe_msg) =
-            build_program_subscribe_request(&self.program_id, "confirmed", Some(filters));
+            build_program_subscribe_request(&self.program_id, &self.commitment, Some(filters));
 
         let builder = match antegen_ws::WsClient::builder(&ws_url) {
             Ok(b) => b,
@@ -207,7 +225,8 @@ impl RpcSubscription {
             ws_url
         );
 
-        let (_, subscribe_msg) = build_account_subscribe_request(&sysvar::clock::ID, "confirmed");
+        let (_, subscribe_msg) =
+            build_account_subscribe_request(&sysvar::clock::ID, &self.clock_commitment);
 
         let builder = match antegen_ws::WsClient::builder(&ws_url) {
             Ok(b) => b,

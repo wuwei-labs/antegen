@@ -43,6 +43,12 @@ const TPU_RETRY_INTERVAL_MS: u64 = 2000;
 /// This bounds how long we'll retry before giving up
 const TRIGGER_RETRY_DEADLINE_SECS: u64 = 10;
 
+/// Floor for the 6004 retry backoff.
+///
+/// The clock projection is an estimate, so on a retry we may still be marginally
+/// early. Small enough that being wrong costs little, large enough not to spin.
+const TRIGGER_RETRY_MIN_BACKOFF: Duration = Duration::from_millis(75);
+
 /// Check if an error indicates the trigger condition is not yet met (error 6004)
 fn is_trigger_not_ready_error(error: &str) -> bool {
     error.contains("Custom(6004)") || error.contains("6004")
@@ -377,6 +383,22 @@ async fn execute_thread(
         // Build batch — first iteration uses trigger retry, subsequent don't need it
         let (ixs, priority_fee, needs_continuation, next_cursor, simulated_units) =
             if batch_num == 1 {
+                // If we were released before the on-chain deadline, wait for it
+                // rather than building a transaction the chain is certain to
+                // reject with 6004. A rejected build costs a fiber fetch and a
+                // simulation, so polling into the deadline is more expensive
+                // than sleeping to it.
+                if let Some(due_at) = trace.due_at {
+                    if due_at > Instant::now() {
+                        log::debug!(
+                            "{}: released {}ms before deadline, waiting",
+                            thread_pubkey,
+                            due_at.duration_since(Instant::now()).as_millis()
+                        );
+                        tokio::time::sleep_until(due_at.into()).await;
+                    }
+                }
+
                 let trigger_retry_deadline =
                     Instant::now() + Duration::from_secs(TRIGGER_RETRY_DEADLINE_SECS);
                 loop {
@@ -404,11 +426,21 @@ async fn execute_thread(
                         Err(e) => {
                             let error_str = e.to_string();
                             if is_trigger_not_ready_error(&error_str) {
+                                // Wake when the chain's clock is projected to
+                                // cross the deadline, rather than polling on a
+                                // fixed quantum that adds up to half a second of
+                                // avoidable delay per attempt.
+                                let backoff = trace
+                                    .due_at
+                                    .and_then(|due| due.checked_duration_since(Instant::now()))
+                                    .map(|remaining| remaining.max(TRIGGER_RETRY_MIN_BACKOFF))
+                                    .unwrap_or(TRIGGER_RETRY_MIN_BACKOFF);
                                 log::debug!(
-                                    "Thread {} trigger not ready (6004), retrying in 500ms",
-                                    thread_pubkey
+                                    "Thread {} trigger not ready (6004), retrying in {}ms",
+                                    thread_pubkey,
+                                    backoff.as_millis()
                                 );
-                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                tokio::time::sleep(backoff).await;
                                 continue;
                             } else if is_thread_paused_error(&error_str) {
                                 log::debug!(
