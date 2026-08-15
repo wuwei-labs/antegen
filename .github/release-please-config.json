@@ -47,12 +47,6 @@
       "package-name": "antegen-cli",
       "changelog-path": "CHANGELOG.md"
     },
-    "cli/antegenctl": {
-      "release-type": "rust",
-      "component": "antegenctl",
-      "package-name": "antegenctl",
-      "changelog-path": "CHANGELOG.md"
-    },
     "plugin/geyser": {
       "release-type": "rust",
       "component": "antegen-geyser-plugin",

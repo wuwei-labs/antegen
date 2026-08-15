@@ -13,7 +13,7 @@ otherwise — must follow them too.
    - Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`,
      `test`, `build`, `ci`, `chore`, `revert`.
    - Allowed scopes (optional): `cron`, `client`, `ws`, `thread`,
-     `fiber`, `cli-core`, `cli`, `ctl`, `geyser`. Scope tells
+     `fiber`, `cli-core`, `cli`, `geyser`. Scope tells
      `release-please` which package's changelog the commit belongs to.
    - Append `!` after type/scope (or include a `BREAKING CHANGE:`
      footer) for breaking changes — these become a major version bump.
@@ -90,13 +90,12 @@ in `.github/release-please-config.json`. The current mapping:
 | Path | Component | Tag format | Publish target |
 |------|-----------|-----------|----------------|
 | `crates/cron` | `antegen-cron` | `antegen-cron-v<X.Y.Z>` | crates.io |
-| `crates/client` | `antegen-client` | `antegen-client-v<X.Y.Z>` | crates.io + `antegen-node` binary |
+| `crates/client` | `antegen-client` | `antegen-client-v<X.Y.Z>` | crates.io |
 | `crates/ws` | `antegen-ws` | `antegen-ws-v<X.Y.Z>` | crates.io |
 | `programs/thread` | `antegen-thread-program` | `antegen-thread-program-v<X.Y.Z>` | crates.io + verifiable `.so` |
 | `programs/fiber` | `antegen-fiber-program` | `antegen-fiber-program-v<X.Y.Z>` | crates.io + verifiable `.so` |
 | `cli/core` | `antegen-cli-core` | `antegen-cli-core-v<X.Y.Z>` | crates.io |
-| `cli/antegen` | `antegen-cli` | `antegen-cli-v<X.Y.Z>` | crates.io + `antegen` binary |
-| `cli/antegenctl` | `antegenctl` | `antegenctl-v<X.Y.Z>` | crates.io + `antegenctl` binary |
+| `cli/antegen` | `antegen-cli` | `antegen-cli-v<X.Y.Z>` | crates.io + `antegen` binary (CLI **and** node daemon) |
 | `plugin/geyser` | `antegen-geyser-plugin` | `antegen-geyser-plugin-v<X.Y.Z>` | binary only (`publish = false`) |
 
 `programs/reentrance-test` is a test-only program (`publish = false`)
