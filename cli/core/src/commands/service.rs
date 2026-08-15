@@ -321,6 +321,7 @@ pub fn ensure_config() -> Result<PathBuf> {
 /// Start the antegen service (init + install + start)
 /// If the service is already installed, stops and uninstalls it first (clean reinstall).
 pub async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
+    super::update::clean_legacy_layout();
     let config_path = do_init(rpc, false)?;
 
     // Clean reinstall: stop + uninstall existing service if present
