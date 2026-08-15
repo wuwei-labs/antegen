@@ -16,11 +16,20 @@ use solana_sdk::pubkey::Pubkey;
 use std::fmt::Write as _;
 use std::time::Instant;
 
-/// Which submission path carried the transaction.
+/// Which submission paths accepted the transaction.
+///
+/// Deliberately *not* "which one landed it": the same signed transaction is
+/// broadcast over every available path, so at most one can land but the client
+/// cannot tell which. `Tpu` here means the TPU client accepted the transaction
+/// for delivery — a fire-and-forget enqueue that succeeds even when the
+/// underlying QUIC connection is failing — so reporting it as the landing path
+/// would be wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendPath {
     Tpu,
     Rpc,
+    /// Accepted by both; which one the leader actually took is unknowable here.
+    Both,
 }
 
 impl SendPath {
@@ -28,6 +37,16 @@ impl SendPath {
         match self {
             SendPath::Tpu => "tpu",
             SendPath::Rpc => "rpc",
+            SendPath::Both => "both",
+        }
+    }
+
+    /// Combine with a path already recorded for this attempt.
+    fn merge(self, other: SendPath) -> SendPath {
+        if self == other {
+            self
+        } else {
+            SendPath::Both
         }
     }
 }
@@ -136,9 +155,18 @@ impl ExecTrace {
         self.signed = Some(Instant::now());
     }
 
+    /// Record that a submission path accepted the transaction.
+    ///
+    /// The first accepting path sets `sent`; later ones only widen `path`, so
+    /// the timestamp reflects when the transaction first reached the network.
     pub fn mark_sent(&mut self, path: SendPath) {
-        self.sent = Some(Instant::now());
-        self.path = Some(path);
+        if self.sent.is_none() {
+            self.sent = Some(Instant::now());
+        }
+        self.path = Some(match self.path {
+            Some(existing) => existing.merge(path),
+            None => path,
+        });
     }
 
     pub fn mark_settled(&mut self) {
@@ -270,6 +298,30 @@ mod tests {
         t.sent = Some(due - Duration::from_millis(120));
 
         assert_eq!(t.lag_ms(), Some(-120));
+    }
+
+    #[test]
+    fn both_paths_accepting_is_reported_as_both() {
+        // The transaction is broadcast over every available path, so a single
+        // path name would imply an attribution the client cannot make.
+        let due = Instant::now();
+        let mut t = trace_at(due);
+        t.mark_sent(SendPath::Tpu);
+        let first = t.sent;
+        t.mark_sent(SendPath::Rpc);
+
+        assert_eq!(t.path, Some(SendPath::Both));
+        assert_eq!(t.sent, first, "sent marks first acceptance, not the last");
+        assert!(t.render(Outcome::Ok).contains("path=both"));
+    }
+
+    #[test]
+    fn a_single_path_is_reported_alone() {
+        let due = Instant::now();
+        let mut t = trace_at(due);
+        t.mark_sent(SendPath::Rpc);
+        t.mark_sent(SendPath::Rpc);
+        assert_eq!(t.path, Some(SendPath::Rpc));
     }
 
     #[test]

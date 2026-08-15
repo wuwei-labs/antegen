@@ -7,6 +7,13 @@ use solana_sdk::native_token::LAMPORTS_PER_SOL;
 use solana_sdk::signature::{read_keypair_file, Signer};
 use std::path::PathBuf;
 
+/// Base URL for an agent's status page.
+///
+/// loa-core 2.x derived this inside `AgentInfo`, selecting by API URL; 3.0
+/// dropped the type. Antegen only ever targets production, so the production
+/// host is pinned here rather than reimplementing that selection.
+const LOA_STATUS_BASE_URL: &str = "https://status.loa.sh";
+
 /// Info output structure for JSON serialization
 #[derive(Serialize)]
 pub struct InfoOutput {
@@ -206,13 +213,18 @@ fn get_observability_info(config: &ClientConfig) -> ObservabilityInfo {
         }
     };
 
-    // Use loa-core AgentInfo API
-    match loa_core::AgentInfo::read(&storage_path, None) {
-        Ok(info) => ObservabilityInfo {
-            enabled: true,
-            name: info.name.clone(),
-            status_page: Some(info.dashboard_url.clone()),
-        },
+    // loa-core 3.0 removed the AgentInfo convenience type. Identity carries the
+    // same underlying data: `slug` is the human-readable agent name, and the
+    // status page is derived from it exactly as AgentInfo did.
+    match loa_core::Identity::load(&storage_path) {
+        Ok(identity) => {
+            let name = identity.slug().to_string();
+            ObservabilityInfo {
+                enabled: true,
+                status_page: Some(format!("{}/{}", LOA_STATUS_BASE_URL, name)),
+                name: Some(name),
+            }
+        }
         Err(_) => ObservabilityInfo {
             enabled: true,
             name: None,

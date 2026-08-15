@@ -730,9 +730,9 @@ async fn submit_and_confirm_batch(
         trace.count_rpc();
         match resources.rpc_client.send_transaction(&tx).await {
             Ok(sig) => {
-                if !sent {
-                    trace.mark_sent(SendPath::Rpc);
-                }
+                // Recorded unconditionally: the trace widens to `both` rather
+                // than crediting whichever path happened to be tried first.
+                trace.mark_sent(SendPath::Rpc);
                 sent = true;
                 log::debug!("{}: sent via RPC ({})", thread_pubkey, sig);
             }
