@@ -139,6 +139,11 @@ fn do_init(rpc: Option<String>, force: bool) -> Result<PathBuf> {
     Ok(config_path)
 }
 
+/// Whether `--version` output came from a pre-consolidation `antegen-node`.
+fn is_legacy_daemon(version_output: &str) -> bool {
+    version_output.starts_with("antegen-node")
+}
+
 /// Arguments the service should pass to a daemon binary.
 ///
 /// The daemon used to be a separate `antegen-node` binary that took `--config`
@@ -151,7 +156,7 @@ fn daemon_args(binary: &Path, config_path: &Path) -> Vec<OsString> {
     let legacy = std::process::Command::new(binary)
         .arg("--version")
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).starts_with("antegen-node"))
+        .map(|o| is_legacy_daemon(&String::from_utf8_lossy(&o.stdout)))
         .unwrap_or(false);
 
     let mut args = Vec::new();
@@ -580,5 +585,67 @@ async fn print_update_notices() {
             "Node update available: {} -> Run `antegen node update`",
             latest
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The exact `--version` output of both daemons, verified against a
+    /// downloaded `antegen-node-v5.1.3` and a locally built `antegen`. The
+    /// service unit's argv depends on telling them apart, and a wrong answer
+    /// produces a unit that cannot start.
+    #[test]
+    fn distinguishes_legacy_daemon_from_consolidated_cli() {
+        assert!(is_legacy_daemon("antegen-node 5.1.3\n"));
+        assert!(!is_legacy_daemon("antegen 6.1.0 (client 5.2.0)\n"));
+    }
+
+    /// Exercises the real `daemon_args` against stub binaries that identify
+    /// themselves the way each daemon does.
+    #[test]
+    fn argv_shape_follows_the_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Path::new("/tmp/antegen.toml");
+
+        let stub = |name: &str, version_line: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, format!("#!/bin/sh\necho '{}'\n", version_line)).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            path
+        };
+
+        let legacy = stub("antegen-node-v5.1.3", "antegen-node 5.1.3");
+        assert_eq!(
+            daemon_args(&legacy, config),
+            vec![
+                OsString::from("--config"),
+                OsString::from(config.as_os_str())
+            ]
+        );
+
+        let consolidated = stub("antegen-node-v7.0.0", "antegen 7.0.0 (client 6.0.0)");
+        assert_eq!(
+            daemon_args(&consolidated, config),
+            vec![
+                OsString::from("node"),
+                OsString::from("run"),
+                OsString::from("--config"),
+                OsString::from(config.as_os_str())
+            ]
+        );
+    }
+
+    /// A binary we cannot execute must not be assumed legacy — new installs are
+    /// the common case, and the old argv against a new binary fails to start.
+    #[test]
+    fn unreadable_binary_assumes_consolidated() {
+        let args = daemon_args(Path::new("/nonexistent/antegen"), Path::new("/tmp/c.toml"));
+        assert_eq!(args[0], OsString::from("node"));
     }
 }
