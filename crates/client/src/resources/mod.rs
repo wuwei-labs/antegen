@@ -14,6 +14,7 @@ pub use cache::{AccountCache, CacheTriggerType, CachedAccount, FetchError};
 pub use ingest::{IngestSnapshot, IngestStats};
 
 use crate::config::{ClientConfig, EndpointRole};
+use crate::confirm::SignatureWatcher;
 use crate::rpc::{EndpointConfig, RpcPool, RpcPoolConfig};
 use crate::tpu::{TpuClient, TpuClientConfig};
 use anyhow::Result;
@@ -46,6 +47,9 @@ pub struct SharedResources {
     pub commitment: Arc<str>,
     /// Commitment for the clock sysvar subscription.
     pub clock_commitment: Arc<str>,
+    /// Shared confirmation watcher — one batched poll for every in-flight
+    /// transaction rather than one poll per worker.
+    pub confirmations: SignatureWatcher,
 }
 
 impl SharedResources {
@@ -111,6 +115,9 @@ impl SharedResources {
             None
         };
 
+        // Started after the TPU client so it can rebroadcast through it.
+        let confirmations = SignatureWatcher::spawn(rpc_client.clone(), tpu_client.clone());
+
         Ok((
             Self {
                 rpc_client,
@@ -120,6 +127,7 @@ impl SharedResources {
                 ingest_stats: Arc::new(IngestStats::new()),
                 commitment: config.datasources.commitment.as_str().into(),
                 clock_commitment: config.datasources.clock_commitment.as_str().into(),
+                confirmations,
             },
             eviction_rx,
         ))
@@ -128,6 +136,7 @@ impl SharedResources {
     /// Create with custom settings (for testing)
     #[cfg(test)]
     pub fn with_custom(rpc_client: Arc<RpcPool>, cache: Arc<AccountCache>) -> Self {
+        let rpc_client_for_watcher = rpc_client.clone();
         Self {
             rpc_client,
             cache,
@@ -136,6 +145,7 @@ impl SharedResources {
             ingest_stats: Arc::new(IngestStats::new()),
             commitment: "confirmed".into(),
             clock_commitment: "processed".into(),
+            confirmations: SignatureWatcher::spawn(rpc_client_for_watcher, None),
         }
     }
 }
@@ -159,10 +169,19 @@ mod tests {
         let mut config = ClientConfig::default();
         config.tpu.enabled = false;
         let (resources, _eviction_rx) = SharedResources::new(&config).await.unwrap();
-        let _cloned = resources.clone();
 
-        // Arc counts should be incremented
-        assert_eq!(Arc::strong_count(&resources.rpc_client), 2);
-        assert_eq!(Arc::strong_count(&resources.cache), 2);
+        // Cloning must share the underlying resources rather than duplicating
+        // them. Asserted as a delta, not an absolute count: background tasks
+        // (the blockhash refresher, the confirmation watcher) legitimately hold
+        // their own handles.
+        let rpc_before = Arc::strong_count(&resources.rpc_client);
+        let cache_before = Arc::strong_count(&resources.cache);
+
+        let cloned = resources.clone();
+
+        assert_eq!(Arc::strong_count(&resources.rpc_client), rpc_before + 1);
+        assert_eq!(Arc::strong_count(&resources.cache), cache_before + 1);
+        assert!(Arc::ptr_eq(&resources.rpc_client, &cloned.rpc_client));
+        assert!(Arc::ptr_eq(&resources.cache, &cloned.cache));
     }
 }

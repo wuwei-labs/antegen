@@ -89,6 +89,18 @@ struct ResponseContext {
     slot: u64,
 }
 
+#[derive(serde::Deserialize)]
+struct SignatureStatusResponse {
+    value: Vec<Option<SignatureStatus>>,
+}
+
+#[derive(serde::Deserialize)]
+struct SignatureStatus {
+    err: Option<serde_json::Value>,
+    #[serde(rename = "confirmationStatus")]
+    confirmation_status: Option<String>,
+}
+
 /// How long a cached blockhash is served before being refreshed.
 ///
 /// A blockhash is valid for ~150 slots (~60s), so a value a couple of seconds
@@ -459,6 +471,52 @@ impl RpcPool {
         Ok(response.result)
     }
 
+    /// Get statuses for many signatures in one call.
+    ///
+    /// `getSignatureStatuses` accepts up to 256 signatures, so polling every
+    /// in-flight transaction costs one request rather than one per transaction.
+    /// Each entry is `None` while unconfirmed, `Some(Ok(()))` once confirmed, or
+    /// `Some(Err(raw))` with the error exactly as the RPC reported it.
+    pub async fn get_signature_statuses(
+        &self,
+        signatures: &[Signature],
+    ) -> Result<Vec<Option<Result<(), String>>>> {
+        if signatures.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let strings: Vec<String> = signatures.iter().map(|s| s.to_string()).collect();
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getSignatureStatuses",
+            "params": [strings]
+        });
+
+        let response: JsonRpcResponse<SignatureStatusResponse> = self
+            .execute_with_deadline(&body, true, Some(HOT_PATH_TIMEOUT))
+            .await?;
+
+        let statuses = response.result.map(|r| r.value).unwrap_or_default();
+        Ok(statuses
+            .into_iter()
+            .map(|status| {
+                let status = status?;
+                let confirmed = status
+                    .confirmation_status
+                    .as_deref()
+                    .is_some_and(|s| s == "confirmed" || s == "finalized");
+                if !confirmed {
+                    return None;
+                }
+                Some(match status.err {
+                    Some(err) => Err(err.to_string()),
+                    None => Ok(()),
+                })
+            })
+            .collect())
+    }
+
     /// Get signature status for confirmation checking.
     ///
     /// On failure the raw `err` value is returned verbatim rather than being
@@ -476,18 +534,6 @@ impl RpcPool {
             "method": "getSignatureStatuses",
             "params": [[signature.to_string()]]
         });
-
-        #[derive(serde::Deserialize)]
-        struct SignatureStatusResponse {
-            value: Vec<Option<SignatureStatus>>,
-        }
-
-        #[derive(serde::Deserialize)]
-        struct SignatureStatus {
-            err: Option<serde_json::Value>,
-            #[serde(rename = "confirmationStatus")]
-            confirmation_status: Option<String>,
-        }
 
         let response: JsonRpcResponse<SignatureStatusResponse> = self
             .execute_with_deadline(&body, true, Some(HOT_PATH_TIMEOUT))

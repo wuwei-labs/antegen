@@ -41,9 +41,11 @@ pub struct ProcessorState {
     // Worker tracking
     active_workers: HashMap<Pubkey, ActorRef<crate::actors::messages::WorkerMessage>>,
 
-    // Concurrency control
+    // Concurrency control. The semaphore is the single source of truth — a
+    // shadow counter alongside it drifts, and when it does the actor blocks on
+    // `acquire` with no log output.
     task_semaphore: Arc<Semaphore>,
-    available_permits: usize,
+    max_concurrent: usize,
 
     // Communication
     staging_ref: ActorRef<StagingMessage>,
@@ -85,7 +87,7 @@ impl Actor for ProcessorFactory {
             pending_queue: VecDeque::new(),
             active_workers: HashMap::new(),
             task_semaphore,
-            available_permits: max_concurrent_threads,
+            max_concurrent: max_concurrent_threads,
             staging_ref,
             resources,
             executor,
@@ -111,8 +113,7 @@ impl Actor for ProcessorFactory {
                 // Full Thread data will be fetched from cache when spawning worker
                 state.pending_queue.push_back(ready_thread);
 
-                // Try to spawn worker if capacity available
-                self.try_spawn_next_worker(myself, state).await?;
+                self.drain_queue(myself, state).await?;
 
                 Ok(())
             }
@@ -143,14 +144,11 @@ impl Actor for ProcessorFactory {
                     worker_ref.stop(None);
                 }
 
-                // Increment available permits
-                state.available_permits += 1;
-
-                // Handle result
+                // The permit is released when the worker actor's state drops,
+                // not here — there is no counter to reconcile.
                 self.handle_execution_result(state, result).await?;
 
-                // Try to spawn next worker from queue
-                self.try_spawn_next_worker(myself, state).await?;
+                self.drain_queue(myself, state).await?;
 
                 Ok(())
             }
@@ -158,7 +156,7 @@ impl Actor for ProcessorFactory {
                 let status = ProcessorStatus {
                     pending_queue_size: state.pending_queue.len(),
                     active_workers: state.active_workers.len(),
-                    available_permits: state.available_permits,
+                    available_permits: state.task_semaphore.available_permits(),
                 };
                 let _ = tx.send(status);
                 Ok(())
@@ -185,27 +183,47 @@ impl Actor for ProcessorFactory {
 }
 
 impl ProcessorFactory {
-    /// Try to spawn next worker from queue if capacity available
+    /// Spawn workers until capacity or the queue is exhausted.
     ///
-    /// Fetches Thread data from cache before spawning worker.
-    /// If cache miss, skips the thread (will be re-queued on next update).
-    async fn try_spawn_next_worker(
+    /// Spawning one per message meant a burst of N ready threads needed N
+    /// messages to drain, adding a message hop of latency to each.
+    async fn drain_queue(
         &self,
         myself: ActorRef<ProcessorMessage>,
         state: &mut ProcessorState,
     ) -> Result<(), ActorProcessingErr> {
+        // Bounded by the queue length so a thread that keeps getting re-queued
+        // (because it already has an active worker) cannot spin here.
+        for _ in 0..state.pending_queue.len() {
+            if !self.try_spawn_next_worker(myself.clone(), state).await? {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Try to spawn one worker. Returns whether it should be called again.
+    ///
+    /// Fetches Thread data from cache before spawning worker.
+    async fn try_spawn_next_worker(
+        &self,
+        myself: ActorRef<ProcessorMessage>,
+        state: &mut ProcessorState,
+    ) -> Result<bool, ActorProcessingErr> {
         use anchor_lang::AccountDeserialize;
         use antegen_thread_program::state::Thread;
 
-        // Check if we have capacity
-        if state.available_permits == 0 {
-            log::debug!("No available permits, cannot spawn worker");
-            return Ok(());
-        }
+        // Claim capacity up front and never await for it. Awaiting here blocks
+        // this actor's entire mailbox, and the previous shadow counter could
+        // report a free slot while the real permit had not yet been dropped.
+        let Ok(permit) = state.task_semaphore.clone().try_acquire_owned() else {
+            log::debug!("At concurrency limit ({}), waiting", state.max_concurrent);
+            return Ok(false);
+        };
 
         // Check if queue has work
         let Some(mut ready_thread) = state.pending_queue.pop_front() else {
-            return Ok(());
+            return Ok(false);
         };
 
         // Guard against duplicate active workers
@@ -218,7 +236,7 @@ impl ProcessorFactory {
                 ready_thread.thread_pubkey
             );
             state.pending_queue.push_back(ready_thread);
-            return Ok(());
+            return Ok(true);
         }
 
         log::debug!(
@@ -245,7 +263,7 @@ impl ProcessorFactory {
                                 ),
                                 SchedOutcome::Superseded,
                             );
-                            return Ok(());
+                            return Ok(true);
                         }
                         thread
                     }
@@ -261,7 +279,7 @@ impl ProcessorFactory {
                             "cache deserialize failed",
                             SchedOutcome::Fatal,
                         );
-                        return Ok(());
+                        return Ok(true);
                     }
                 }
             }
@@ -291,7 +309,7 @@ impl ProcessorFactory {
                                 ),
                                 SchedOutcome::Superseded,
                             );
-                            return Ok(());
+                            return Ok(true);
                         }
                         thread
                     }
@@ -307,21 +325,11 @@ impl ProcessorFactory {
                             "RPC fetch failed",
                             SchedOutcome::Retryable,
                         );
-                        return Ok(());
+                        return Ok(true);
                     }
                 }
             }
         };
-
-        // Acquire semaphore permit
-        let permit = state
-            .task_semaphore
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|e| format!("Semaphore error: {}", e))?;
-
-        state.available_permits -= 1;
 
         ready_thread.trace.mark_spawned();
 
@@ -352,7 +360,7 @@ impl ProcessorFactory {
             .active_workers
             .insert(ready_thread.thread_pubkey, worker_ref);
 
-        Ok(())
+        Ok(true)
     }
 
     /// Abandon a ready thread before a worker was ever spawned.

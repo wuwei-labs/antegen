@@ -21,6 +21,7 @@
 pub mod actors;
 pub mod clockref;
 pub mod config;
+pub mod confirm;
 pub mod datasources;
 pub mod executor;
 pub mod load_balancer;
@@ -33,6 +34,7 @@ pub mod types;
 // Re-exports
 pub use clockref::ClockRef;
 pub use config::ClientConfig;
+pub use confirm::{Confirmation, SignatureWatcher};
 pub use executor::ExecutorLogic;
 pub use load_balancer::{LoadBalancer, LoadBalancerConfig, LoadBalancerStats, ProcessDecision};
 pub use resources::{AccountCache, CachedAccount, SharedResources};

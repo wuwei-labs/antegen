@@ -10,6 +10,7 @@
 //! Includes deadman's switch to prevent runaway workers.
 
 use crate::actors::messages::{ExecutionResult, ProcessorMessage, WorkerMessage};
+use crate::confirm::Confirmation;
 use crate::executor::ExecutorLogic;
 use crate::load_balancer::{LoadBalancer, ProcessDecision};
 use crate::resources::SharedResources;
@@ -35,9 +36,6 @@ const CONFIRMATION_TIMEOUT_SECS: u64 = 30;
 
 /// Base delay between retries (milliseconds)
 const BASE_RETRY_DELAY_MS: u64 = 500;
-
-/// Interval for re-sending via TPU during confirmation polling (milliseconds)
-const TPU_RETRY_INTERVAL_MS: u64 = 2000;
 
 /// Retry deadline for trigger-not-ready errors (seconds)
 /// This bounds how long we'll retry before giving up
@@ -122,7 +120,6 @@ pub struct WorkerState {
     thread_pubkey: Pubkey,
     #[allow(dead_code)] // Kept for potential debugging/logging in handle()
     thread: Thread,
-    _permit: OwnedSemaphorePermit, // Auto-released on drop
     #[allow(dead_code)] // Kept for future cancellation completion signaling
     processor_ref: ActorRef<ProcessorMessage>,
     cancelled: Arc<AtomicBool>, // Flag for cancellation
@@ -145,7 +142,6 @@ impl Actor for WorkerActor {
         let state = WorkerState {
             thread_pubkey: args.thread_pubkey,
             thread: args.thread.clone(),
-            _permit: args.permit,
             processor_ref: args.processor_ref.clone(),
             cancelled: cancelled.clone(),
         };
@@ -162,6 +158,10 @@ impl Actor for WorkerActor {
         let cancelled_flag = cancelled;
         let myself_ref = myself.clone();
         let trace = args.trace;
+        // The permit travels with the work rather than with the actor, so it can
+        // be released the moment the transaction is on the wire instead of being
+        // held through confirmation.
+        let permit = args.permit;
 
         tokio::spawn(async move {
             let result = execute_thread(
@@ -174,6 +174,7 @@ impl Actor for WorkerActor {
                 &load_balancer,
                 &cancelled_flag,
                 trace,
+                permit,
             )
             .await;
 
@@ -186,8 +187,7 @@ impl Actor for WorkerActor {
                 );
             }
 
-            // Always stop ourselves so the semaphore permit held in WorkerState is
-            // released via drop, even if the completion message failed to deliver.
+            // Stop ourselves even if the completion message failed to deliver.
             myself_ref.stop(Some("execution complete".to_string()));
         });
 
@@ -232,7 +232,13 @@ async fn execute_thread(
     load_balancer: &LoadBalancer,
     cancelled: &AtomicBool,
     mut trace: ExecTrace,
+    permit: OwnedSemaphorePermit,
 ) -> ExecutionResult {
+    // Held until the transaction is on the wire, then dropped. Confirmation can
+    // take up to 30s per attempt, and holding the permit across it capped
+    // throughput at max_concurrent_threads per confirmation window rather than
+    // per build.
+    let mut permit = Some(permit);
     // Check cancellation before starting
     if cancelled.load(Ordering::Relaxed) {
         log::debug!(
@@ -567,6 +573,7 @@ async fn execute_thread(
             &thread_pubkey,
             load_balancer,
             &mut trace,
+            &mut permit,
         )
         .await
         {
@@ -629,6 +636,7 @@ async fn submit_and_confirm_batch(
     thread_pubkey: &Pubkey,
     load_balancer: &LoadBalancer,
     trace: &mut ExecTrace,
+    permit: &mut Option<OwnedSemaphorePermit>,
 ) -> Result<Signature, (String, u32)> {
     let mut attempt = 0u32;
     let mut last_error = String::new();
@@ -702,219 +710,104 @@ async fn submit_and_confirm_batch(
         let tx = tx.clone();
         let signature = *signature;
 
-        log::debug!("{}: sent", thread_pubkey);
-        log::debug!("  txn: {}", signature);
+        // Broadcast on every available path. The transaction is signed once,
+        // so both paths carry the same signature and at most one can land —
+        // sending to both is idempotent and strictly faster than the previous
+        // sequential fallback, which waited out a 30s TPU timeout before trying
+        // RPC at all.
+        let mut sent = false;
 
-        // TPU retry loop: send via TPU and poll for confirmation, re-sending every 2s
-        // This handles the case where TPU send appears to succeed but transaction doesn't land
-        let mut tpu_confirmed = false;
-        // Set when the chain reported a condition that warrants another attempt
-        // rather than falling through to the RPC fallback with a transaction we
-        // already know will not land.
-        let mut retry_attempt = false;
         if let Some(tpu_client) = &resources.tpu_client {
-            let start = Instant::now();
-            let timeout = Duration::from_secs(CONFIRMATION_TIMEOUT_SECS);
-            let mut last_tpu_send = Instant::now();
-
-            // Initial TPU send
-            if let Err(e) = tpu_client.send_transaction(&tx).await {
-                log::debug!("Initial TPU send failed: {}", e);
-            }
-            trace.mark_sent(SendPath::Tpu);
-
-            // Combined send + confirmation polling loop
-            loop {
-                // Check timeout
-                if start.elapsed() > timeout {
-                    log::debug!("TPU confirmation timeout, falling back to RPC");
-                    break;
+            match tpu_client.send_transaction(&tx).await {
+                Ok(()) => {
+                    trace.mark_sent(SendPath::Tpu);
+                    sent = true;
                 }
-
-                // Re-send via TPU every 2 seconds (may hit different leader)
-                if last_tpu_send.elapsed() > Duration::from_millis(TPU_RETRY_INTERVAL_MS) {
-                    if let Err(e) = tpu_client.send_transaction(&tx).await {
-                        log::debug!("TPU re-send failed: {}", e);
-                    }
-                    last_tpu_send = Instant::now();
-                }
-
-                // Check confirmation
-                match resources.rpc_client.get_signature_status(&signature).await {
-                    Ok(Some(Ok(()))) => {
-                        // Confirmed!
-                        tpu_confirmed = true;
-                        break;
-                    }
-                    Ok(Some(Err(error_str))) => {
-                        if is_trigger_not_ready_error(&error_str) {
-                            log::debug!(
-                                "{}: 6004 on-chain (trigger not ready), will retry",
-                                thread_pubkey
-                            );
-                            break;
-                        }
-
-                        if is_thread_paused_error(&error_str) {
-                            log::debug!(
-                                "{}: 6006 on-chain (thread paused), skipping",
-                                thread_pubkey
-                            );
-                            return Err(("Thread is paused".to_string(), attempt));
-                        }
-
-                        // Cluster-level conditions are not program failures —
-                        // retry rather than abandoning the execution.
-                        if is_retryable_chain_error(&error_str) {
-                            log::debug!(
-                                "{}: retryable chain error, will retry: {}",
-                                thread_pubkey,
-                                error_str
-                            );
-                            if is_blockhash_expired(&error_str) {
-                                signed = None;
-                            }
-                            last_error = error_str;
-                            retry_attempt = true;
-                            break;
-                        }
-
-                        // Genuine program failure - don't retry, return failure
-                        log::warn!(
-                            "{}: transaction failed on-chain: {}",
-                            thread_pubkey,
-                            error_str
-                        );
-
-                        let _ = load_balancer
-                            .record_execution_result(
-                                thread_pubkey,
-                                false,
-                                chrono::Utc::now().timestamp(),
-                            )
-                            .await;
-
-                        return Err((
-                            format!("Transaction failed on-chain: {}", error_str),
-                            attempt,
-                        ));
-                    }
-                    Ok(None) => {
-                        // Not yet confirmed, continue polling
-                    }
-                    Err(e) => {
-                        // RPC error, continue polling
-                        log::debug!("Error checking signature status: {:?}", e);
-                    }
-                }
-
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                Err(e) => log::debug!("TPU send failed: {}", e),
             }
         }
 
-        if tpu_confirmed {
-            trace.mark_settled();
-            log::debug!("{}: confirmed", thread_pubkey);
-            log::debug!("  txn: {}", signature);
-
-            // Record success in load balancer
-            let _ = load_balancer
-                .record_execution_result(thread_pubkey, true, chrono::Utc::now().timestamp())
-                .await;
-
-            return Ok(signature);
-        }
-
-        // A retryable chain condition means this transaction cannot land as-is;
-        // back off and take another attempt rather than resending it over RPC.
-        if retry_attempt {
-            if attempt < MAX_ATTEMPTS {
-                tokio::time::sleep(Duration::from_millis(
-                    BASE_RETRY_DELAY_MS * (1 << attempt.min(4)),
-                ))
-                .await;
-            }
-            continue;
-        }
-
-        // Fall back to RPC if TPU not available or TPU loop timed out
         trace.count_rpc();
         match resources.rpc_client.send_transaction(&tx).await {
             Ok(sig) => {
-                trace.mark_sent(SendPath::Rpc);
-                log::debug!("Transaction sent via RPC: {}", sig);
+                if !sent {
+                    trace.mark_sent(SendPath::Rpc);
+                }
+                sent = true;
+                log::debug!("{}: sent via RPC ({})", thread_pubkey, sig);
             }
-            Err(e) => {
-                last_error = format!("Transaction send failed: {}", e);
-                log::warn!(
-                    "Failed to send transaction for thread {} (attempt {}): {:?}",
-                    thread_pubkey,
-                    attempt,
-                    e
-                );
-
-                // Record loss in load balancer
-                let _ = load_balancer
-                    .record_execution_result(thread_pubkey, false, chrono::Utc::now().timestamp())
-                    .await;
-
-                tokio::time::sleep(Duration::from_millis(
-                    BASE_RETRY_DELAY_MS * (1 << attempt.min(4)),
-                ))
-                .await;
-                continue;
-            }
+            Err(e) => log::debug!("RPC send failed: {}", e),
         }
 
-        // Wait for RPC confirmation
-        match wait_for_confirmation(&resources.rpc_client, &signature, CONFIRMATION_TIMEOUT_SECS)
-            .await
-        {
-            Ok(()) => {
-                trace.mark_settled();
-                log::debug!("{}: confirmed", thread_pubkey);
-                log::debug!("  txn: {}", signature);
+        if !sent {
+            last_error = "All submission paths failed".to_string();
+            log::warn!(
+                "Failed to send transaction for thread {} (attempt {})",
+                thread_pubkey,
+                attempt
+            );
+            let _ = load_balancer
+                .record_execution_result(thread_pubkey, false, chrono::Utc::now().timestamp())
+                .await;
+            tokio::time::sleep(Duration::from_millis(
+                BASE_RETRY_DELAY_MS * (1 << attempt.min(4)),
+            ))
+            .await;
+            continue;
+        }
 
-                // Record success in load balancer
+        // On the wire — free the slot for the next thread rather than holding it
+        // through confirmation.
+        drop(permit.take());
+
+        // Confirmation is handled by the shared watcher: one batched poll for
+        // every in-flight transaction, instead of one poll per worker.
+        let outcome = resources
+            .confirmations
+            .wait(
+                signature,
+                tx.clone(),
+                Duration::from_secs(CONFIRMATION_TIMEOUT_SECS),
+            )
+            .await;
+
+        match outcome {
+            Confirmation::Confirmed => {
+                trace.mark_settled();
+                log::debug!("{}: confirmed ({})", thread_pubkey, signature);
                 let _ = load_balancer
                     .record_execution_result(thread_pubkey, true, chrono::Utc::now().timestamp())
                     .await;
-
                 return Ok(signature);
             }
-            Err(e) => {
-                last_error = format!("Confirmation failed: {}", e);
 
-                // 6004/6006 errors are transient or expected — log as DEBUG, not WARN
-                if is_trigger_not_ready_error(&e) {
+            Confirmation::Failed(error_str) => {
+                if is_trigger_not_ready_error(&error_str) {
                     log::debug!(
-                        "{}: 6004 on RPC confirmation (trigger not ready), will retry",
+                        "{}: 6004 on-chain (trigger not ready), will retry",
                         thread_pubkey
                     );
-                } else if is_thread_paused_error(&e) {
-                    log::debug!(
-                        "{}: 6006 on RPC confirmation (thread paused), stopping",
-                        thread_pubkey
-                    );
+                } else if is_thread_paused_error(&error_str) {
+                    log::debug!("{}: 6006 on-chain (thread paused), stopping", thread_pubkey);
                     return Err(("Thread is paused".to_string(), attempt));
-                } else if is_retryable_chain_error(&e) {
+                } else if is_retryable_chain_error(&error_str) {
                     log::debug!(
-                        "{}: retryable chain error on RPC confirmation, will retry: {}",
+                        "{}: retryable chain error, will retry: {}",
                         thread_pubkey,
-                        e
+                        error_str
                     );
-                    if is_blockhash_expired(&e) {
+                    if is_blockhash_expired(&error_str) {
+                        // Only expiry requires a new signature; every other
+                        // retry reuses the same one.
                         signed = None;
                     }
                 } else {
+                    // A genuine program failure will fail again identically.
                     log::warn!(
-                        "Transaction confirmation failed for thread {} (attempt {}): {:?}",
+                        "{}: transaction failed on-chain: {}",
                         thread_pubkey,
-                        attempt,
-                        e
+                        error_str
                     );
-
-                    // Only record loss for non-6004 errors
                     let _ = load_balancer
                         .record_execution_result(
                             thread_pubkey,
@@ -922,16 +815,33 @@ async fn submit_and_confirm_batch(
                             chrono::Utc::now().timestamp(),
                         )
                         .await;
+                    return Err((
+                        format!("Transaction failed on-chain: {}", error_str),
+                        attempt,
+                    ));
                 }
-
-                // Exponential backoff
-                if attempt < MAX_ATTEMPTS {
-                    tokio::time::sleep(Duration::from_millis(
-                        BASE_RETRY_DELAY_MS * (1 << attempt.min(4)),
-                    ))
-                    .await;
-                }
+                last_error = error_str;
             }
+
+            Confirmation::TimedOut => {
+                last_error = format!("Confirmation timeout after {}s", CONFIRMATION_TIMEOUT_SECS);
+                log::warn!(
+                    "Transaction confirmation timed out for thread {} (attempt {})",
+                    thread_pubkey,
+                    attempt
+                );
+                let _ = load_balancer
+                    .record_execution_result(thread_pubkey, false, chrono::Utc::now().timestamp())
+                    .await;
+            }
+        }
+
+        // Exponential backoff
+        if attempt < MAX_ATTEMPTS {
+            tokio::time::sleep(Duration::from_millis(
+                BASE_RETRY_DELAY_MS * (1 << attempt.min(4)),
+            ))
+            .await;
         }
     }
 
@@ -944,38 +854,6 @@ async fn submit_and_confirm_batch(
     );
 
     Err((last_error, attempt))
-}
-
-/// Wait for transaction confirmation with timeout
-async fn wait_for_confirmation(
-    rpc_client: &crate::rpc::RpcPool,
-    signature: &solana_sdk::signature::Signature,
-    timeout_secs: u64,
-) -> Result<(), String> {
-    let start = std::time::Instant::now();
-    let timeout = Duration::from_secs(timeout_secs);
-
-    loop {
-        if start.elapsed() > timeout {
-            return Err(format!("Confirmation timeout after {}s", timeout_secs));
-        }
-
-        match rpc_client.get_signature_status(signature).await {
-            Ok(Some(result)) => match result {
-                Ok(()) => return Ok(()),
-                Err(e) => return Err(format!("Transaction failed: {}", e)),
-            },
-            Ok(None) => {
-                // Not yet confirmed, wait and retry
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-            Err(e) => {
-                // RPC error, could be transient
-                log::debug!("Error checking signature status: {:?}", e);
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-        }
-    }
 }
 
 #[cfg(test)]
