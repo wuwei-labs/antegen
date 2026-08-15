@@ -292,6 +292,50 @@ EXAMPLES:
         test_type: Option<String>,
     },
 
+    /// Create many threads at once for load testing and benchmarking
+    #[command(after_long_help = "\
+Creates threads with staggered interval triggers so their deadlines spread out
+rather than all firing at once. IDs are deterministic (load-00000, load-00001,
+...) so `load-clean` can remove them without a registry.
+
+EXAMPLES:
+    antegen thread test load --count 200
+    antegen thread test load --count 500 --min-interval 5 --max-interval 120
+    antegen thread test load-clean --count 500
+")]
+    Load {
+        /// Number of threads to create
+        #[arg(long, default_value_t = 100)]
+        count: u32,
+
+        /// Shortest interval trigger, in seconds
+        #[arg(long, default_value_t = 10)]
+        min_interval: u64,
+
+        /// Longest interval trigger, in seconds
+        #[arg(long, default_value_t = 60)]
+        max_interval: u64,
+
+        /// Transactions submitted concurrently
+        #[arg(long, default_value_t = 8)]
+        concurrency: usize,
+
+        /// Lamports funded into each thread
+        #[arg(long, default_value_t = 100_000_000)]
+        fund: u64,
+    },
+
+    /// Delete threads created by `load`
+    LoadClean {
+        /// Number of threads to remove (must cover the range used to create)
+        #[arg(long, default_value_t = 100)]
+        count: u32,
+
+        /// Deletions submitted concurrently
+        #[arg(long, default_value_t = 8)]
+        concurrency: usize,
+    },
+
     /// List all managed test threads
     List,
 

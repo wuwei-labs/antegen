@@ -505,6 +505,7 @@ dependencies = [
  "chrono",
  "clap 4.5.53",
  "dirs 5.0.1",
+ "futures",
  "log",
  "serde",
  "serde_json",

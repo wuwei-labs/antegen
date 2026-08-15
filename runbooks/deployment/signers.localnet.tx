@@ -9,14 +9,18 @@ signer "authority" "svm::secret_key" {
     keypair_json = "~/.config/solana/id.json"
 }
 
+// The programs already exist on mainnet at their declared addresses, so a
+// surfnet forking mainnet inherits them. Seizing upgrade authority lets the
+// deploy actions upgrade them in place, which keeps the canonical program IDs —
+// the on-chain `declare_id!` check rejects the program at any other address.
 action "setup" "svm::setup_surfnet" {
     set_program_authority {
-        program_id = variable.antegen_network_program.program_id
+        program_id = variable.antegen_thread_program.program_id
         authority = signer.authority.public_key
     }
 
     set_program_authority {
-        program_id = variable.antegen_thread_program.program_id
+        program_id = variable.antegen_fiber_program.program_id
         authority = signer.authority.public_key
     }
 }
