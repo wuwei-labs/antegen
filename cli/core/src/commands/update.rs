@@ -149,75 +149,107 @@ fn update_symlink(symlink_path: &PathBuf, target: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// Fetch the latest CLI version from GitHub API using self_update
+// =============================================================================
+// Release lookup
+//
+// The CLI and the daemon are the same artifact, published on the
+// `antegen-cli-v<x>` tag, so one lookup answers both "is my CLI current" and
+// "is my node current". Results are cached on disk: the version check runs on
+// `antegen node status` and `antegen info`, and GitHub allows 60 unauthenticated
+// requests an hour.
+// =============================================================================
+
+/// Release tag prefix carrying the `antegen` binary.
+const RELEASE_TAG_PREFIX: &str = "antegen-cli-v";
+
+/// How long a fetched release list stays fresh.
+const RELEASE_CACHE_TTL_SECS: u64 = 24 * 60 * 60;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ReleaseCache {
+    fetched_at: u64,
+    versions: Vec<String>,
+}
+
+fn release_cache_path() -> Result<PathBuf> {
+    dirs::home_dir()
+        .map(|p| p.join(".antegen/release-cache.json"))
+        .context("Could not determine home directory")
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn read_release_cache() -> Option<Vec<String>> {
+    let cache: ReleaseCache =
+        serde_json::from_str(&fs::read_to_string(release_cache_path().ok()?).ok()?).ok()?;
+    (now_secs().saturating_sub(cache.fetched_at) < RELEASE_CACHE_TTL_SECS).then_some(cache.versions)
+}
+
+fn write_release_cache(versions: &[String]) {
+    let Ok(path) = release_cache_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string(&ReleaseCache {
+        fetched_at: now_secs(),
+        versions: versions.to_vec(),
+    }) {
+        let _ = fs::write(path, json);
+    }
+}
+
+/// Released `antegen` versions, newest first.
+///
+/// One page of the releases API is enough — a version old enough to have fallen
+/// off it is far below `MIN_NODE_VERSION` anyway.
+pub async fn fetch_all_versions() -> Result<Vec<String>> {
+    if let Some(cached) = read_release_cache() {
+        return Ok(cached);
+    }
+
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/releases?per_page=100",
+        REPO_OWNER, REPO_NAME
+    );
+
+    let releases: Vec<serde_json::Value> = reqwest::Client::new()
+        .get(&url)
+        .header("User-Agent", "antegen-cli")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .context("Failed to reach the GitHub releases API")?
+        .error_for_status()
+        .context("GitHub releases API returned an error")?
+        .json()
+        .await
+        .context("Failed to parse the GitHub releases response")?;
+
+    let versions: Vec<String> = releases
+        .iter()
+        .filter_map(|r| r.get("tag_name")?.as_str())
+        .filter_map(|tag| tag.strip_prefix(RELEASE_TAG_PREFIX))
+        .map(normalize_version)
+        .collect();
+
+    write_release_cache(&versions);
+    Ok(versions)
+}
+
+/// Latest released `antegen` version.
 pub async fn fetch_latest_version() -> Result<String> {
-    tokio::task::spawn_blocking(|| {
-        let releases = self_update::backends::github::ReleaseList::configure()
-            .repo_owner(REPO_OWNER)
-            .repo_name(REPO_NAME)
-            .build()
-            .context("Failed to build release list")?
-            .fetch()
-            .context("Failed to fetch releases from GitHub")?;
-
-        // CLI releases use tags like "v5.0.0" (no prefix)
-        releases
-            .iter()
-            .find(|r| !r.version.starts_with("geyser-") && !r.version.starts_with("node-"))
-            .map(|r| normalize_version(&r.version))
-            .ok_or_else(|| anyhow::anyhow!("No CLI releases found"))
-    })
-    .await
-    .context("Task failed")?
-}
-
-/// Fetch the latest node version from GitHub releases
-pub async fn fetch_latest_node_version() -> Result<String> {
-    tokio::task::spawn_blocking(|| {
-        let releases = self_update::backends::github::ReleaseList::configure()
-            .repo_owner(REPO_OWNER)
-            .repo_name(REPO_NAME)
-            .build()
-            .context("Failed to build release list")?
-            .fetch()
-            .context("Failed to fetch releases from GitHub")?;
-
-        // Node releases use tags like "node-v4.1.1"
-        releases
-            .iter()
-            .find(|r| r.version.starts_with("node-v") || r.version.starts_with("node-"))
-            .map(|r| {
-                let v = r.version.strip_prefix("node-").unwrap_or(&r.version);
-                normalize_version(v)
-            })
-            .ok_or_else(|| anyhow::anyhow!("No node releases found on GitHub yet"))
-    })
-    .await
-    .context("Task failed")?
-}
-
-/// Fetch all available node versions from GitHub
-pub async fn fetch_all_node_versions() -> Result<Vec<String>> {
-    tokio::task::spawn_blocking(|| {
-        let releases = self_update::backends::github::ReleaseList::configure()
-            .repo_owner(REPO_OWNER)
-            .repo_name(REPO_NAME)
-            .build()
-            .context("Failed to build release list")?
-            .fetch()
-            .context("Failed to fetch releases from GitHub")?;
-
-        Ok(releases
-            .iter()
-            .filter(|r| r.version.starts_with("node-v") || r.version.starts_with("node-"))
-            .map(|r| {
-                let v = r.version.strip_prefix("node-").unwrap_or(&r.version);
-                normalize_version(v)
-            })
-            .collect())
-    })
-    .await
-    .context("Task failed")?
+    fetch_all_versions()
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("No {}* releases found on GitHub yet", RELEASE_TAG_PREFIX))
 }
 
 // =============================================================================
@@ -263,8 +295,13 @@ fn versioned_node_binary_path(version: &str) -> Result<PathBuf> {
 pub fn build_node_download_url(version: &str) -> String {
     let target = get_platform_target();
     format!(
-        "https://github.com/{}/{}/releases/download/node-{}/antegen-node-{}-{}",
-        REPO_OWNER, REPO_NAME, version, version, target
+        "https://github.com/{}/{}/releases/download/{}{}/antegen-{}-{}",
+        REPO_OWNER,
+        REPO_NAME,
+        RELEASE_TAG_PREFIX,
+        version.trim_start_matches('v'),
+        version,
+        target
     )
 }
 
@@ -312,13 +349,13 @@ pub async fn ensure_node_downloaded(version: &str) -> Result<PathBuf> {
     let version = normalize_version(version);
     let versioned_path = versioned_node_binary_path(&version)?;
 
-    // Dev mode: look for antegen-node in target directory
+    // Dev mode: the daemon is this binary, so a cargo build is the node build
     #[cfg(not(feature = "prod"))]
     {
         if let Ok(current_exe) = std::env::current_exe() {
             let path_str = current_exe.to_string_lossy();
             if path_str.contains("/target/debug/") || path_str.contains("/target/release/") {
-                let dev_node = current_exe.with_file_name("antegen-node");
+                let dev_node = current_exe.clone();
                 if dev_node.exists() {
                     println!("Dev mode: using {} ...", dev_node.display());
                     let bin_dir = bin_dir()?;
@@ -347,15 +384,15 @@ pub async fn ensure_node_downloaded(version: &str) -> Result<PathBuf> {
     Ok(versioned_path)
 }
 
-/// Detect a locally-built antegen-node binary in the cargo workspace.
+/// Detect a locally-built `antegen` binary in the cargo workspace.
 ///
 /// Walks up from CWD to find the workspace root, checks for
-/// `target/release/antegen-node`, and extracts its version.
+/// `target/release/antegen`, and extracts its version.
 ///
 /// Returns `Some((binary_path, version))` if found, `None` otherwise.
 fn detect_local_node_build() -> Option<(PathBuf, String)> {
     let workspace_root = find_workspace_root().ok()?;
-    let built_binary = workspace_root.join("target/release/antegen-node");
+    let built_binary = workspace_root.join("target/release/antegen");
     if !built_binary.exists() {
         return None;
     }
@@ -373,23 +410,16 @@ fn detect_local_node_build() -> Option<(PathBuf, String)> {
     Some((built_binary, version))
 }
 
-/// Build antegen-node from the local workspace and install to ~/.local/bin/
+/// Build `antegen` from the local workspace and install it as a node version
 ///
 /// Returns the version string of the built binary.
 pub fn cargo_build_and_install_node() -> Result<String> {
     let workspace_root = find_workspace_root()?;
 
-    println!("Building antegen-node from {}...", workspace_root.display());
+    println!("Building antegen from {}...", workspace_root.display());
 
     let status = std::process::Command::new("cargo")
-        .args([
-            "build",
-            "--release",
-            "-p",
-            "antegen-client",
-            "--features",
-            "node",
-        ])
+        .args(["build", "--release", "-p", "antegen-cli"])
         .current_dir(&workspace_root)
         .status()
         .context("Failed to run cargo build")?;
@@ -398,7 +428,7 @@ pub fn cargo_build_and_install_node() -> Result<String> {
         anyhow::bail!("cargo build failed with exit code: {}", status);
     }
 
-    let built_binary = workspace_root.join("target/release/antegen-node");
+    let built_binary = workspace_root.join("target/release/antegen");
     if !built_binary.exists() {
         anyhow::bail!("Expected binary not found at {}.", built_binary.display());
     }
@@ -486,7 +516,7 @@ pub async fn update_node(version: Option<String>, local: bool) -> Result<()> {
         Some(v) => normalize_version(v),
         None => {
             println!("Checking for node updates...");
-            match fetch_latest_node_version().await {
+            match fetch_latest_version().await {
                 Ok(v) => v,
                 Err(_) => {
                     println!("No node-specific releases found, checking CLI releases...");
@@ -649,7 +679,7 @@ pub async fn install_node_version(version: Option<String>, local: bool) -> Resul
 /// Download the latest supported node binary and set it as active.
 /// Used by `antegen init` for out-of-box readiness.
 pub async fn download_latest_node() -> Result<()> {
-    let latest = fetch_latest_node_version().await?;
+    let latest = fetch_latest_version().await?;
 
     if !is_node_version_supported(&latest) {
         anyhow::bail!(
@@ -699,7 +729,7 @@ pub async fn list_node() -> Result<()> {
     });
 
     // Fetch remote versions (>= MIN_NODE_VERSION only)
-    let remote: Vec<String> = match fetch_all_node_versions().await {
+    let remote: Vec<String> = match fetch_all_versions().await {
         Ok(versions) => versions
             .into_iter()
             .filter(|v| is_node_version_supported(v))

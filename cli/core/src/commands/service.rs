@@ -159,7 +159,7 @@ async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()
                     Err(e) => {
                         anyhow::bail!(
                             "No node binary available: {}\n  \
-                             Run `antegenctl install <version>` when a release is available.",
+                             Run `antegen node install <version>` when a release is available.",
                             e
                         );
                     }
@@ -533,7 +533,7 @@ async fn print_update_notices() {
         },
         async {
             let installed = super::update::read_node_version()?;
-            let latest = super::update::fetch_latest_node_version().await.ok()?;
+            let latest = super::update::fetch_latest_version().await.ok()?;
             if super::update::version_less_than(&installed, &latest) {
                 Some(latest)
             } else {
