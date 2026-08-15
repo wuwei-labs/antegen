@@ -34,7 +34,7 @@ Supports two deployment modes:
   1. Standalone: Run as a separate process using RPC subscriptions
   2. Plugin: Run as a Geyser plugin inside the validator
 
-For node management, use `antegenctl` (Antegen Node Manager).
+For node service control and version management, see `antegen node`.
 For more information, visit: https://antegen.xyz
 ")]
 struct Cli {
@@ -68,24 +68,81 @@ enum Commands {
     #[command(subcommand)]
     Geyser(GeyserCommands),
 
-    /// Executor node operations
+    /// Executor node — service control and version management
     #[command(subcommand)]
     Node(NodeCommands),
 
-    // =========================================================================
-    // Hidden backwards-compatibility aliases (deprecated — use `antegenctl` instead)
-    // =========================================================================
-    /// Register locally-built binaries and verify configuration
-    Verify,
+    /// Config file operations
+    #[command(subcommand)]
+    Config(NodeConfigCommands),
 
     /// Initialize antegen — creates config
     Init {
+        /// RPC endpoint URL (prompts if not provided)
         #[arg(long)]
         rpc: Option<String>,
+
+        /// Overwrite existing config
         #[arg(long)]
         force: bool,
     },
 
+    /// Show info (versions, executor, balance)
+    Info {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Fund the executor with SOL from your Solana CLI wallet
+    Fund {
+        /// Amount of SOL to transfer (defaults to minimum required)
+        amount: Option<f64>,
+    },
+
+    /// Withdraw SOL from executor to Solana CLI keypair
+    Withdraw {
+        /// Amount of SOL to withdraw (defaults to everything above minimum)
+        amount: Option<f64>,
+    },
+
+    // =========================================================================
+    // CLI version management (removed next — see `antegen node` for the daemon)
+    // =========================================================================
+    /// Update CLI to the latest version
+    Update {
+        /// Update to a specific version (e.g., v5.0.0)
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+    },
+
+    /// List installed and available versions
+    List {
+        /// Also show available versions from GitHub
+        #[arg(long)]
+        remote: bool,
+    },
+
+    /// Switch CLI to a specific version
+    Use {
+        /// Version to switch to (e.g., v5.0.0)
+        version: String,
+    },
+
+    /// Download a specific CLI version (doesn't switch)
+    Install {
+        /// Version to install (e.g., v5.0.0)
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+    },
+
+    /// Register locally-built binaries and verify configuration
+    Verify,
+
+    // =========================================================================
+    // Hidden deprecated aliases — these moved under `antegen node`.
+    // Kept for one release so existing runbooks keep working.
+    // =========================================================================
     /// Install and start the antegen service (init if needed)
     #[command(hide = true)]
     Start {
@@ -117,52 +174,6 @@ enum Commands {
     /// Uninstall the antegen service
     #[command(hide = true)]
     Uninstall,
-
-    /// Update CLI to the latest version
-    Update {
-        /// Update to a specific version (e.g., v5.0.0)
-        #[arg(long, value_name = "VERSION")]
-        version: Option<String>,
-    },
-
-    /// List installed and available versions
-    List {
-        /// Also show available versions from GitHub
-        #[arg(long)]
-        remote: bool,
-    },
-
-    /// Switch CLI to a specific version
-    Use {
-        /// Version to switch to (e.g., v5.0.0)
-        version: String,
-    },
-
-    /// Download a specific CLI version (doesn't switch)
-    Install {
-        /// Version to install (e.g., v5.0.0)
-        #[arg(long, value_name = "VERSION")]
-        version: Option<String>,
-    },
-
-    /// Show antegen configuration and status
-    #[command(hide = true)]
-    Info {
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Fund the executor with SOL
-    #[command(hide = true)]
-    Fund { amount: Option<f64> },
-
-    /// Withdraw SOL from executor
-    #[command(hide = true)]
-    Withdraw { amount: Option<f64> },
-
-    /// Config file operations
-    #[command(hide = true, subcommand)]
-    Config(NodeConfigCommands),
 }
 
 // =============================================================================
@@ -176,6 +187,67 @@ enum NodeCommands {
         /// Path to configuration file
         #[arg(short, long)]
         config: Option<PathBuf>,
+    },
+
+    /// Install and start the antegen service
+    Start {
+        /// RPC endpoint URL (prompts if not provided and interactive)
+        #[arg(long)]
+        rpc: Option<String>,
+
+        /// Start a specific version (e.g., v6.0.0)
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+    },
+
+    /// Stop the antegen service
+    Stop,
+
+    /// Restart the antegen service
+    Restart,
+
+    /// Show service status
+    Status,
+
+    /// View service logs
+    Logs {
+        /// Follow log output (like tail -f)
+        #[arg(short, long)]
+        follow: bool,
+    },
+
+    /// Uninstall the antegen service
+    Uninstall,
+
+    /// Update the node to the latest version
+    Update {
+        /// Update to a specific version (e.g., v6.0.0)
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+
+        /// Build and install from the local workspace instead of downloading
+        #[arg(long)]
+        local: bool,
+    },
+
+    /// List installed and available node versions
+    List,
+
+    /// Switch the node to a specific version (reinstalls the service)
+    Use {
+        /// Version to switch to (e.g., v6.0.0)
+        version: String,
+    },
+
+    /// Download a specific node version (doesn't switch)
+    Install {
+        /// Version to install (e.g., v6.0.0)
+        #[arg(required_unless_present = "local")]
+        version: Option<String>,
+
+        /// Build and install from the local workspace instead of downloading
+        #[arg(long)]
+        local: bool,
     },
 }
 
@@ -430,7 +502,7 @@ EXAMPLES:
 
 fn deprecation_warning(old: &str, new: &str) {
     eprintln!(
-        "Warning: `antegen {}` is deprecated. Use `antegenctl {}` instead.",
+        "Warning: `antegen {}` is deprecated. Use `antegen node {}` instead.",
         old, new
     );
     eprintln!();
@@ -513,10 +585,28 @@ async fn run_antegen() -> Result<()> {
                 };
                 commands::node::run(cfg, cli.rpc, cli.log_level).await
             }
+            NodeCommands::Start { rpc, version } => {
+                antegen_cli_core::commands::service::start(rpc, version).await
+            }
+            NodeCommands::Stop => antegen_cli_core::commands::service::stop(),
+            NodeCommands::Restart => antegen_cli_core::commands::service::restart(),
+            NodeCommands::Status => antegen_cli_core::commands::service::status(),
+            NodeCommands::Logs { follow } => antegen_cli_core::commands::service::logs(follow),
+            NodeCommands::Uninstall => antegen_cli_core::commands::service::uninstall(),
+            NodeCommands::Update { version, local } => {
+                antegen_cli_core::commands::update::update_node(version, local).await
+            }
+            NodeCommands::List => antegen_cli_core::commands::update::list_node().await,
+            NodeCommands::Use { version } => {
+                antegen_cli_core::commands::update::use_node_version(version).await
+            }
+            NodeCommands::Install { version, local } => {
+                antegen_cli_core::commands::update::install_node_version(version, local).await
+            }
         },
 
         // =================================================================
-        // Hidden backwards-compatibility aliases (deprecated — use `antegenctl`)
+        // Top-level operator commands
         // =================================================================
         Commands::Verify => {
             antegen_cli_core::commands::update::import_current_binary()?;
@@ -531,6 +621,29 @@ async fn run_antegen() -> Result<()> {
             Ok(())
         }
         Commands::Init { rpc, force } => antegen_cli_core::commands::service::init(rpc, force),
+        Commands::Update { version } => antegen_cli_core::commands::update::update(version).await,
+        Commands::List { remote } => antegen_cli_core::commands::update::list_cli(remote).await,
+        Commands::Use { version } => {
+            antegen_cli_core::commands::update::use_cli_version(version).await
+        }
+        Commands::Install { version } => {
+            // Used by install script — no deprecation warning
+            antegen_cli_core::commands::update::install(version).await
+        }
+        Commands::Info { json } => antegen_cli_core::commands::info::info(json).await,
+        Commands::Fund { amount } => {
+            let config = antegen_cli_core::commands::default_config_path()?;
+            antegen_cli_core::commands::client::fund(config, amount, cli.keypair, cli.rpc).await
+        }
+        Commands::Withdraw { amount } => {
+            let config = antegen_cli_core::commands::default_config_path()?;
+            antegen_cli_core::commands::client::withdraw(config, amount, cli.rpc).await
+        }
+        Commands::Config(config_cmd) => dispatch_config(config_cmd, cli.rpc),
+
+        // =================================================================
+        // Hidden deprecated aliases — these moved under `antegen node`
+        // =================================================================
         Commands::Start { rpc, version } => {
             deprecation_warning("start", "start");
             antegen_cli_core::commands::service::start(rpc, version).await
@@ -554,33 +667,6 @@ async fn run_antegen() -> Result<()> {
         Commands::Uninstall => {
             deprecation_warning("uninstall", "uninstall");
             antegen_cli_core::commands::service::uninstall()
-        }
-        Commands::Update { version } => antegen_cli_core::commands::update::update(version).await,
-        Commands::List { remote } => antegen_cli_core::commands::update::list_cli(remote).await,
-        Commands::Use { version } => {
-            antegen_cli_core::commands::update::use_cli_version(version).await
-        }
-        Commands::Install { version } => {
-            // Used by install script — no deprecation warning
-            antegen_cli_core::commands::update::install(version).await
-        }
-        Commands::Info { json } => {
-            deprecation_warning("info", "info");
-            antegen_cli_core::commands::info::info(json).await
-        }
-        Commands::Fund { amount } => {
-            deprecation_warning("fund", "fund");
-            let config = antegen_cli_core::commands::default_config_path()?;
-            antegen_cli_core::commands::client::fund(config, amount, cli.keypair, cli.rpc).await
-        }
-        Commands::Withdraw { amount } => {
-            deprecation_warning("withdraw", "withdraw");
-            let config = antegen_cli_core::commands::default_config_path()?;
-            antegen_cli_core::commands::client::withdraw(config, amount, cli.rpc).await
-        }
-        Commands::Config(config_cmd) => {
-            deprecation_warning("config", "config");
-            dispatch_config(config_cmd, cli.rpc)
         }
     }
 }

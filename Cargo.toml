@@ -25,7 +25,6 @@ members = [
     "crates/*",
     "cli/core",
     "cli/antegen",
-    "cli/antegenctl",
     "plugin/geyser",
     "programs/fiber",
     "programs/reentrance-test",

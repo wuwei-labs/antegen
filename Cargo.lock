@@ -651,17 +651,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "antegenctl"
-version = "6.0.0"
-dependencies = [
- "antegen-cli-core",
- "anyhow",
- "clap 4.5.53",
- "log",
- "tokio",
-]
-
-[[package]]
 name = "anyhow"
 version = "1.0.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
