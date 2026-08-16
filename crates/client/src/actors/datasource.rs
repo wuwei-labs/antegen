@@ -220,6 +220,17 @@ const RESTART_WINDOW: Duration = Duration::from_secs(300);
 /// quiet.
 const CLOCK_POLL_INTERVAL: Duration = Duration::from_millis(400);
 
+/// How long the clock subscription may stay silent before we stop compensating
+/// and force it to re-establish.
+///
+/// Polling is meant to cover a gap, not replace the subscription. A provider
+/// that acknowledges `accountSubscribe` and then never pushes leaves the socket
+/// connected and useless, and the poller costs an RPC round trip every
+/// `CLOCK_POLL_INTERVAL` — 2.5 requests a second, indefinitely, on a metered
+/// endpoint. Well above the fallback threshold so a brief gap does not churn the
+/// subscription.
+const CLOCK_RESUBSCRIBE_AFTER: Duration = Duration::from_secs(30);
+
 /// How long the clock subscription may be silent before the poller takes over.
 ///
 /// Slots are ~400ms, so a healthy subscription delivers well inside this. Sized
@@ -272,7 +283,10 @@ impl RestartBudget {
 }
 
 pub struct RpcSourceState {
-    ws_url: String,
+    /// The endpoint with credentials stripped. Only the redacted form is kept:
+    /// the actor never reconnects from state — the subscription tasks own the
+    /// real URL — and holding it invites logging it by accident.
+    label: String,
     staging_ref: ActorRef<StagingMessage>,
     resources: SharedResources,
     cancel_token: CancellationToken,
@@ -296,6 +310,7 @@ impl Actor for RpcSourceActor {
         (endpoint, resources, staging_ref): Self::Arguments,
     ) -> Result<Self::State, Box<dyn Error + Send + Sync>> {
         let ws_url = endpoint.get_ws_url();
+        let label = crate::config::redact_endpoint(&ws_url);
         log::debug!(
             "RpcSourceActor starting for: {} (ws: {})",
             endpoint.url,
@@ -332,7 +347,7 @@ impl Actor for RpcSourceActor {
         );
 
         Ok(RpcSourceState {
-            ws_url,
+            label,
             staging_ref,
             resources,
             cancel_token,
@@ -353,7 +368,7 @@ impl Actor for RpcSourceActor {
             RpcSourceMessage::UpdateReceived(update) => {
                 log::trace!(
                     "[{}] Received account update: pubkey={}, slot={}, data_len={}",
-                    state.ws_url,
+                    state.label,
                     update.pubkey,
                     update.slot,
                     update.data.len()
@@ -373,12 +388,12 @@ impl Actor for RpcSourceActor {
                 state
                     .resources
                     .ingest_stats
-                    .record_account(&state.ws_url, is_new);
+                    .record_account(&state.label, is_new);
 
                 if is_new {
                     log::debug!(
                         "[{}] New/updated account: pubkey={}, slot={}",
-                        state.ws_url,
+                        state.label,
                         update.pubkey,
                         update.slot
                     );
@@ -391,7 +406,7 @@ impl Actor for RpcSourceActor {
                 } else {
                     log::trace!(
                         "[{}] Duplicate/stale account update ignored: pubkey={}",
-                        state.ws_url,
+                        state.label,
                         update.pubkey
                     );
                 }
@@ -408,7 +423,7 @@ impl Actor for RpcSourceActor {
 
                 log::trace!(
                     "[{}] Received clock update: slot={}, timestamp={}",
-                    state.ws_url,
+                    state.label,
                     clock.slot,
                     clock.unix_timestamp
                 );
@@ -417,13 +432,13 @@ impl Actor for RpcSourceActor {
                 // high-water mark first is the one actually driving scheduling;
                 // the others are paying for a subscription that adds nothing.
                 if let Some(lag) = state.resources.ingest_stats.record_clock(
-                    &state.ws_url,
+                    &state.label,
                     clock.slot,
                     Instant::now(),
                 ) {
                     log::trace!(
                         "[{}] lost clock race for slot {} by {}ms",
-                        state.ws_url,
+                        state.label,
                         clock.slot,
                         lag.as_millis()
                     );
@@ -444,7 +459,7 @@ impl Actor for RpcSourceActor {
                 // account update from this endpoint. Run it off the actor loop;
                 // it already reports results back by message.
                 if state.backfill_in_flight {
-                    log::debug!("[{}] Backfill already in flight, skipping", state.ws_url);
+                    log::debug!("[{}] Backfill already in flight, skipping", state.label);
                     return Ok(());
                 }
 
@@ -455,15 +470,15 @@ impl Actor for RpcSourceActor {
                 if !state.resources.ingest_stats.try_claim_backfill() {
                     log::debug!(
                         "[{}] Another datasource backfilled recently, skipping",
-                        state.ws_url
+                        state.label
                     );
                     return Ok(());
                 }
                 state.backfill_in_flight = true;
 
                 let subscription =
-                    RpcSubscription::from_resources(state.ws_url.clone(), &state.resources);
-                let ws_url = state.ws_url.clone();
+                    RpcSubscription::from_resources(state.label.clone(), &state.resources);
+                let ws_url = state.label.clone();
                 let actor_ref = myself.clone();
                 tokio::spawn(async move {
                     if let Err(e) = subscription.perform_backfill(actor_ref.clone()).await {
@@ -485,7 +500,7 @@ impl Actor for RpcSourceActor {
                     "program" => (&mut state.program_restarts, "program"),
                     "clock" => (&mut state.clock_restarts, "clock"),
                     other => {
-                        log::warn!("[{}] Unknown subscription died: {}", state.ws_url, other);
+                        log::warn!("[{}] Unknown subscription died: {}", state.label, other);
                         return Ok(());
                     }
                 };
@@ -494,18 +509,18 @@ impl Actor for RpcSourceActor {
                 let delay = budget.backoff();
                 log::warn!(
                     "[{}] {} subscription died (restart {}/{} within {}s)",
-                    state.ws_url,
+                    state.label,
                     limit_name,
                     count,
                     MAX_SUBSCRIPTION_RESTARTS,
                     RESTART_WINDOW.as_secs()
                 );
-                log::debug!("[{}] Retrying in {:?}", state.ws_url, delay);
+                log::debug!("[{}] Retrying in {:?}", state.label, delay);
 
                 if budget.exhausted() {
                     log::error!(
                         "[{}] {} subscription is flapping, giving up on this endpoint",
-                        state.ws_url,
+                        state.label,
                         limit_name
                     );
                     // Stopping this actor takes down only this datasource. The
@@ -520,7 +535,7 @@ impl Actor for RpcSourceActor {
                 match which.as_str() {
                     "program" => {
                         spawn_program_subscription(
-                            &state.ws_url,
+                            &state.label,
                             &state.resources,
                             myself.clone(),
                             state.cancel_token.clone(),
@@ -529,7 +544,7 @@ impl Actor for RpcSourceActor {
                     }
                     "clock" => {
                         spawn_clock_subscription(
-                            &state.ws_url,
+                            &state.label,
                             &state.resources,
                             myself.clone(),
                             state.cancel_token.clone(),
@@ -551,7 +566,7 @@ impl Actor for RpcSourceActor {
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         // Cancel all background subscription tasks so they exit cleanly
         state.cancel_token.cancel();
-        log::info!("RpcSourceActor for {} stopped", state.ws_url);
+        log::info!("RpcSourceActor for {} stopped", state.label);
         Ok(())
     }
 }
@@ -611,13 +626,14 @@ fn spawn_clock_fallback(
     cancel_token: CancellationToken,
     last_subscription_clock: Arc<Mutex<Instant>>,
 ) {
-    let label = ws_url.to_string();
+    let label = crate::config::redact_endpoint(ws_url);
     let rpc = resources.rpc_client.clone();
 
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(CLOCK_POLL_INTERVAL);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut warned = false;
+        let mut last_resubscribe: Option<Instant> = None;
 
         loop {
             tokio::select! {
@@ -644,6 +660,29 @@ fn spawn_clock_fallback(
                     label,
                     quiet_for
                 );
+            }
+
+            // Sustained silence is not a gap to ride out — the subscription is
+            // not coming back on its own. Hand it to the restart machinery,
+            // which backs off and eventually gives up on the endpoint so a
+            // redundant datasource can take over. Re-asked at the same interval
+            // rather than every tick, so the restart budget measures endpoint
+            // health rather than how fast this loop spins.
+            if quiet_for >= CLOCK_RESUBSCRIBE_AFTER
+                && last_resubscribe.is_none_or(|t: Instant| t.elapsed() >= CLOCK_RESUBSCRIBE_AFTER)
+            {
+                last_resubscribe = Some(Instant::now());
+                log::warn!(
+                    "[{}] Clock subscription silent for {:?}; forcing a re-subscribe",
+                    label,
+                    quiet_for
+                );
+                if actor_ref
+                    .send_message(RpcSourceMessage::SubscriptionDied("clock".to_string()))
+                    .is_err()
+                {
+                    return; // actor gone
+                }
             }
 
             let account = match rpc.get_account(&solana_sdk::sysvar::clock::ID).await {

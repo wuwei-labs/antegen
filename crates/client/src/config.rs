@@ -82,6 +82,33 @@ pub struct RpcEndpoint {
     pub priority: u8,
 }
 
+/// An endpoint URL with its credentials stripped, for logging.
+///
+/// Providers put API keys in the query string — `?api-key=…` for Helius,
+/// `/v2/<key>` style paths elsewhere — and some accept them as userinfo. Logging
+/// the URL verbatim writes the key to the journal at INFO on a healthy node, and
+/// to anywhere those logs are shipped. Endpoints appear in dozens of log lines,
+/// so the redaction belongs at the point a label is made rather than at each
+/// call site.
+///
+/// Keeps scheme, host and port, which is all a reader needs to tell endpoints
+/// apart. Anything that cannot be parsed is reduced to its host-looking prefix
+/// rather than passed through, so a malformed URL cannot leak by falling back.
+pub fn redact_endpoint(url: &str) -> String {
+    let (scheme, rest) = match url.split_once("://") {
+        Some((s, r)) => (s, r),
+        // No scheme to anchor on: keep nothing but the first path-free segment.
+        None => return url.split(['/', '?', '#']).next().unwrap_or("").to_string(),
+    };
+
+    // Drop userinfo (`user:pass@host`), then everything from the first path,
+    // query or fragment separator — which is where every key we have seen lives.
+    let rest = rest.rsplit_once('@').map(|(_, h)| h).unwrap_or(rest);
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+
+    format!("{}://{}", scheme, host)
+}
+
 impl RpcEndpoint {
     /// Get the WebSocket URL, deriving from HTTP URL if not explicitly provided
     pub fn get_ws_url(&self) -> String {
@@ -576,5 +603,60 @@ mod tests {
             priority: 1,
         };
         assert_eq!(endpoint.get_ws_url(), "wss://custom-ws-url.com");
+    }
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::redact_endpoint;
+
+    /// The line that prompted this: a Helius key logged at WARN on a mainnet
+    /// node, and so present in the journal and anywhere those logs are shipped.
+    #[test]
+    fn strips_an_api_key_from_the_query_string() {
+        assert_eq!(
+            redact_endpoint("wss://mainnet.helius-rpc.com/?api-key=cf11925f-9ff4-dead-beef"),
+            "wss://mainnet.helius-rpc.com"
+        );
+    }
+
+    #[test]
+    fn strips_keys_carried_in_the_path() {
+        assert_eq!(
+            redact_endpoint("https://rpc.example.com/v2/secret-key-here"),
+            "https://rpc.example.com"
+        );
+    }
+
+    #[test]
+    fn strips_userinfo() {
+        assert_eq!(
+            redact_endpoint("wss://user:password@rpc.example.com/ws"),
+            "wss://rpc.example.com"
+        );
+    }
+
+    #[test]
+    fn keeps_what_distinguishes_endpoints() {
+        assert_eq!(
+            redact_endpoint("http://localhost:8899"),
+            "http://localhost:8899"
+        );
+        assert_ne!(
+            redact_endpoint("wss://a.example.com/?api-key=x"),
+            redact_endpoint("wss://b.example.com/?api-key=x")
+        );
+    }
+
+    /// A URL we cannot parse must not fall through verbatim — that is exactly
+    /// how a key would escape.
+    #[test]
+    fn malformed_input_does_not_leak() {
+        assert_eq!(
+            redact_endpoint("rpc.example.com/?api-key=secret"),
+            "rpc.example.com"
+        );
+        assert_eq!(redact_endpoint(""), "");
+        assert!(!redact_endpoint("not a url ?api-key=secret").contains("secret"));
     }
 }

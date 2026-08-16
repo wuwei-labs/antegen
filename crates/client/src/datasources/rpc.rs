@@ -29,6 +29,8 @@ const KEEPALIVE: Duration = Duration::from_secs(10);
 /// WebSocket subscription manager using antegen-ws for automatic reconnection.
 pub struct RpcSubscription {
     ws_url: String,
+    /// `ws_url` with credentials stripped, for logging.
+    label: String,
     program_id: Pubkey,
     rpc_client: Arc<RpcPool>,
     ingest_stats: Arc<IngestStats>,
@@ -47,6 +49,7 @@ impl RpcSubscription {
         clock_commitment: Arc<str>,
     ) -> Self {
         Self {
+            label: crate::config::redact_endpoint(&ws_url),
             ws_url,
             program_id,
             rpc_client,
@@ -79,7 +82,7 @@ impl RpcSubscription {
     pub async fn perform_backfill(&self, actor_ref: ActorRef<RpcSourceMessage>) -> Result<usize> {
         debug!(
             "[{}] Performing backfill via getProgramAccounts...",
-            self.ws_url
+            self.label
         );
 
         // Use discriminator filter for Thread accounts
@@ -98,7 +101,7 @@ impl RpcSubscription {
         let count = accounts.len();
         debug!(
             "[{}] Found {} Thread accounts to backfill",
-            self.ws_url, count
+            self.label, count
         );
 
         for (pubkey, ui_account) in accounts {
@@ -108,7 +111,7 @@ impl RpcSubscription {
                 Err(e) => {
                     warn!(
                         "[{}] Failed to decode account {}: {}",
-                        self.ws_url, pubkey, e
+                        self.label, pubkey, e
                     );
                     continue;
                 }
@@ -120,18 +123,18 @@ impl RpcSubscription {
             // exactly when it is most needed.
             let update = AccountUpdate::new(pubkey, data, slot);
 
-            trace!("[{}] Backfilling Thread account: {}", self.ws_url, pubkey);
+            trace!("[{}] Backfilling Thread account: {}", self.label, pubkey);
 
             if let Err(e) = actor_ref.send_message(RpcSourceMessage::UpdateReceived(update)) {
                 error!(
                     "[{}] Failed to send backfilled account {}: {:?}",
-                    self.ws_url, pubkey, e
+                    self.label, pubkey, e
                 );
                 break;
             }
         }
 
-        info!("[{}] Backfill complete: {} threads", self.ws_url, count);
+        info!("[{}] Backfill complete: {} threads", self.label, count);
         Ok(count)
     }
 
