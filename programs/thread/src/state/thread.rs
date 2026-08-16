@@ -42,7 +42,8 @@ pub enum Trigger {
     Interval {
         /// Interval in seconds between executions
         seconds: i64,
-        /// Boolean value indicating whether triggering moments may be skipped
+        /// Whether a triggering moment may be abandoned if it cannot be
+        /// executed. See the note on `Trigger::Cron::skippable`.
         skippable: bool,
         /// Optional jitter in seconds to prevent thundering herd (0 = no jitter)
         jitter: u64,
@@ -54,8 +55,15 @@ pub enum Trigger {
         #[max_len(255)]
         schedule: String,
 
-        /// Boolean value indicating whether triggering moments may be skipped if they are missed (e.g. due to network downtime).
-        /// If false, any "missed" triggering moments will simply be executed as soon as the network comes back online.
+        /// Whether a triggering moment may be abandoned if it cannot be
+        /// executed. When false, executors keep retrying the pending moment
+        /// until it lands or the next one falls due; when true they may give up
+        /// on it and wait for the next.
+        ///
+        /// Read by executors, not by this program: `update_schedule` runs only
+        /// inside a successful `thread_exec`, so a trigger that never lands is
+        /// invisible on-chain. Errors and failed simulations are not retried
+        /// regardless of this flag.
         skippable: bool,
 
         /// Optional jitter in seconds to spread execution across a window (0 = no jitter)
