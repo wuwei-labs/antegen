@@ -2,9 +2,11 @@
 
 ## Commit conventions (read before committing)
 
-Every commit in this repo MUST satisfy these rules. CI will reject PRs
-that violate them. AI assistants helping with commits — Claude Code or
-otherwise — must follow them too.
+These rules are not enforced by CI — nothing rejects a commit that breaks
+them. They matter anyway: `release-please` reads commit subjects to decide
+version bumps and write changelogs, so a malformed subject silently produces a
+wrong release. AI assistants helping with commits — Claude Code or otherwise —
+must follow them too.
 
 1. **Conventional Commits format** for the commit subject:
    ```
@@ -18,12 +20,9 @@ otherwise — must follow them too.
    - Append `!` after type/scope (or include a `BREAKING CHANGE:`
      footer) for breaking changes — these become a major version bump.
    - Subject starts with a letter and reads as a present-tense imperative.
-2. **DCO sign-off** on every commit. Use `git commit -s` so the
-   `Signed-off-by:` trailer is added.
-3. **No `Co-Authored-By:` footer.** Do not list AI assistants (Claude
-   Code, Copilot, etc.) as co-authors. The DCO sign-off is the only
-   authorship trailer this repo uses.
-4. **Never bump versions or edit `CHANGELOG.md` manually** (except
+2. **No `Co-Authored-By:` footer.** Do not list AI assistants (Claude
+   Code, Copilot, etc.) as co-authors.
+3. **Never bump versions or edit `CHANGELOG.md` manually** (except
    inside a Release PR opened by release-please). See "Versioning &
    Changelog Protocol" below.
 
@@ -34,14 +33,10 @@ feat(thread): add cleanup_stale_signal instruction
 
 Allows recovery of signal accounts whose thread is gone. Refunds
 rent to the original payer.
-
-Signed-off-by: Anthony Anderson <anthony@wuwei.dev>
 ```
 
 ```
 fix(cron): clamp DOM/DOW interaction to POSIX semantics
-
-Signed-off-by: Anthony Anderson <anthony@wuwei.dev>
 ```
 
 ## Versioning & Changelog Protocol
@@ -51,9 +46,13 @@ Contributors do not bump versions or write changelog entries by hand.
 
 ### How releases work
 
-1. Land code on `main` via PR. The PR title MUST follow Conventional
-   Commits format (validated by `pr-title-check.yml`).
-   - Use squash-merge so the merge commit on `main` carries the PR title.
+1. Land code on `main` via PR.
+   - Prefer a **merge commit** when the branch spans several packages, so
+     each commit keeps its own scope and release-please attributes it to the
+     right changelog. Squash-merging collapses everything into the PR title,
+     which then becomes the only input release-please sees — and since nothing
+     validates that title any more, a malformed one bumps the wrong versions
+     with no warning.
 2. `release-please.yml` runs on every push to `main`. For each package
    with new conventional commits since its last release tag, it opens
    or updates a single Release PR that:
@@ -143,6 +142,5 @@ When adding a new package:
 
 ### Commits
 
-- Conventional Commits format is required (enforced by `pr-title-check.yml`).
-- Sign-off (`-s`) is required per DCO (enforced by `dco.yml`).
+- Conventional Commits format, because release-please depends on it.
 - Do **not** include `Co-Authored-By` footers in commit messages.
