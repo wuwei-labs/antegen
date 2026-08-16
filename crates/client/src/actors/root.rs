@@ -21,6 +21,20 @@ use std::error::Error;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+/// Name of the observability child, used both to spawn it and to recognise it
+/// in supervision events.
+const OBSERVABILITY_ACTOR: &str = "observability";
+
+/// Children whose death must not take the node down.
+///
+/// Every other child is load-bearing: losing staging, the processor or the
+/// datasources means threads stop executing, and stopping is the honest
+/// response. Telemetry is not in that category — the node's job is executing
+/// threads, and it can do that with the agent dead.
+fn is_non_essential(name: &str) -> bool {
+    name == OBSERVABILITY_ACTOR
+}
+
 #[derive(Default)]
 pub struct RootSupervisor;
 
@@ -136,18 +150,37 @@ impl Actor for RootSupervisor {
 
         log::debug!("All actors spawned successfully");
 
-        // Spawn ObservabilityActor if enabled
+        // Spawn ObservabilityActor if enabled.
+        //
+        // A failure here is logged and stepped over rather than propagated.
+        // Telemetry is not part of executing threads, and loa-core reaches the
+        // network during startup — it registers with a backend and opens a
+        // tunnel — so anything from restricted egress to the backend being down
+        // can stop it. A mainnet node that will not start because a metrics
+        // agent could not phone home is strictly worse than one running blind:
+        // loa-core 3.0 panicked in `Runtime::start()` on a mainnet host and
+        // crash-looped the executor thirteen times before the operator disabled
+        // observability by hand.
         let observability_ref = if config.observability.enabled {
             log::debug!("Spawning ObservabilityActor...");
-            let (obs_ref, _obs_handle) = Actor::spawn_linked(
-                Some("observability".to_string()),
+            match Actor::spawn_linked(
+                Some(OBSERVABILITY_ACTOR.to_string()),
                 ObservabilityActor,
                 config.observability.clone(),
                 supervisor.clone(),
             )
             .await
-            .map_err(|e| format!("Failed to spawn ObservabilityActor: {}", e))?;
-            Some(obs_ref)
+            {
+                Ok((obs_ref, _obs_handle)) => Some(obs_ref),
+                Err(e) => {
+                    log::warn!(
+                        "Observability agent failed to start ({}). Continuing without telemetry; \
+                         set observability.enabled = false to silence this.",
+                        e
+                    );
+                    None
+                }
+            }
         } else {
             log::debug!("Observability disabled, skipping loa-core agent");
             None
@@ -184,17 +217,35 @@ impl Actor for RootSupervisor {
     ) -> Result<(), ActorProcessingErr> {
         match message {
             SupervisionEvent::ActorTerminated(who, _, reason) => {
+                let name = who.get_name().unwrap_or_default();
+                if is_non_essential(&name) {
+                    log::warn!(
+                        "Child actor {} terminated (reason: {:?}). Continuing without it.",
+                        name,
+                        reason
+                    );
+                    return Ok(());
+                }
                 log::error!(
                     "Child actor {} terminated (reason: {:?}). Shutting down system.",
-                    who.get_name().unwrap_or_default(),
+                    name,
                     reason
                 );
                 myself.stop(None);
             }
             SupervisionEvent::ActorFailed(who, error) => {
+                let name = who.get_name().unwrap_or_default();
+                if is_non_essential(&name) {
+                    log::warn!(
+                        "Child actor {} failed: {}. Continuing without it.",
+                        name,
+                        error
+                    );
+                    return Ok(());
+                }
                 log::error!(
                     "Child actor {} failed: {}. Shutting down system.",
-                    who.get_name().unwrap_or_default(),
+                    name,
                     error
                 );
                 myself.stop(None);

@@ -20,6 +20,10 @@ const LOA_API_URL: &str = "https://api.loa.sh";
 /// simply a setter for `workspace_id` — the same value, under the name 3.0 uses.
 const LOA_WORKSPACE_ID: &str = "jx7dy16t7pm9q6273bxxtfgr757ykemr";
 
+/// How long loa-core gets to come up before we give up on it and run without
+/// telemetry.
+const STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Messages for the ObservabilityActor
 pub enum ObservabilityMessage {
     Shutdown,
@@ -49,13 +53,27 @@ impl Actor for ObservabilityActor {
         let storage_path = shellexpand::tilde(&config.storage_path).to_string();
         log::debug!("Loa storage path: {}", storage_path);
 
-        let handle = Runtime::builder(PathBuf::from(&storage_path), LOA_API_URL.to_string())
-            .workspace_id(LOA_WORKSPACE_ID)
-            .agent_version(env!("CARGO_PKG_VERSION"))
-            .build()
-            .start()
-            .await
-            .map_err(|e| format!("Failed to start loa-core runtime: {}", e))?;
+        // Bounded, because startup reaches the network: 3.0 registers with the
+        // backend and opens a tunnel, neither of which is guaranteed to fail
+        // fast. Without a ceiling an unreachable backend leaves the node hung
+        // before "System ready" rather than merely untelemetered. The caller
+        // treats any error here as non-fatal.
+        let handle = tokio::time::timeout(
+            STARTUP_TIMEOUT,
+            Runtime::builder(PathBuf::from(&storage_path), LOA_API_URL.to_string())
+                .workspace_id(LOA_WORKSPACE_ID)
+                .agent_version(env!("CARGO_PKG_VERSION"))
+                .build()
+                .start(),
+        )
+        .await
+        .map_err(|_| {
+            format!(
+                "loa-core runtime did not start within {:?}",
+                STARTUP_TIMEOUT
+            )
+        })?
+        .map_err(|e| format!("Failed to start loa-core runtime: {}", e))?;
 
         log::info!(
             "Loa observability agent started (agent {})",
