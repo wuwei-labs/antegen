@@ -167,7 +167,9 @@ impl RpcSubscription {
         };
 
         let actor_on_connect = actor_ref.clone();
-        let url_on_connect = ws_url.clone();
+        // Redacted: this is used as a log label *and* as the IngestStats key,
+        // and the heartbeat prints those keys verbatim.
+        let url_on_connect = self.label.clone();
         let stats_on_connect = self.ingest_stats.clone();
         let mut handle = match builder
             .keepalive(KEEPALIVE)
@@ -201,7 +203,7 @@ impl RpcSubscription {
         {
             Ok(h) => h,
             Err(e) => {
-                error!("[{}] Failed to connect WebSocket: {e}", ws_url);
+                error!("[{}] Failed to connect WebSocket: {e}", self.label);
                 return;
             }
         };
@@ -211,7 +213,7 @@ impl RpcSubscription {
                 if let Some(update) = parse_program_notification(&text) {
                     if let Err(e) = actor_ref.send_message(RpcSourceMessage::UpdateReceived(update))
                     {
-                        error!("[{}] Failed to send account update: {:?}", ws_url, e);
+                        error!("[{}] Failed to send account update: {:?}", self.label, e);
                         break;
                     }
                 }
