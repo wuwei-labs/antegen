@@ -1,5 +1,54 @@
 # Changelog
 
+## [6.0.0](https://github.com/wuwei-labs/antegen/compare/antegen-client-v5.2.0...antegen-client-v6.0.0) (2026-08-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** `antegen-client` no longer builds the `antegen-node` binary and its `node` feature is removed; the library is unchanged. `antegen run` is now `antegen node run` and no longer takes `--version`, since it runs the calling binary rather than exec'ing another one.
+* **client:** update loa-core to 3.0
+* **client:** CompletionReason is removed. ExecutionResult exposes an `outcome: sched::Outcome` in place of its `success` and `skipped` flags, and is constructed via success/empty_fiber/superseded/lb_skip/retryable/fatal.
+* **client:** ExecutorLogic::build_execute_transaction returns an additional Option<u64> of simulated compute units. RpcConfig and RpcPoolConfig each gain a skip_preflight field, which breaks struct-literal construction outside the crate; existing TOML is unaffected as the field defaults.
+* **client:** several public signatures changed.
+    - AccountUpdate and SharedResources each gain a public field, which breaks
+      struct-literal construction outside the crate. Use AccountUpdate::new.
+    - RpcPool::get_program_accounts now returns (slot, accounts).
+    - RpcPool::get_signature_status now reports errors as String.
+    - AccountCache::get_thread_or_fetch now returns FetchError, which
+      distinguishes a genuinely absent account from a transport or decode
+      failure.
+    - RpcSubscription::new takes an IngestStats handle.
+* **client:** swap pws for antegen-ws (rustls)
+
+### Features
+
+* **client:** instrument execution latency and harden datasource ingest ([d3d0a52](https://github.com/wuwei-labs/antegen/commit/d3d0a528c9034433d1eeadac04e5edf7fd788491))
+* **client:** reconcile tracked threads and honour skippable ([ed5ae65](https://github.com/wuwei-labs/antegen/commit/ed5ae6566595e428dfb33bf0e2194e830c6aa820))
+* **cli:** run the daemon from `antegen node run` ([2b3069c](https://github.com/wuwei-labs/antegen/commit/2b3069c399ddf8b6b1553d7e919d232c15a17616))
+
+
+### Bug Fixes
+
+* **client:** resolve stalls and silent failures found under localnet load ([09b924f](https://github.com/wuwei-labs/antegen/commit/09b924f3d48515ad5e2279077e9b6835f400e88e))
+
+
+### Performance Improvements
+
+* **client:** fire threads from a timer instead of the next clock message ([2e6e497](https://github.com/wuwei-labs/antegen/commit/2e6e497d103b23980e71b4fd588e2391bd98fa92))
+* **client:** release the execution permit at submit and batch confirmation ([a72fe22](https://github.com/wuwei-labs/antegen/commit/a72fe22ddc28d925c59c45b1cfa30004af4996d9))
+* **client:** remove redundant RPC round trips from the execution path ([2088b1b](https://github.com/wuwei-labs/antegen/commit/2088b1b195345ab8a29c7a6ac07a1ce9e8df6f64))
+
+
+### Code Refactoring
+
+* **client:** replace scheduling heaps with a due-time scheduler ([b4cba5e](https://github.com/wuwei-labs/antegen/commit/b4cba5e4f84df7cb50ab3a6712330ac8456513ac))
+* **client:** swap pws for antegen-ws (rustls) ([60e8f42](https://github.com/wuwei-labs/antegen/commit/60e8f42ed6ab02adbd85116a2746e1617192b88e))
+
+
+### Build System
+
+* **client:** update loa-core to 3.0 ([b110f61](https://github.com/wuwei-labs/antegen/commit/b110f61d8e9595f991ca2ddb3fb1716d5516a609))
+
 ## [5.2.0](https://github.com/wuwei-labs/antegen/compare/antegen-client-v5.1.4...antegen-client-v5.2.0) (2026-05-17)
 
 
