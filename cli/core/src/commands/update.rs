@@ -205,13 +205,35 @@ fn write_release_cache(versions: &[String]) {
     }
 }
 
-/// Released `antegen` versions, newest first.
+/// Released `antegen` versions, newest first, always fetched live.
+///
+/// Used by anything the operator asked for directly — listing, updating,
+/// installing. Those must be authoritative: answering `antegen node update`
+/// from a cache is how the CLI goes blind to a release that already exists,
+/// which is the exact failure the `node-v*` tag lookup used to produce.
 ///
 /// One page of the releases API is enough — a version old enough to have fallen
 /// off it is far below `MIN_NODE_VERSION` anyway.
 pub async fn fetch_all_versions() -> Result<Vec<String>> {
-    if let Some(cached) = read_release_cache() {
-        return Ok(cached);
+    fetch_all_versions_inner(false).await
+}
+
+/// Released versions, allowed to come from a cache up to `RELEASE_CACHE_TTL_SECS`
+/// old.
+///
+/// Only for the passive "an update is available" notice, which runs on every
+/// `antegen node status` and `antegen info`. That check hitting the GitHub API
+/// each time is what the cache exists to prevent; being a few hours stale costs
+/// nothing, because nothing acts on it.
+pub async fn fetch_all_versions_cached() -> Result<Vec<String>> {
+    fetch_all_versions_inner(true).await
+}
+
+async fn fetch_all_versions_inner(use_cache: bool) -> Result<Vec<String>> {
+    if use_cache {
+        if let Some(cached) = read_release_cache() {
+            return Ok(cached);
+        }
     }
 
     let url = format!(
@@ -243,7 +265,7 @@ pub async fn fetch_all_versions() -> Result<Vec<String>> {
     Ok(versions)
 }
 
-/// Latest released `antegen` version.
+/// Latest released `antegen` version, fetched live.
 pub async fn fetch_latest_version() -> Result<String> {
     fetch_all_versions()
         .await?
@@ -271,6 +293,15 @@ fn get_dev_binary() -> Option<PathBuf> {
 #[cfg(not(feature = "prod"))]
 pub fn is_dev_build() -> bool {
     get_dev_binary().is_some()
+}
+
+/// Latest released version for the passive update notice.
+pub async fn fetch_latest_version_cached() -> Result<String> {
+    fetch_all_versions_cached()
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("No {}* releases found on GitHub yet", RELEASE_TAG_PREFIX))
 }
 
 // =============================================================================

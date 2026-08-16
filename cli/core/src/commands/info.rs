@@ -238,7 +238,7 @@ async fn check_updates_available() -> (Option<String>, Option<String>) {
 
 async fn check_cli_update() -> Option<String> {
     let installed = super::update::current_version();
-    let latest = super::update::fetch_latest_version().await.ok()?;
+    let latest = super::update::fetch_latest_version_cached().await.ok()?;
     if super::update::version_less_than(installed, &latest) {
         Some(latest)
     } else {
@@ -248,7 +248,7 @@ async fn check_cli_update() -> Option<String> {
 
 async fn check_node_update() -> Option<String> {
     let installed = super::update::read_node_version()?;
-    let latest = super::update::fetch_latest_version().await.ok()?;
+    let latest = super::update::fetch_latest_version_cached().await.ok()?;
     if super::update::version_less_than(&installed, &latest) {
         Some(latest)
     } else {
