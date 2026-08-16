@@ -346,8 +346,11 @@ jobs:
           publish_if_missing antegen-fiber-program  programs/fiber/Cargo.toml
           publish_if_missing antegen-thread-program programs/thread/Cargo.toml
           publish_if_missing antegen-client         crates/client/Cargo.toml
-          publish_if_missing antegen-cli-core       cli/core/Cargo.toml
-          publish_if_missing antegen-cli            cli/antegen/Cargo.toml
+          # antegen-cli-core and antegen-cli are `publish = false`: they depend
+          # on a patched fork of service-manager, and `[patch]` does not survive
+          # publishing, so a published build resolves upstream and fails to
+          # compile. They still get versioned, tagged and changelogged; their
+          # distribution is the binary attached to the release.
 
   # -----------------------------------------------------------------------
   # Stage 4: Build the cross-platform `antegen` binary and attach it to the

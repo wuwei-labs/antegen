@@ -93,8 +93,8 @@ in `.github/release-please-config.json`. The current mapping:
 | `crates/ws` | `antegen-ws` | `antegen-ws-v<X.Y.Z>` | crates.io |
 | `programs/thread` | `antegen-thread-program` | `antegen-thread-program-v<X.Y.Z>` | crates.io + verifiable `.so` |
 | `programs/fiber` | `antegen-fiber-program` | `antegen-fiber-program-v<X.Y.Z>` | crates.io + verifiable `.so` |
-| `cli/core` | `antegen-cli-core` | `antegen-cli-core-v<X.Y.Z>` | crates.io |
-| `cli/antegen` | `antegen-cli` | `antegen-cli-v<X.Y.Z>` | crates.io + `antegen` binary (CLI **and** node daemon) |
+| `cli/core` | `antegen-cli-core` | `antegen-cli-core-v<X.Y.Z>` | none (`publish = false`) |
+| `cli/antegen` | `antegen-cli` | `antegen-cli-v<X.Y.Z>` | `antegen` binary (CLI **and** node daemon) |
 | `plugin/geyser` | `antegen-geyser-plugin` | `antegen-geyser-plugin-v<X.Y.Z>` | binary only (`publish = false`) |
 
 `programs/reentrance-test` is a test-only program (`publish = false`)
