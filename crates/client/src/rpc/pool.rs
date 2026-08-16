@@ -76,6 +76,14 @@ struct ProgramAccountsItem {
     account: SafeUiAccount,
 }
 
+/// A `getProgramAccounts` entry with the account body ignored, for callers that
+/// only asked which accounts exist. Deliberately not `ProgramAccountsItem` —
+/// this must keep deserializing whatever a zero-length `dataSlice` returns.
+#[derive(Debug, serde::Deserialize)]
+struct ProgramAccountKey {
+    pubkey: String,
+}
+
 /// `getProgramAccounts` with `withContext: true`, which wraps the array so the
 /// slot the snapshot was taken at is available.
 #[derive(Debug, serde::Deserialize)]
@@ -425,6 +433,53 @@ impl RpcPool {
         }
 
         Ok((slot, accounts))
+    }
+
+    /// List the pubkeys of a program's accounts, without their data.
+    ///
+    /// `dataSlice` with a zero length makes the validator return the account
+    /// envelopes and nothing else, so this answers "which accounts exist" for a
+    /// fraction of the bytes a full `getProgramAccounts` moves. Reconciliation
+    /// runs on a timer and almost always finds nothing missing, so paying for
+    /// the account data on every pass would be the bulk of its cost for no
+    /// information.
+    pub async fn get_program_account_keys(
+        &self,
+        program_id: &Pubkey,
+        filters: Option<Vec<serde_json::Value>>,
+    ) -> Result<Vec<Pubkey>> {
+        let mut params = json!({
+            "encoding": "base64",
+            "commitment": "confirmed",
+            "dataSlice": { "offset": 0, "length": 0 }
+        });
+
+        if let Some(f) = filters {
+            params["filters"] = json!(f);
+        }
+
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getProgramAccounts",
+            "params": [program_id.to_string(), params]
+        });
+
+        let response: JsonRpcResponse<Vec<ProgramAccountKey>> =
+            self.execute_with_failover(&body, true).await?;
+
+        let Some(result) = response.result else {
+            return Ok(Vec::new());
+        };
+
+        result
+            .into_iter()
+            .map(|item| {
+                item.pubkey
+                    .parse()
+                    .map_err(|e| anyhow!("Failed to parse pubkey: {}", e))
+            })
+            .collect()
     }
 
     /// Simulate a transaction and return accounts

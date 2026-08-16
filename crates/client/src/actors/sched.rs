@@ -114,6 +114,26 @@ pub struct Entry {
     /// load-balancer takeover and on-chain commission decay — must be measured
     /// against the real deadline, not against a retry time we chose.
     pub original_due: u64,
+    /// Retry persistence for the pending trigger.
+    pub retry: Retry,
+}
+
+/// How persistently a pending trigger should be retried, and until when.
+///
+/// `skippable` is the thread owner's declared intent, stored on-chain so every
+/// executor reads the same policy. The program itself cannot act on it:
+/// `update_schedule` only runs inside a successful `thread_exec`, so a trigger
+/// that never lands is invisible on-chain. Honouring the flag is therefore
+/// entirely the executor's job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Retry {
+    /// True if this trigger moment may be abandoned once the next one arrives.
+    /// Only `Interval` and `Cron` carry the flag; a one-shot trigger has no
+    /// later moment to defer to, so it is never skippable.
+    pub skippable: bool,
+    /// Trigger value of the next moment, when the trigger has one. Always in
+    /// `Kind::Time` units, since only recurring time triggers can express it.
+    pub window_end: Option<u64>,
 }
 
 /// A thread selected for dispatch.
@@ -220,6 +240,7 @@ impl Sched {
         due: u64,
         exec_count: u64,
         paused: bool,
+        retry: Retry,
     ) -> bool {
         let progressed = match self.entries.get(&pk) {
             Some(prev) => exec_count > prev.exec_count || due != prev.due,
@@ -237,10 +258,26 @@ impl Sched {
             paused,
             retry_after: None,
             original_due: due,
+            retry,
         };
         self.order.insert((kind, due, pk), ());
         self.entries.insert(pk, entry);
         progressed
+    }
+
+    /// The dispatchable entry furthest past its real deadline, with how far
+    /// past, in this kind's own units.
+    ///
+    /// Only `Due` entries count. A parked entry keeps the `original_due` it just
+    /// satisfied until its account update lands, so including those would report
+    /// every healthy execution as overdue. An entry sitting in `Due` well past
+    /// its deadline is the real signal: it should have dispatched and did not.
+    pub fn most_overdue(&self, kind: Kind, current: u64) -> Option<(Pubkey, u64)> {
+        self.range_of(kind)
+            .filter_map(|pk| self.entries.get(&pk).map(|e| (pk, e)))
+            .filter(|(_, e)| e.phase == Phase::Due && !e.paused)
+            .filter_map(|(pk, e)| current.checked_sub(e.original_due).map(|late| (pk, late)))
+            .max_by_key(|(_, late)| *late)
     }
 
     /// Stop tracking a thread entirely. Only correct when it is gone on-chain.
@@ -420,17 +457,83 @@ impl Sched {
             // cannot succeed by construction, so back off rather than
             // re-dispatching on the next tick.
             Outcome::LoadBalancerSkip => {
+                if self.abandon_if_window_passed(pk, current) {
+                    return;
+                }
                 self.reschedule(pk, current, Phase::Due, Some(now + Duration::from_secs(5)));
             }
 
             Outcome::Retryable => {
+                if self.abandon_if_window_passed(pk, current) {
+                    return;
+                }
                 let next = attempts.saturating_add(1);
-                self.reschedule(pk, current, Phase::Due, Some(now + retry_backoff(next)));
+                let backoff = self.bounded_backoff(pk, current, retry_backoff(next));
+                self.reschedule(pk, current, Phase::Due, Some(now + backoff));
                 if let Some(e) = self.entries.get_mut(pk) {
                     e.attempts = next;
                 }
             }
         }
+    }
+
+    /// Give up on the pending trigger once its window has closed, if the thread
+    /// permits it.
+    ///
+    /// `skippable: true` means "this moment may be missed — wait for the next
+    /// one". `skippable: false` means keep trying, which is why this only fires
+    /// for the former. Either way the thread stays scheduled; the difference is
+    /// which moment it is scheduled *for*.
+    ///
+    /// Returns true if the entry was moved on.
+    fn abandon_if_window_passed(&mut self, pk: &Pubkey, current: u64) -> bool {
+        let Some(entry) = self.entries.get(pk) else {
+            return false;
+        };
+        let Some(window_end) = entry.retry.window_end else {
+            return false;
+        };
+        if !entry.retry.skippable || current < window_end {
+            return false;
+        }
+
+        // The next moment has arrived and this one is being dropped, so it
+        // becomes the real deadline — overdue accounting must not keep
+        // measuring against a trigger nobody is trying for any more.
+        self.reschedule(pk, window_end, Phase::Due, None);
+        if let Some(e) = self.entries.get_mut(pk) {
+            e.original_due = window_end;
+            e.attempts = 0;
+        }
+        true
+    }
+
+    /// Clamp backoff so a non-skippable thread gets more than one attempt inside
+    /// its window.
+    ///
+    /// `retry_backoff` reaches 60s, which on a 60s interval means roughly one
+    /// try per window — not "keep trying" in any useful sense. Only applies to
+    /// `Kind::Time`, the only kind whose window is expressed in the same unit as
+    /// a wall-clock backoff.
+    fn bounded_backoff(&self, pk: &Pubkey, current: u64, backoff: Duration) -> Duration {
+        let Some(entry) = self.entries.get(pk) else {
+            return backoff;
+        };
+        if entry.kind != Kind::Time || entry.retry.skippable {
+            return backoff;
+        }
+        let Some(window_end) = entry.retry.window_end else {
+            return backoff;
+        };
+
+        let remaining = window_end.saturating_sub(current);
+        if remaining == 0 {
+            return backoff;
+        }
+        // A quarter of what is left, so a few attempts fit before the window
+        // closes, floored so we never spin.
+        let cap = Duration::from_secs((remaining / 4).max(1));
+        backoff.min(cap)
     }
 
     /// Ordered pubkeys of a kind, earliest due first.
@@ -476,8 +579,8 @@ mod tests {
     #[test]
     fn upsert_replaces_in_place() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
-        s.upsert(pk(1), Kind::Time, 200, 1, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
+        s.upsert(pk(1), Kind::Time, 200, 1, false, Retry::default());
 
         // One entry, one ordered key — a second schedule must not leave a
         // duplicate behind for a later compaction pass to clean up.
@@ -490,8 +593,8 @@ mod tests {
     #[test]
     fn take_due_returns_only_reached_entries() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
-        s.upsert(pk(2), Kind::Time, 300, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
+        s.upsert(pk(2), Kind::Time, 300, 0, false, Retry::default());
 
         let got = s.take_due(Kind::Time, 200, Instant::now());
         assert_eq!(got.len(), 1);
@@ -502,7 +605,7 @@ mod tests {
     #[test]
     fn dispatch_does_not_remove_the_entry() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
         s.take_due(Kind::Time, 200, Instant::now());
 
         // The thread is still tracked — this is what makes a lost execution
@@ -517,7 +620,7 @@ mod tests {
     #[test]
     fn in_flight_entries_are_not_dispatched_again() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
         let now = Instant::now();
 
         assert_eq!(s.take_due(Kind::Time, 200, now).len(), 1);
@@ -527,7 +630,7 @@ mod tests {
     #[test]
     fn paused_entries_are_never_dispatched() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, true);
+        s.upsert(pk(1), Kind::Time, 100, 0, true, Retry::default());
 
         assert!(s.take_due(Kind::Time, 200, Instant::now()).is_empty());
         assert_eq!(s.next_due(Kind::Time), None);
@@ -536,7 +639,7 @@ mod tests {
     #[test]
     fn retryable_failure_is_rescheduled_with_backoff() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
         let now = Instant::now();
         s.take_due(Kind::Time, 200, now);
 
@@ -568,7 +671,7 @@ mod tests {
         // trigger value, so the next tick re-dispatched it — a worker spawn and
         // a load-balancer write lock every ~400ms, forever, per skipped thread.
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
         let now = Instant::now();
         s.take_due(Kind::Time, 200, now);
 
@@ -590,7 +693,7 @@ mod tests {
         // old design this was reported as success and the thread was never
         // rescheduled — a fiber cleared mid-flight stalled its thread forever.
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
         let now = Instant::now();
         s.take_due(Kind::Time, 200, now);
 
@@ -605,7 +708,7 @@ mod tests {
     #[test]
     fn fatal_failure_still_leaves_a_due_value() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
         let now = Instant::now();
         s.take_due(Kind::Time, 200, now);
         s.complete(&pk(1), Outcome::Fatal, 0, 200, now);
@@ -617,7 +720,7 @@ mod tests {
     #[test]
     fn stalled_dispatch_is_reclaimed() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
         let now = Instant::now();
         s.take_due(Kind::Time, 200, now);
 
@@ -631,14 +734,14 @@ mod tests {
     #[test]
     fn account_update_clears_backoff() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
         let now = Instant::now();
         s.take_due(Kind::Time, 200, now);
         s.complete(&pk(1), Outcome::Retryable, 0, 200, now);
         assert_eq!(s.get(&pk(1)).unwrap().attempts, 1);
 
         // Fresh on-chain state supersedes whatever this node had decided.
-        let progressed = s.upsert(pk(1), Kind::Time, 500, 1, false);
+        let progressed = s.upsert(pk(1), Kind::Time, 500, 1, false, Retry::default());
         assert!(progressed);
         let e = s.get(&pk(1)).unwrap();
         assert_eq!(e.attempts, 0);
@@ -649,8 +752,8 @@ mod tests {
     #[test]
     fn unchanged_update_is_not_reported_as_progress() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
-        assert!(!s.upsert(pk(1), Kind::Time, 100, 0, false));
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
+        assert!(!s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default()));
     }
 
     #[test]
@@ -658,7 +761,7 @@ mod tests {
         // Watchdogs and backoff move `due`, but takeover and commission decay
         // depend on how late we are against the actual trigger.
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
         let now = Instant::now();
 
         s.take_due(Kind::Time, 500, now);
@@ -675,7 +778,7 @@ mod tests {
         // thread parked after every execution. Without this it would idle for
         // the whole watchdog period each time.
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
         let now = Instant::now();
         s.take_due(Kind::Time, 200, now);
         s.complete(&pk(1), Outcome::Succeeded, 0, 200, now);
@@ -700,7 +803,7 @@ mod tests {
         let mut s = Sched::new();
         let now = Instant::now();
         for i in 0..100u8 {
-            s.upsert(pk(i), Kind::Time, 100, 0, false);
+            s.upsert(pk(i), Kind::Time, 100, 0, false, Retry::default());
         }
         s.take_due(Kind::Time, 200, now);
         for i in 0..100u8 {
@@ -714,13 +817,13 @@ mod tests {
     #[test]
     fn an_arriving_update_cancels_the_refresh() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
         let now = Instant::now();
         s.take_due(Kind::Time, 200, now);
         s.complete(&pk(1), Outcome::Succeeded, 0, 200, now);
 
         // The subscription delivered, so no fetch is needed.
-        s.upsert(pk(1), Kind::Time, 300, 1, false);
+        s.upsert(pk(1), Kind::Time, 300, 1, false, Retry::default());
         let later = now + REFRESH_AFTER + Duration::from_millis(1);
         assert!(s.take_stale_parked(later).is_empty());
     }
@@ -733,14 +836,14 @@ mod tests {
         // would park a thread that was already correctly re-armed, losing the
         // wake-up until a watchdog fired.
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
         let now = Instant::now();
 
         let dispatched = s.take_due(Kind::Time, 200, now);
         assert_eq!(dispatched[0].exec_count, 0);
 
         // The chain's update arrives first, re-arming for the next deadline.
-        s.upsert(pk(1), Kind::Time, 500, 1, false);
+        s.upsert(pk(1), Kind::Time, 500, 1, false, Retry::default());
         assert_eq!(s.get(&pk(1)).unwrap().phase, Phase::Due);
 
         // The now-stale completion must not undo that.
@@ -760,7 +863,7 @@ mod tests {
     #[test]
     fn a_completion_still_applies_when_no_update_arrived() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
         let now = Instant::now();
         let dispatched = s.take_due(Kind::Time, 200, now);
 
@@ -777,7 +880,7 @@ mod tests {
     #[test]
     fn superseded_parks_like_success() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
         let now = Instant::now();
         s.take_due(Kind::Time, 200, now);
         s.complete(&pk(1), Outcome::Superseded, 0, 200, now);
@@ -790,9 +893,9 @@ mod tests {
     #[test]
     fn kinds_are_scheduled_independently() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
-        s.upsert(pk(2), Kind::Slot, 100, 0, false);
-        s.upsert(pk(3), Kind::Epoch, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
+        s.upsert(pk(2), Kind::Slot, 100, 0, false, Retry::default());
+        s.upsert(pk(3), Kind::Epoch, 100, 0, false, Retry::default());
 
         // A slot value must not make a timestamp entry look due.
         assert_eq!(s.take_due(Kind::Slot, 150, Instant::now()).len(), 1);
@@ -801,9 +904,172 @@ mod tests {
     }
 
     #[test]
+    fn most_overdue_reports_the_worst_undispatched_thread() {
+        let mut s = Sched::new();
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
+        s.upsert(pk(2), Kind::Time, 50, 0, false, Retry::default());
+        s.upsert(pk(3), Kind::Time, 900, 0, false, Retry::default());
+
+        let (pubkey, late) = s.most_overdue(Kind::Time, 1000).unwrap();
+        assert_eq!(pubkey, pk(2));
+        assert_eq!(late, 950);
+    }
+
+    /// A thread that just executed is parked holding the deadline it satisfied,
+    /// so counting parked entries would report every healthy execution as
+    /// overdue.
+    #[test]
+    fn most_overdue_ignores_parked_and_in_flight() {
+        let mut s = Sched::new();
+        let now = Instant::now();
+
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
+        s.take_due(Kind::Time, 200, now);
+        s.complete(&pk(1), Outcome::Succeeded, 0, 200, now);
+        assert_eq!(s.most_overdue(Kind::Time, 5_000), None);
+
+        s.upsert(pk(2), Kind::Time, 100, 0, false, Retry::default());
+        s.take_due(Kind::Time, 200, now);
+        assert_eq!(s.most_overdue(Kind::Time, 5_000), None);
+    }
+
+    #[test]
+    fn most_overdue_ignores_paused_and_future_entries() {
+        let mut s = Sched::new();
+        s.upsert(pk(1), Kind::Time, 100, 0, true, Retry::default());
+        assert_eq!(s.most_overdue(Kind::Time, 1_000), None);
+
+        s.upsert(pk(2), Kind::Time, 5_000, 0, false, Retry::default());
+        assert_eq!(s.most_overdue(Kind::Time, 1_000), None);
+    }
+
+    /// Backoff moves `due` but not `original_due`; lateness is measured against
+    /// the real deadline, not against a retry time we chose.
+    #[test]
+    fn most_overdue_measures_the_real_deadline_through_backoff() {
+        let mut s = Sched::new();
+        let now = Instant::now();
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
+        s.take_due(Kind::Time, 200, now);
+        s.complete(&pk(1), Outcome::Retryable, 0, 200, now);
+
+        let (_, late) = s.most_overdue(Kind::Time, 1_000).unwrap();
+        assert_eq!(late, 900);
+    }
+
+    /// `skippable: true` — the moment may be missed, so once the next one
+    /// arrives the thread moves on to it rather than retrying the old one.
+    #[test]
+    fn skippable_thread_moves_on_when_the_window_closes() {
+        let mut s = Sched::new();
+        let now = Instant::now();
+        let retry = Retry {
+            skippable: true,
+            window_end: Some(160),
+        };
+        s.upsert(pk(1), Kind::Time, 100, 0, false, retry);
+        s.take_due(Kind::Time, 100, now);
+
+        // Still inside the window: keep trying this moment.
+        s.complete(&pk(1), Outcome::Retryable, 0, 120, now);
+        assert_eq!(s.get(&pk(1)).unwrap().original_due, 100);
+
+        // Next moment has arrived: abandon this one and schedule for it.
+        s.take_due(Kind::Time, 160, now + Duration::from_secs(60));
+        s.complete(&pk(1), Outcome::Retryable, 0, 160, now);
+
+        let e = s.get(&pk(1)).unwrap();
+        assert_eq!(e.due, 160);
+        assert_eq!(e.original_due, 160, "the new moment is now the deadline");
+        assert_eq!(e.attempts, 0, "a fresh moment starts with a fresh budget");
+        assert_eq!(e.retry_after, None);
+    }
+
+    /// `skippable: false` — must keep trying the pending moment. It stays
+    /// scheduled for the deadline it missed, not for the next one.
+    #[test]
+    fn non_skippable_thread_keeps_trying_past_the_window() {
+        let mut s = Sched::new();
+        let now = Instant::now();
+        let retry = Retry {
+            skippable: false,
+            window_end: Some(160),
+        };
+        s.upsert(pk(1), Kind::Time, 100, 0, false, retry);
+        s.take_due(Kind::Time, 100, now);
+        s.complete(&pk(1), Outcome::Retryable, 0, 200, now);
+
+        let e = s.get(&pk(1)).unwrap();
+        assert_eq!(e.original_due, 100, "still trying for the missed moment");
+        assert_eq!(e.attempts, 1);
+    }
+
+    /// A load-balancer skip is a miss like any other: it does not land, so a
+    /// skippable thread may give up on the moment once the next one is due.
+    #[test]
+    fn load_balancer_skip_also_respects_the_window() {
+        let mut s = Sched::new();
+        let now = Instant::now();
+        let retry = Retry {
+            skippable: true,
+            window_end: Some(160),
+        };
+        s.upsert(pk(1), Kind::Time, 100, 0, false, retry);
+        s.take_due(Kind::Time, 100, now);
+        s.complete(&pk(1), Outcome::LoadBalancerSkip, 0, 160, now);
+
+        assert_eq!(s.get(&pk(1)).unwrap().due, 160);
+    }
+
+    /// Backoff reaches 60s, which on a short interval would allow roughly one
+    /// attempt per window — not "keep trying" in any useful sense.
+    #[test]
+    fn backoff_is_clamped_inside_a_non_skippable_window() {
+        let mut s = Sched::new();
+        let now = Instant::now();
+        let retry = Retry {
+            skippable: false,
+            window_end: Some(140),
+        };
+        s.upsert(pk(1), Kind::Time, 100, 0, false, retry);
+
+        // Drive attempts up so the unclamped backoff would be at its 60s cap.
+        for _ in 0..8 {
+            s.take_due(Kind::Time, 100, now);
+            s.complete(&pk(1), Outcome::Retryable, 0, 100, now);
+        }
+
+        // 40s of window left, so at most a quarter of it.
+        let e = s.get(&pk(1)).unwrap();
+        assert!(
+            e.retry_after.unwrap() <= now + Duration::from_secs(10),
+            "backoff should be clamped to a quarter of the remaining window"
+        );
+    }
+
+    /// One-shot triggers have no next moment, so there is nothing to skip to and
+    /// retries must not be bounded by a window that does not exist.
+    #[test]
+    fn a_trigger_without_a_window_is_never_abandoned() {
+        let mut s = Sched::new();
+        let now = Instant::now();
+        let retry = Retry {
+            skippable: true,
+            window_end: None,
+        };
+        s.upsert(pk(1), Kind::Time, 100, 0, false, retry);
+        s.take_due(Kind::Time, 100, now);
+        s.complete(&pk(1), Outcome::Retryable, 0, 100_000, now);
+
+        let e = s.get(&pk(1)).unwrap();
+        assert_eq!(e.original_due, 100);
+        assert_eq!(e.attempts, 1);
+    }
+
+    #[test]
     fn removal_clears_both_index_and_entry() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
         s.remove(&pk(1));
 
         assert!(s.is_empty());
@@ -814,8 +1080,8 @@ mod tests {
     #[test]
     fn next_due_skips_entries_that_cannot_run() {
         let mut s = Sched::new();
-        s.upsert(pk(1), Kind::Time, 100, 0, false);
-        s.upsert(pk(2), Kind::Time, 200, 0, false);
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
+        s.upsert(pk(2), Kind::Time, 200, 0, false, Retry::default());
         let now = Instant::now();
 
         // Once the earliest is dispatched, the timer must arm on the next one

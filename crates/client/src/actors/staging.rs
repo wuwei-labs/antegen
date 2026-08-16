@@ -16,13 +16,13 @@
 
 use crate::actors::messages::{ProcessorMessage, ReadyThread, StagingMessage, StagingStatus};
 use crate::actors::processor::LATENCY_TARGET;
-use crate::actors::sched::{Dispatched, Kind, Outcome, Sched};
+use crate::actors::sched::{Dispatched, Kind, Outcome, Retry, Sched};
 use crate::clockref::ClockRef;
 use crate::config::ClientConfig;
 use crate::load_balancer::LoadBalancer;
 use crate::resources::SharedResources;
 use crate::trace::ExecTrace;
-use anchor_lang::AccountDeserialize;
+use anchor_lang::{AccountDeserialize, Discriminator};
 use antegen_thread_program::state::{Schedule, Thread, Trigger};
 use log::{debug, info, warn};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
@@ -41,6 +41,27 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Cap on cache-eviction refetches issued at once.
 const MAX_EVICTIONS_PER_BATCH: usize = 32;
+
+/// How often the tracked set is reconciled against what the program actually
+/// owns on-chain.
+///
+/// Every other recovery path — the parked watchdog, the stale-parked refresh,
+/// the in-flight reclaim — only rescues threads that are *already tracked*. A
+/// thread the subscription never delivered, or one dropped by a failed refetch,
+/// is invisible to all of them. Backfill is the only thing that discovers
+/// threads, and it runs on reconnect alone, so a node whose socket stays healthy
+/// for days never looks again. This is the pass that closes that hole.
+const RECONCILE_INTERVAL: Duration = Duration::from_secs(300);
+
+/// How far past its deadline a still-undispatched thread must be before the
+/// heartbeat calls it out. Comfortably beyond the stall watchdog and the
+/// load-balancer takeover delay, so ordinary contention stays quiet.
+const OVERDUE_WARN_SECS: u64 = 300;
+
+/// Cap on threads adopted from a single reconciliation pass, so a first scan
+/// against a large program cannot dump thousands of refetches onto the RPC pool
+/// the execution path is using. The remainder is picked up next pass.
+const MAX_ADOPTIONS_PER_PASS: usize = 64;
 
 #[derive(Default)]
 pub struct StagingActor;
@@ -66,6 +87,9 @@ pub struct StagingState {
     /// tick is dropped.
     last_prune: Instant,
     last_heartbeat: Instant,
+    last_reconcile: Instant,
+    /// Guards against a slow scan stacking passes on top of each other.
+    reconcile_in_flight: bool,
 
     processor_ref: Option<ActorRef<ProcessorMessage>>,
     resources: SharedResources,
@@ -121,6 +145,11 @@ impl Actor for StagingActor {
             last_processed_slot: 0,
             last_prune: now,
             last_heartbeat: now,
+            // Not `now`: the datasource backfills on connect, so a scan in the
+            // first interval would duplicate it. Start the clock so the first
+            // reconciliation lands one interval after startup.
+            last_reconcile: now,
+            reconcile_in_flight: false,
             processor_ref: None, // Will be set by RootSupervisor after processor spawns
             resources,
             load_balancer,
@@ -185,6 +214,57 @@ impl Actor for StagingActor {
                     }
                 }
                 self.rearm_timer(state);
+                Ok(())
+            }
+            StagingMessage::Reconciled(on_chain) => {
+                state.reconcile_in_flight = false;
+
+                let tracked: HashSet<Pubkey> = state.sched.tracked().collect();
+                let missing: Vec<Pubkey> = on_chain
+                    .iter()
+                    .filter(|pk| !tracked.contains(pk))
+                    .take(MAX_ADOPTIONS_PER_PASS)
+                    .copied()
+                    .collect();
+
+                // Threads we track that the program no longer owns. The account
+                // notification for a deletion can be missed exactly like any
+                // other, and a tracked-but-deleted thread is dispatched forever
+                // against an account that is gone.
+                let on_chain_set: HashSet<Pubkey> = on_chain.into_iter().collect();
+                let departed: Vec<Pubkey> = tracked
+                    .iter()
+                    .filter(|pk| !on_chain_set.contains(pk))
+                    .copied()
+                    .collect();
+
+                for pk in &departed {
+                    state.sched.remove(pk);
+                    state.load_balancer.remove_thread(pk).await;
+                }
+
+                if missing.is_empty() && departed.is_empty() {
+                    debug!("Reconciliation: {} tracked, in sync", tracked.len());
+                } else {
+                    // Not debug. Every one of these is a thread the subscription
+                    // should have delivered and did not — the count is the only
+                    // signal that ingest is dropping updates.
+                    warn!(
+                        "Reconciliation: adopting {} untracked thread(s), dropping {} deleted, {} tracked",
+                        missing.len(),
+                        departed.len(),
+                        tracked.len()
+                    );
+                }
+
+                if !missing.is_empty() {
+                    self.spawn_refetch(myself, state, missing);
+                }
+                self.rearm_timer(state);
+                Ok(())
+            }
+            StagingMessage::ReconcileFailed => {
+                state.reconcile_in_flight = false;
                 Ok(())
             }
             StagingMessage::SetProcessorRef(processor_ref) => {
@@ -318,9 +398,14 @@ impl StagingActor {
             return;
         };
 
-        state
-            .sched
-            .upsert(pubkey, kind, due, thread.exec_count, thread.paused);
+        state.sched.upsert(
+            pubkey,
+            kind,
+            due,
+            thread.exec_count,
+            thread.paused,
+            retry_policy(thread, due),
+        );
     }
 
     /// Handle a clock tick: advance the projection, run maintenance, and
@@ -534,6 +619,21 @@ impl StagingActor {
                 state.clock_ref.anchor_ts_projected(),
             );
 
+            // A thread sitting in Due well past its deadline should have been
+            // dispatched and was not. Silent until it happens, since a healthy
+            // scheduler is a few hundred milliseconds late at most.
+            if let Some((pk, late)) = state
+                .sched
+                .most_overdue(Kind::Time, state.current(Kind::Time))
+            {
+                if late >= OVERDUE_WARN_SECS {
+                    warn!(
+                        "Thread {} is {}s past its trigger deadline and still undispatched",
+                        pk, late
+                    );
+                }
+            }
+
             // Only worth reporting when more than one datasource is configured —
             // with a single endpoint it wins every race by definition.
             if state.resources.ingest_stats.is_racing() {
@@ -557,6 +657,14 @@ impl StagingActor {
             state.last_prune = now;
             let known: HashSet<Pubkey> = state.sched.tracked().collect();
             state.load_balancer.prune_stale(&known).await;
+        }
+
+        if now.duration_since(state.last_reconcile) >= RECONCILE_INTERVAL
+            && !state.reconcile_in_flight
+        {
+            state.last_reconcile = now;
+            state.reconcile_in_flight = true;
+            self.spawn_reconcile(myself.clone(), state);
         }
 
         // Threads whose post-execution account update never arrived. Batched
@@ -595,6 +703,42 @@ impl StagingActor {
         }
 
         self.spawn_refetch(myself, state, pubkeys);
+    }
+
+    /// List every thread the program owns, off the actor loop.
+    ///
+    /// Pubkeys only — the answer is almost always "nothing is missing", and
+    /// paying for account data to learn that would make this the most expensive
+    /// thing the scheduler does. Bodies are fetched only for the difference.
+    fn spawn_reconcile(&self, myself: ActorRef<StagingMessage>, state: &StagingState) {
+        let rpc = state.resources.rpc_client.clone();
+        let program_id = state.resources.program_id;
+
+        tokio::spawn(async move {
+            let filters = vec![serde_json::json!({
+                "memcmp": {
+                    "offset": 0,
+                    "bytes": bs58::encode(Thread::DISCRIMINATOR).into_string()
+                }
+            })];
+
+            match rpc
+                .get_program_account_keys(&program_id, Some(filters))
+                .await
+            {
+                Ok(keys) => {
+                    let _ = myself.send_message(StagingMessage::Reconciled(keys));
+                }
+                Err(e) => {
+                    // Clear the in-flight flag by reporting an empty scan would
+                    // be wrong — it would look like every thread was deleted.
+                    // Send nothing and let the next interval retry; the flag is
+                    // cleared here instead.
+                    warn!("Reconciliation scan failed, retrying next interval: {}", e);
+                    let _ = myself.send_message(StagingMessage::ReconcileFailed);
+                }
+            }
+        });
     }
 
     /// Fetch fresh state for a set of threads off the actor loop.
@@ -680,6 +824,49 @@ fn kind_and_due(thread: &Thread) -> Option<(Kind, u64)> {
     }
 }
 
+/// How persistently this thread's pending trigger should be retried.
+///
+/// `window_end` is derived from the trigger definition rather than read from the
+/// account, and that is the point: `schedule.next` only advances when an
+/// execution lands, so a thread whose trigger never fires has no "next moment"
+/// recorded anywhere on-chain. Computing it here is what lets a skippable thread
+/// move on from a moment it could not execute.
+fn retry_policy(thread: &Thread, due: u64) -> Retry {
+    match &thread.trigger {
+        Trigger::Interval {
+            seconds, skippable, ..
+        } => Retry {
+            skippable: *skippable,
+            window_end: (*seconds > 0).then(|| due.saturating_add(*seconds as u64)),
+        },
+        Trigger::Cron {
+            schedule,
+            skippable,
+            ..
+        } => Retry {
+            skippable: *skippable,
+            window_end: next_cron_after(schedule, due),
+        },
+        // One-shot triggers have no later moment to defer to, so there is
+        // nothing to skip to and no window to bound retries by.
+        _ => Retry::default(),
+    }
+}
+
+/// The first cron occurrence strictly after `after`, as a unix timestamp.
+///
+/// Returns `None` on an unparsable schedule — the thread program parses with
+/// `.unwrap()`, but an executor must not panic on state someone else wrote.
+fn next_cron_after(schedule: &str, after: u64) -> Option<u64> {
+    use std::str::FromStr;
+
+    let after = chrono::DateTime::from_timestamp(after as i64, 0)?;
+    antegen_cron::Schedule::from_str(schedule)
+        .ok()?
+        .next_after(&after)
+        .map(|dt| dt.timestamp().max(0) as u64)
+}
+
 /// Just the due value, for change detection.
 fn due_value(thread: &Thread) -> Option<u64> {
     kind_and_due(thread).map(|(_, due)| due)
@@ -736,4 +923,107 @@ enum AccountType {
     Clock,
     Deleted,
     Other,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The window is derived from the trigger definition, not from the account.
+    /// `schedule.next` only advances when an execution lands, so a thread whose
+    /// trigger never fires has no next moment recorded anywhere on-chain — this
+    /// is what lets a skippable thread move on from a moment it could not run.
+    #[test]
+    fn interval_window_is_one_period_past_the_deadline() {
+        let thread = thread_with(Trigger::Interval {
+            seconds: 60,
+            skippable: true,
+            jitter: 0,
+        });
+
+        let policy = retry_policy(&thread, 1_000);
+        assert!(policy.skippable);
+        assert_eq!(policy.window_end, Some(1_060));
+    }
+
+    /// A zero-second interval has no next moment to advance to; bounding retries
+    /// by a window equal to the deadline would abandon every attempt instantly.
+    #[test]
+    fn zero_interval_has_no_window() {
+        let thread = thread_with(Trigger::Interval {
+            seconds: 0,
+            skippable: true,
+            jitter: 0,
+        });
+
+        assert_eq!(retry_policy(&thread, 1_000).window_end, None);
+    }
+
+    #[test]
+    fn cron_window_is_the_next_occurrence() {
+        // Every hour on the hour.
+        let thread = thread_with(Trigger::Cron {
+            schedule: "0 0 * * * * *".to_string(),
+            skippable: false,
+            jitter: 0,
+        });
+
+        let policy = retry_policy(&thread, 3_600);
+        assert!(!policy.skippable);
+        assert_eq!(policy.window_end, Some(7_200));
+    }
+
+    /// The thread program parses cron with `.unwrap()`. An executor reads state
+    /// someone else wrote, so it must degrade instead of panicking.
+    #[test]
+    fn an_unparsable_cron_yields_no_window() {
+        let thread = thread_with(Trigger::Cron {
+            schedule: "not a cron schedule".to_string(),
+            skippable: true,
+            jitter: 0,
+        });
+
+        assert_eq!(retry_policy(&thread, 1_000).window_end, None);
+    }
+
+    /// One-shot triggers carry no `skippable` field and have no later moment.
+    #[test]
+    fn one_shot_triggers_are_never_skippable() {
+        for trigger in [
+            Trigger::Timestamp {
+                unix_ts: 1_000,
+                jitter: 0,
+            },
+            Trigger::Immediate { jitter: 0 },
+            Trigger::Slot { slot: 42 },
+            Trigger::Epoch { epoch: 7 },
+        ] {
+            let policy = retry_policy(&thread_with(trigger), 1_000);
+            assert!(!policy.skippable);
+            assert_eq!(policy.window_end, None);
+        }
+    }
+
+    fn thread_with(trigger: Trigger) -> Thread {
+        Thread {
+            version: 1,
+            bump: 255,
+            authority: Pubkey::new_unique(),
+            id: vec![1],
+            name: String::new(),
+            created_at: 0,
+            trigger,
+            schedule: Schedule::Timed { prev: 0, next: 0 },
+            fiber_ids: vec![0],
+            fiber_cursor: 0,
+            fiber_next_id: 1,
+            fiber_signal: Default::default(),
+            paused: false,
+            exec_count: 0,
+            last_executor: Pubkey::new_unique(),
+            nonce_account: Pubkey::default(),
+            last_nonce: String::new(),
+            close_fiber: vec![],
+        }
+    }
 }

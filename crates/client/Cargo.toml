@@ -11,6 +11,7 @@ keywords = ["solana", "automation", "executor"]
 readme = "../../README.md"
 
 [dependencies]
+antegen-cron = { workspace = true }
 antegen-thread-program = { workspace = true }
 # Internal crates
 solana-sdk = { workspace = true }

@@ -74,6 +74,14 @@ pub enum StagingMessage {
     /// is genuinely gone; failures are simply omitted so the thread stays
     /// tracked.
     Refetched(Vec<(Pubkey, Option<antegen_thread_program::state::Thread>)>),
+    /// Every thread pubkey the program currently owns, from the periodic
+    /// reconciliation scan. Compared against what is tracked to find threads the
+    /// subscription never delivered.
+    Reconciled(Vec<Pubkey>),
+    /// The reconciliation scan failed. Distinct from `Reconciled(vec![])`, which
+    /// would mean the program genuinely owns no threads and every tracked thread
+    /// should be dropped.
+    ReconcileFailed,
     ThreadCompleted {
         thread_pubkey: Pubkey,
         outcome: Outcome,

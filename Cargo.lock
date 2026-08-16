@@ -541,6 +541,7 @@ name = "antegen-client"
 version = "5.2.0"
 dependencies = [
  "anchor-lang",
+ "antegen-cron",
  "antegen-thread-program",
  "antegen-ws",
  "anyhow",
