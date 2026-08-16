@@ -4,6 +4,10 @@
   "include-component-in-tag": true,
   "include-v-in-tag": true,
   "separate-pull-requests": false,
+  "draft": true,
+  "plugins": [
+    "cargo-workspace"
+  ],
   "packages": {
     "crates/cron": {
       "release-type": "rust",

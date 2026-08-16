@@ -548,3 +548,69 @@ jobs:
           tag_name: ${{ needs.release-please.outputs.geyser_tag }}
           files: artifacts/*
           append_body: false
+
+  # -----------------------------------------------------------------------
+  # Stage 6: Promote the drafts.
+  #
+  # release-please creates every release as a draft, and GitHub does not create
+  # the git tag for a draft release until it is published. So until this job
+  # runs there is no tag, nothing public, and nothing a consumer can find —
+  # which is the point. Three consecutive releases tagged versions that were
+  # never published to crates.io and never had a binary built, and because
+  # release-please treats its manifest as the source of truth, those versions
+  # were then considered released forever and never retried.
+  #
+  # Anything that fails upstream leaves the drafts in place: no tag, no public
+  # release, nothing half-shipped. Re-running the workflow retries, and the
+  # publish sweep skips what is already on crates.io, so retries are safe.
+  # -----------------------------------------------------------------------
+  promote:
+    name: Promote drafts to releases
+    runs-on: ubuntu-22.04
+    needs:
+      [release-please, verifiable-build, publish-crates, attach-cli, attach-geyser]
+    if: |
+      always() &&
+      needs.release-please.outputs.releases_created == 'true' &&
+      needs.publish-crates.result == 'success' &&
+      needs.verifiable-build.result != 'failure' &&
+      needs.verifiable-build.result != 'cancelled' &&
+      needs.attach-cli.result != 'failure' &&
+      needs.attach-cli.result != 'cancelled' &&
+      needs.attach-geyser.result != 'failure' &&
+      needs.attach-geyser.result != 'cancelled'
+    permissions:
+      contents: write
+    steps:
+      - name: Publish each drafted release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAGS: >-
+            ${{ needs.release-please.outputs.cron_tag }}
+            ${{ needs.release-please.outputs.ws_tag }}
+            ${{ needs.release-please.outputs.client_tag }}
+            ${{ needs.release-please.outputs.thread_tag }}
+            ${{ needs.release-please.outputs.fiber_tag }}
+            ${{ needs.release-please.outputs.cli_core_tag }}
+            ${{ needs.release-please.outputs.cli_tag }}
+            ${{ needs.release-please.outputs.geyser_tag }}
+        run: |
+          set -euo pipefail
+
+          for tag in $TAGS; do
+            # A draft release has no git tag yet, so the by-tag lookup endpoint
+            # cannot see it. Find it by tag_name across all releases instead.
+            id="$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+              --jq ".[] | select(.tag_name == \"${tag}\") | .id" | head -1)"
+
+            if [ -z "$id" ]; then
+              echo "::error::no release found for ${tag}"
+              exit 1
+            fi
+
+            echo "Publishing ${tag} (release ${id})"
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${id}" \
+              -F draft=false >/dev/null
+          done
+
+          echo "Promoted: ${TAGS}"
