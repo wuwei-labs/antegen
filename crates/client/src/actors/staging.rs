@@ -1,70 +1,118 @@
 //! Staging Actor
 //!
-//! The StagingActor tracks thread triggers and maintains priority queues (time/slot/epoch)
-//! for thread scheduling. On ClockTick, it evaluates which threads are ready and pushes
-//! pubkeys to the ProcessorFactory (which fetches full Thread data from cache).
+//! Owns discovery — which threads exist — and the I/O around scheduling them:
+//! the mailbox, the timer, dispatch to the processor, and the RPC calls that
+//! keep the tracked set honest. When each thread next runs is decided by
+//! [`crate::actors::scheduler::Scheduler`], which is pure and unit-tested.
 //!
-//! Key design: StagingActor only tracks trigger metadata, NOT full Thread data.
-//! The cache is the single source of truth for account data.
+//! Two things drive dispatch:
+//! - a timer armed on the earliest pending time trigger, projected onto the local
+//!   clock by [`ClockRef`], which is what keeps firing off the WebSocket's
+//!   critical path; and
+//! - clock ticks, which advance the projection and drive slot/epoch triggers.
+//!
+//! Only trigger metadata is tracked here. The cache remains the single source of
+//! truth for account data.
 
-use crate::actors::messages::{
-    CompletionReason, ProcessorMessage, ReadyThread, ScheduledThread, StagingMessage, StagingStatus,
-};
+use crate::actors::messages::{ProcessorMessage, ReadyThread, StagingMessage, StagingStatus};
+use crate::actors::processor::LATENCY_TARGET;
+use crate::actors::scheduler::{Dispatched, Kind, Outcome, Retry, Scheduler};
+use crate::clockref::ClockRef;
 use crate::config::ClientConfig;
 use crate::load_balancer::LoadBalancer;
 use crate::resources::SharedResources;
-use anchor_lang::AccountDeserialize;
+use crate::trace::ExecTrace;
+use anchor_lang::{AccountDeserialize, Discriminator};
 use antegen_thread_program::state::{Schedule, Thread, Trigger};
-use anyhow::Result;
-use dashmap::DashSet;
-use log::{debug, info, trace, warn};
+use log::{debug, info, warn};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use solana_sdk::{clock::Clock, pubkey::Pubkey};
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::HashSet;
 use std::error::Error;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use std::time::{Duration, Instant};
+use tokio::sync::{mpsc, watch};
+
+/// How often the load balancer's tracking map is pruned of dead threads.
+const PRUNE_INTERVAL: Duration = Duration::from_secs(300);
+
+/// How often the scheduler heartbeat is logged.
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Cap on cache-eviction refetches issued at once.
+const MAX_EVICTIONS_PER_BATCH: usize = 32;
+
+/// How often the tracked set is reconciled against what the program actually
+/// owns on-chain.
+///
+/// Every other recovery path — the parked watchdog, the stale-parked refresh,
+/// the in-flight reclaim — only rescues threads that are *already tracked*. A
+/// thread the subscription never delivered, or one dropped by a failed refetch,
+/// is invisible to all of them. Backfill is the only thing that discovers
+/// threads, and it runs on reconnect alone, so a node whose socket stays healthy
+/// for days never looks again. This is the pass that closes that hole.
+const RECONCILE_INTERVAL: Duration = Duration::from_secs(300);
+
+/// How far past its deadline a still-undispatched thread must be before the
+/// heartbeat calls it out. Comfortably beyond the stall watchdog and the
+/// load-balancer takeover delay, so ordinary contention stays quiet.
+const OVERDUE_WARN_SECS: u64 = 300;
+
+/// Cap on threads adopted from a single reconciliation pass, so a first scan
+/// against a large program cannot dump thousands of refetches onto the RPC pool
+/// the execution path is using. The remainder is picked up next pass.
+const MAX_ADOPTIONS_PER_PASS: usize = 64;
 
 #[derive(Default)]
 pub struct StagingActor;
 
-/// Lightweight trigger info for a thread (only what StagingActor needs)
-#[derive(Debug, Clone)]
-struct TrackedThread {
-    exec_count: u64,
-    schedule: Schedule,
-    paused: bool,
-}
-
 pub struct StagingState {
-    // Lightweight trigger tracking (exec_count only, NOT full Thread data)
-    // Cache is the source of truth for account data
-    tracked_threads: HashMap<Pubkey, TrackedThread>,
+    /// Scheduling state: what is tracked, when it is due, and its phase.
+    sched: Scheduler,
 
-    // Priority queues (min-heap via Reverse)
-    time_queue: Arc<Mutex<BinaryHeap<Reverse<ScheduledThread>>>>,
-    slot_queue: Arc<Mutex<BinaryHeap<Reverse<ScheduledThread>>>>,
-    epoch_queue: Arc<Mutex<BinaryHeap<Reverse<ScheduledThread>>>>,
+    /// Maps on-chain time onto the local monotonic clock, so a trigger deadline
+    /// can be expressed as a local instant.
+    clock_ref: ClockRef,
 
-    // Deduplication tracking
-    queued_threads: DashSet<Pubkey>, // Threads already pushed to ProcessorFactory
+    /// Last clock values seen, used to evaluate slot and epoch triggers and to
+    /// place watchdogs in the right units.
+    last_slot: u64,
+    last_epoch: u64,
 
-    // Clock deduplication (handle multiple datasources sending same clock)
-    // Only track slot since slots are monotonically increasing
+    /// Clock dedup. Only an exact repeat is dropped — see `handle_clock_tick`.
     last_processed_slot: u64,
 
-    // Communication
+    /// Periodic maintenance, gated on elapsed time rather than on slot numbers.
+    /// A `slot % N` gate silently never fires if that slot is skipped or its
+    /// tick is dropped.
+    last_prune: Instant,
+    last_heartbeat: Instant,
+    last_reconcile: Instant,
+    /// Guards against a slow scan stacking passes on top of each other.
+    reconcile_in_flight: bool,
+
     processor_ref: Option<ActorRef<ProcessorMessage>>,
-
-    // Shared resources for RPC access
     resources: SharedResources,
-
-    // Load balancer for cleanup on thread deletion
     load_balancer: Arc<LoadBalancer>,
 
-    // Cache eviction receiver - threads to refetch after TTL expiry
+    /// Cache eviction receiver - threads to refetch after TTL expiry
     eviction_rx: mpsc::UnboundedReceiver<Pubkey>,
+
+    /// Drives the single scheduling timer. Holds the local instant at which the
+    /// earliest pending time trigger is projected to become due.
+    timer_tx: watch::Sender<Option<Instant>>,
+}
+
+impl StagingState {
+    /// Present value of a kind's clock, for placing watchdogs and evaluating
+    /// readiness.
+    fn current(&self, kind: Kind) -> u64 {
+        match kind {
+            Kind::Time => self.clock_ref.anchor_ts_projected().max(0) as u64,
+            Kind::Slot => self.last_slot,
+            Kind::Epoch => self.last_epoch,
+        }
+    }
 }
 
 impl Actor for StagingActor {
@@ -79,69 +127,144 @@ impl Actor for StagingActor {
 
     async fn pre_start(
         &self,
-        _myself: ActorRef<Self::Msg>,
+        myself: ActorRef<Self::Msg>,
         (_config, resources, load_balancer, eviction_rx): Self::Arguments,
     ) -> Result<Self::State, Box<dyn Error + Send + Sync>> {
         log::debug!("StagingActor starting...");
         log::debug!("Thread program ID: {}", resources.program_id);
 
+        let (timer_tx, timer_rx) = watch::channel(None);
+        spawn_scheduling_timer(myself.clone(), timer_rx);
+
+        let now = Instant::now();
         Ok(StagingState {
-            tracked_threads: HashMap::new(),
-            time_queue: Arc::new(Mutex::new(BinaryHeap::new())),
-            slot_queue: Arc::new(Mutex::new(BinaryHeap::new())),
-            epoch_queue: Arc::new(Mutex::new(BinaryHeap::new())),
-            queued_threads: DashSet::new(),
+            sched: Scheduler::new(),
+            clock_ref: ClockRef::new(),
+            last_slot: 0,
+            last_epoch: 0,
             last_processed_slot: 0,
+            last_prune: now,
+            last_heartbeat: now,
+            // Not `now`: the datasource backfills on connect, so a scan in the
+            // first interval would duplicate it. Start the clock so the first
+            // reconciliation lands one interval after startup.
+            last_reconcile: now,
+            reconcile_in_flight: false,
             processor_ref: None, // Will be set by RootSupervisor after processor spawns
             resources,
             load_balancer,
             eviction_rx,
+            timer_tx,
         })
     }
 
     async fn handle(
         &self,
-        _myself: ActorRef<Self::Msg>,
+        myself: ActorRef<Self::Msg>,
         message: Self::Msg,
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
         match message {
             StagingMessage::AccountUpdate(update) => {
                 self.handle_account_update(state, update).await?;
+                // An update may have introduced an earlier deadline than the one
+                // the timer is currently armed on.
+                self.rearm_timer(state);
                 Ok(())
             }
             StagingMessage::ClockTick(clock) => {
-                self.handle_clock_tick(state, clock).await?;
+                self.handle_clock_tick(myself, state, clock).await?;
+                Ok(())
+            }
+            StagingMessage::Fire => {
+                self.handle_fire(state);
+                self.rearm_timer(state);
                 Ok(())
             }
             StagingMessage::ThreadCompleted {
                 thread_pubkey,
-                reason,
+                outcome,
+                exec_count,
             } => {
-                // Remove from queued_threads to allow re-execution
-                state.queued_threads.remove(&thread_pubkey);
+                let kind = state
+                    .sched
+                    .get(&thread_pubkey)
+                    .map(|e| e.kind)
+                    .unwrap_or(Kind::Time);
+                let current = state.current(kind);
+                state
+                    .sched
+                    .complete(&thread_pubkey, outcome, exec_count, current, Instant::now());
 
-                match reason {
-                    CompletionReason::Skipped => {
-                        // Load balancer skipped - re-schedule for next ClockTick evaluation
-                        debug!(
-                            "Thread {} skipped by load balancer, re-scheduling",
-                            thread_pubkey
-                        );
-
-                        // Fetch from cache and re-add to priority queue
-                        if let Some(cached) = state.resources.cache.get(&thread_pubkey).await {
-                            if let Ok(thread) = Thread::try_deserialize(&mut cached.data.as_slice())
-                            {
-                                self.schedule_thread(state, thread_pubkey, &thread).await?;
-                            }
+                debug!("Thread {} completed: {:?}", thread_pubkey, outcome);
+                self.rearm_timer(state);
+                Ok(())
+            }
+            StagingMessage::Refetched(results) => {
+                for (pubkey, thread) in results {
+                    match thread {
+                        Some(thread) => {
+                            self.track(state, pubkey, &thread);
+                        }
+                        None => {
+                            debug!("Thread {} no longer exists, dropping tracking", pubkey);
+                            state.sched.remove(&pubkey);
+                            state.load_balancer.remove_thread(&pubkey).await;
                         }
                     }
-                    CompletionReason::Executed => {
-                        // Normal completion - will be re-scheduled when account update arrives
-                        debug!("Thread {} executed, removed from queued set", thread_pubkey);
-                    }
                 }
+                self.rearm_timer(state);
+                Ok(())
+            }
+            StagingMessage::Reconciled(on_chain) => {
+                state.reconcile_in_flight = false;
+
+                let tracked: HashSet<Pubkey> = state.sched.tracked().collect();
+                let missing: Vec<Pubkey> = on_chain
+                    .iter()
+                    .filter(|pk| !tracked.contains(pk))
+                    .take(MAX_ADOPTIONS_PER_PASS)
+                    .copied()
+                    .collect();
+
+                // Threads we track that the program no longer owns. The account
+                // notification for a deletion can be missed exactly like any
+                // other, and a tracked-but-deleted thread is dispatched forever
+                // against an account that is gone.
+                let on_chain_set: HashSet<Pubkey> = on_chain.into_iter().collect();
+                let departed: Vec<Pubkey> = tracked
+                    .iter()
+                    .filter(|pk| !on_chain_set.contains(pk))
+                    .copied()
+                    .collect();
+
+                for pk in &departed {
+                    state.sched.remove(pk);
+                    state.load_balancer.remove_thread(pk).await;
+                }
+
+                if missing.is_empty() && departed.is_empty() {
+                    debug!("Reconciliation: {} tracked, in sync", tracked.len());
+                } else {
+                    // Not debug. Every one of these is a thread the subscription
+                    // should have delivered and did not — the count is the only
+                    // signal that ingest is dropping updates.
+                    warn!(
+                        "Reconciliation: adopting {} untracked thread(s), dropping {} deleted, {} tracked",
+                        missing.len(),
+                        departed.len(),
+                        tracked.len()
+                    );
+                }
+
+                if !missing.is_empty() {
+                    self.spawn_refetch(myself, state, missing);
+                }
+                self.rearm_timer(state);
+                Ok(())
+            }
+            StagingMessage::ReconcileFailed => {
+                state.reconcile_in_flight = false;
                 Ok(())
             }
             StagingMessage::SetProcessorRef(processor_ref) => {
@@ -151,11 +274,11 @@ impl Actor for StagingActor {
             }
             StagingMessage::QueryStatus(tx) => {
                 let status = StagingStatus {
-                    total_threads: state.tracked_threads.len(),
-                    queued_threads: state.queued_threads.len(),
-                    time_queue_size: state.time_queue.lock().await.len(),
-                    slot_queue_size: state.slot_queue.lock().await.len(),
-                    epoch_queue_size: state.epoch_queue.lock().await.len(),
+                    total_threads: state.sched.len(),
+                    in_flight: state.sched.in_flight(),
+                    time_queue_size: state.sched.len_of(Kind::Time),
+                    slot_queue_size: state.sched.len_of(Kind::Slot),
+                    epoch_queue_size: state.sched.len_of(Kind::Epoch),
                 };
                 let _ = tx.send(status);
                 Ok(())
@@ -173,108 +296,85 @@ impl Actor for StagingActor {
         state: &mut Self::State,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         log::info!(
-            "StagingActor stopped. {} threads tracked, {} queued",
-            state.tracked_threads.len(),
-            state.queued_threads.len()
+            "StagingActor stopped. {} threads tracked, {} in flight",
+            state.sched.len(),
+            state.sched.in_flight()
         );
         Ok(())
     }
 }
 
 impl StagingActor {
-    /// Handle incoming account update
+    /// Handle incoming account update.
     ///
-    /// NOTE: Data has already been stored in cache by datasource.
-    /// We only extract trigger info for scheduling here.
+    /// The data is already in the cache; only trigger metadata is extracted here.
     async fn handle_account_update(
         &self,
         state: &mut StagingState,
         update: crate::types::AccountUpdate,
     ) -> Result<(), ActorProcessingErr> {
-        // Classify the account type and extract trigger info
         match self.classify_account(&update.data, &update.pubkey) {
             AccountType::Thread(thread) => {
-                // Check if we already have a newer or same version
-                if let Some(existing) = state.tracked_threads.get(&update.pubkey) {
-                    // Skip if nothing changed (same exec_count AND same schedule)
-                    if thread.exec_count <= existing.exec_count
-                        && thread.schedule == existing.schedule
-                    {
-                        return Ok(());
-                    }
+                // Cancel an in-flight worker only when the *schedule* changed.
+                // An advancing exec_count is normal progress from our own
+                // worker's continuation batches; cancelling on that would cause a
+                // cancel-restart loop and drain the crank wallet.
+                //
+                // Compared against `original_due`, not `due`: watchdogs and
+                // backoff move `due`, so comparing that would report a schedule
+                // change on every retry and reintroduce exactly that loop.
+                let schedule_changed = state
+                    .sched
+                    .get(&update.pubkey)
+                    .is_some_and(|e| due_value(&thread).is_some_and(|next| next != e.original_due));
 
-                    // Log what changed
-                    if thread.schedule != existing.schedule {
-                        debug!(
-                            "Thread {} schedule changed: {:?} -> {:?}",
-                            update.pubkey, existing.schedule, thread.schedule
-                        );
-                    }
-                    if thread.exec_count > existing.exec_count {
-                        debug!(
-                            "Thread {} exec_count updated: {} -> {}",
-                            update.pubkey, existing.exec_count, thread.exec_count
-                        );
-                    }
-
-                    // Only cancel active worker when schedule changes (external mutation).
-                    // Exec count increase is normal progress from our own worker's
-                    // continuation batches — cancelling would cause an infinite
-                    // cancel-restart loop and drain the crank wallet.
-                    if state.queued_threads.contains(&update.pubkey)
-                        && thread.schedule != existing.schedule
-                    {
-                        state.queued_threads.remove(&update.pubkey);
-                        // Send cancel message to ProcessorFactory
-                        if let Some(ref processor_ref) = state.processor_ref {
-                            if let Err(e) = processor_ref
-                                .send_message(ProcessorMessage::CancelThread(update.pubkey))
-                            {
-                                warn!(
-                                    "Failed to send cancel for thread {}: {:?}",
-                                    update.pubkey, e
-                                );
-                            } else {
-                                info!(
-                                    "Cancelled thread {} due to schedule change: {:?} -> {:?}",
-                                    update.pubkey, existing.schedule, thread.schedule
-                                );
-                            }
+                if schedule_changed
+                    && state
+                        .sched
+                        .get(&update.pubkey)
+                        .is_some_and(|e| e.is_in_flight())
+                {
+                    if let Some(ref processor_ref) = state.processor_ref {
+                        if let Err(e) = processor_ref
+                            .send_message(ProcessorMessage::CancelThread(update.pubkey))
+                        {
+                            warn!(
+                                "Failed to send cancel for thread {}: {:?}",
+                                update.pubkey, e
+                            );
+                        } else {
+                            info!("Cancelled thread {} due to schedule change", update.pubkey);
                         }
                     }
-                } else {
+                }
+
+                if !state.sched.contains(&update.pubkey) {
                     info!(
                         "Thread {} discovered (exec_count={})",
                         update.pubkey, thread.exec_count
                     );
                 }
 
-                // Track exec_count, schedule, and paused state (cache has full data)
-                state.tracked_threads.insert(
+                // Ingest latency: frame decoded off the socket -> thread
+                // scheduled. Measured separately from execution latency because
+                // it is bounded by the actor loop, not by the trigger deadline.
+                // A large value here means this actor was blocked.
+                log::debug!(
+                    target: LATENCY_TARGET,
+                    "ingest thread={} slot={} ingest_ms={}",
                     update.pubkey,
-                    TrackedThread {
-                        exec_count: thread.exec_count,
-                        schedule: thread.schedule.clone(),
-                        paused: thread.paused,
-                    },
+                    update.slot,
+                    update.received_at.elapsed().as_millis()
                 );
 
-                // Skip scheduling paused threads — they'll be scheduled when unpaused
-                if thread.paused {
-                    debug!("Thread {} is paused, skipping scheduling", update.pubkey);
-                    return Ok(());
-                }
-
-                // Schedule in appropriate priority queue
-                self.schedule_thread(state, update.pubkey, &thread).await?;
+                self.track(state, update.pubkey, &thread);
             }
             AccountType::Clock => {
-                // Clock updates should come via ClockTick message
+                // Clock updates arrive as ClockTick, not as account updates.
             }
             AccountType::Deleted => {
                 debug!("Thread {} deleted", update.pubkey);
-                state.tracked_threads.remove(&update.pubkey);
-                state.queued_threads.remove(&update.pubkey);
+                state.sched.remove(&update.pubkey);
                 state.load_balancer.remove_thread(&update.pubkey).await;
             }
             AccountType::Other => {
@@ -285,427 +385,397 @@ impl StagingActor {
         Ok(())
     }
 
-    /// Handle clock tick - evaluate ready threads and push to processor
+    /// Record a thread's schedule, replacing any previous entry in place.
+    fn track(&self, state: &mut StagingState, pubkey: Pubkey, thread: &Thread) {
+        let Some((kind, due)) = kind_and_due(thread) else {
+            // `Trigger::Account` is implemented on-chain but has no off-chain
+            // watcher, so such a thread would never be dispatched. Warn rather
+            // than tracking something that can never fire.
+            warn!(
+                "Thread {} has an unsupported trigger for off-chain scheduling: {:?}",
+                pubkey, thread.trigger
+            );
+            return;
+        };
+
+        state.sched.upsert(
+            pubkey,
+            kind,
+            due,
+            thread.exec_count,
+            thread.paused,
+            retry_policy(thread, due),
+        );
+    }
+
+    /// Handle a clock tick: advance the projection, run maintenance, and
+    /// evaluate the trigger kinds that are tick-driven.
     async fn handle_clock_tick(
         &self,
+        myself: ActorRef<StagingMessage>,
         state: &mut StagingState,
         clock: Clock,
     ) -> Result<(), ActorProcessingErr> {
-        // Dedup: Drop stale clocks (slots move forward only)
-        if clock.slot <= state.last_processed_slot {
+        let now = Instant::now();
+
+        // Anchor local time to on-chain time before the dedup, so every tick
+        // contributes to the projection even if it doesn't drive readiness.
+        // Stamping here rather than at the socket is deliberate: any delay
+        // getting into this actor is real scheduling delay, and folding it into
+        // the anchor is what makes `tick_ms` report it.
+        //
+        // `observe` also rejects a datasource that has fallen far behind, which
+        // a plain high-water mark cannot distinguish from a fork.
+        if !state.clock_ref.observe(&clock, now) {
             debug!(
-                "Dropping stale clock tick (slot={} <= last_processed={})",
-                clock.slot, state.last_processed_slot
+                "Dropping clock tick from a lagging source (slot={}, high={})",
+                clock.slot,
+                state.clock_ref.high_slot()
             );
             return Ok(());
         }
 
-        // Update last processed slot
+        // Dedup: skip only an exact repeat of the slot we just handled.
+        //
+        // At `processed` commitment slots are not monotone — they can be skipped
+        // or rolled back — so a strict high-water mark would let one forked-ahead
+        // tick blackhole every subsequent tick from the canonical chain until it
+        // caught up. Dispatch is idempotent (an entry in flight is not
+        // re-dispatched), so processing an out-of-order tick is harmless where
+        // dropping a real one is not.
+        if clock.slot == state.last_processed_slot {
+            return Ok(());
+        }
         state.last_processed_slot = clock.slot;
+        state.last_slot = state.last_slot.max(clock.slot);
+        state.last_epoch = state.last_epoch.max(clock.epoch);
 
-        // Periodic heartbeat at INFO level every 100 slots
-        if clock.slot.is_multiple_of(100) {
-            info!(
-                "ClockTick heartbeat: slot={}, tracked={}, queued={}",
-                clock.slot,
-                state.tracked_threads.len(),
-                state.queued_threads.len()
+        self.run_maintenance(myself, state, now).await;
+
+        // Time triggers are normally dispatched by the timer; evaluating them
+        // here too covers the window before the first tick has armed it.
+        let mut ready = self.collect(state, Kind::Time, now);
+        ready.extend(self.collect(state, Kind::Slot, now));
+        ready.extend(self.collect(state, Kind::Epoch, now));
+
+        self.dispatch(state, ready);
+        self.rearm_timer(state);
+
+        Ok(())
+    }
+
+    /// Fire because the projected on-chain clock has reached the earliest
+    /// deadline, rather than because a WebSocket message happened to arrive.
+    ///
+    /// Only time triggers are evaluated: slot and epoch triggers have no
+    /// wall-clock deadline to project, so they stay tick-driven.
+    fn handle_fire(&self, state: &mut StagingState) {
+        let ready = self.collect(state, Kind::Time, Instant::now());
+        self.dispatch(state, ready);
+    }
+
+    /// Take everything of `kind` the chain now considers ready and turn it into
+    /// dispatchable work.
+    fn collect(&self, state: &mut StagingState, kind: Kind, now: Instant) -> Vec<ReadyThread> {
+        let current = state.current(kind);
+        let due = state.sched.take_due(kind, current, now);
+        if due.is_empty() {
+            return Vec::new();
+        }
+
+        due.into_iter()
+            .map(|d| self.to_ready(state, kind, d, current))
+            .collect()
+    }
+
+    fn to_ready(
+        &self,
+        state: &StagingState,
+        kind: Kind,
+        d: Dispatched,
+        current: u64,
+    ) -> ReadyThread {
+        // Only time triggers have a meaningful overdue measure; it drives
+        // load-balancer takeover and on-chain commission decay.
+        let overdue_seconds = if kind == Kind::Time {
+            current as i64 - d.due as i64
+        } else {
+            0
+        };
+
+        let due_ts = d.due as i64;
+        let due_at = if kind == Kind::Time {
+            state.clock_ref.instant_for_ts(due_ts)
+        } else {
+            None
+        };
+
+        ReadyThread {
+            thread_pubkey: d.pubkey,
+            exec_count: d.exec_count,
+            is_overdue: overdue_seconds > 0,
+            overdue_seconds,
+            trace: ExecTrace::new(d.pubkey, d.exec_count, due_ts, due_at),
+        }
+    }
+
+    /// Arm the single scheduling timer on the earliest pending time trigger.
+    ///
+    /// One timer for the whole actor, re-armed whenever the head of the queue
+    /// may have changed — not one timer per thread.
+    fn rearm_timer(&self, state: &StagingState) {
+        let target = state
+            .sched
+            .next_due(Kind::Time)
+            .and_then(|due| state.clock_ref.instant_for_ts(due as i64));
+        let _ = state.timer_tx.send(target);
+    }
+
+    /// Push ready threads to the ProcessorFactory.
+    fn dispatch(&self, state: &mut StagingState, ready_threads: Vec<ReadyThread>) {
+        if ready_threads.is_empty() {
+            return;
+        }
+        info!("Found {} ready threads", ready_threads.len());
+
+        for ready_thread in ready_threads {
+            let Some(ref processor_ref) = state.processor_ref else {
+                warn!(
+                    "ProcessorFactory not initialized yet, returning thread {} to the queue",
+                    ready_thread.thread_pubkey
+                );
+                // Put it back so it is retried rather than silently lost.
+                let kind = state
+                    .sched
+                    .get(&ready_thread.thread_pubkey)
+                    .map(|e| e.kind)
+                    .unwrap_or(Kind::Time);
+                let current = state.current(kind);
+                state.sched.complete(
+                    &ready_thread.thread_pubkey,
+                    Outcome::Retryable,
+                    ready_thread.exec_count,
+                    current,
+                    Instant::now(),
+                );
+                continue;
+            };
+
+            let pubkey = ready_thread.thread_pubkey;
+            let overdue = ready_thread.overdue_seconds;
+            let exec_count = ready_thread.exec_count;
+            if let Err(e) = processor_ref.send_message(ProcessorMessage::ProcessReady(ready_thread))
+            {
+                warn!("Failed to send thread {} to processor: {:?}", pubkey, e);
+                let kind = state
+                    .sched
+                    .get(&pubkey)
+                    .map(|e| e.kind)
+                    .unwrap_or(Kind::Time);
+                let current = state.current(kind);
+                state.sched.complete(
+                    &pubkey,
+                    Outcome::Retryable,
+                    exec_count,
+                    current,
+                    Instant::now(),
+                );
+            } else {
+                info!(
+                    "Pushed thread {} to processor (overdue_seconds={})",
+                    pubkey, overdue
+                );
+            }
+        }
+    }
+
+    /// Periodic upkeep, gated on elapsed time.
+    async fn run_maintenance(
+        &self,
+        myself: ActorRef<StagingMessage>,
+        state: &mut StagingState,
+        now: Instant,
+    ) {
+        // Return anything stuck in flight past its watchdog. A worker that dies
+        // without reporting would otherwise strand its thread.
+        let reclaimed = state.sched.reclaim_stalled(now);
+        if !reclaimed.is_empty() {
+            warn!(
+                "Reclaimed {} thread(s) stalled in flight past the watchdog",
+                reclaimed.len()
             );
         }
 
-        // Periodic load balancer pruning every 1000 slots (~7 minutes)
-        // Removes tracking entries for threads that no longer exist
-        if clock.slot.is_multiple_of(1000) {
-            let known_threads: HashSet<Pubkey> = state.tracked_threads.keys().copied().collect();
-            state.load_balancer.prune_stale(&known_threads).await;
+        if now.duration_since(state.last_heartbeat) >= HEARTBEAT_INTERVAL {
+            state.last_heartbeat = now;
+            info!(
+                "Scheduler heartbeat: slot={}, tracked={}, in_flight={}, due={}, clock_anchor_age_ms={}, anchor_ts={}, projected_ts={}",
+                state.last_slot,
+                state.sched.len(),
+                state.sched.in_flight(),
+                state.sched.count_due(),
+                state.clock_ref.anchor_age().as_millis(),
+                state.clock_ref.anchor_ts(),
+                state.clock_ref.anchor_ts_projected(),
+            );
+
+            // A thread sitting in Due well past its deadline should have been
+            // dispatched and was not. Silent until it happens, since a healthy
+            // scheduler is a few hundred milliseconds late at most.
+            if let Some((pk, late)) = state
+                .sched
+                .most_overdue(Kind::Time, state.current(Kind::Time))
+            {
+                if late >= OVERDUE_WARN_SECS {
+                    warn!(
+                        "Thread {} is {}s past its trigger deadline and still undispatched",
+                        pk, late
+                    );
+                }
+            }
+
+            // Only worth reporting when more than one datasource is configured —
+            // with a single endpoint it wins every race by definition.
+            if state.resources.ingest_stats.is_racing() {
+                for s in state.resources.ingest_stats.snapshot() {
+                    info!(
+                        "ingest endpoint={} clock_win={}% ({}/{}) lag_avg_ms={} lag_max_ms={} account_win={}/{}",
+                        s.endpoint,
+                        s.clock_win_pct(),
+                        s.clocks_won,
+                        s.clocks_seen,
+                        s.clock_lag_avg_ms,
+                        s.clock_lag_max_ms,
+                        s.accounts_won,
+                        s.accounts_seen,
+                    );
+                }
+            }
         }
 
-        // Periodic priority queue compaction every 500 slots (~3.5 minutes)
-        // Removes stale entries where exec_count no longer matches or thread is untracked
-        if clock.slot.is_multiple_of(500) {
-            self.compact_queues(state).await;
+        if now.duration_since(state.last_prune) >= PRUNE_INTERVAL {
+            state.last_prune = now;
+            let known: HashSet<Pubkey> = state.sched.tracked().collect();
+            state.load_balancer.prune_stale(&known).await;
         }
 
-        trace!(
-            "ClockTick: slot={}, epoch={}, timestamp={}",
-            clock.slot,
-            clock.epoch,
-            clock.unix_timestamp
-        );
+        if now.duration_since(state.last_reconcile) >= RECONCILE_INTERVAL
+            && !state.reconcile_in_flight
+        {
+            state.last_reconcile = now;
+            state.reconcile_in_flight = true;
+            self.spawn_reconcile(myself.clone(), state);
+        }
 
-        // Process cache eviction refetches (batch-limited to prevent blocking)
-        // These are threads whose cache entries expired (trigger_time + grace_period)
-        // We refetch them via RPC to ensure they're not lost
-        const MAX_EVICTIONS_PER_TICK: usize = 10;
-        let mut eviction_count = 0;
-        while eviction_count < MAX_EVICTIONS_PER_TICK {
-            let pubkey = match state.eviction_rx.try_recv() {
-                Ok(pk) => pk,
+        // Threads whose post-execution account update never arrived. Batched
+        // and run off the actor loop, same as cache evictions.
+        let stale = state.sched.take_stale_parked(now);
+        if !stale.is_empty() {
+            log::debug!(
+                "Refreshing {} parked thread(s) with no account update",
+                stale.len()
+            );
+            self.spawn_refetch(myself.clone(), state, stale);
+        }
+
+        self.drain_evictions(myself, state);
+    }
+
+    /// Refetch threads whose cache entries expired.
+    ///
+    /// Runs off the actor loop. Doing this inline meant up to ten sequential RPC
+    /// round trips inside the message handler, freezing every clock tick and
+    /// account update for their duration — and the ticks that queued up behind
+    /// were then discarded by the dedup.
+    ///
+    /// With the never-pop invariant this is belt-and-braces: a thread is already
+    /// re-armed on a watchdog, so a missed refetch delays rather than strands it.
+    fn drain_evictions(&self, myself: ActorRef<StagingMessage>, state: &mut StagingState) {
+        let mut pubkeys = Vec::new();
+        while pubkeys.len() < MAX_EVICTIONS_PER_BATCH {
+            match state.eviction_rx.try_recv() {
+                Ok(pk) => pubkeys.push(pk),
                 Err(_) => break,
-            };
-            eviction_count += 1;
-            debug!("Processing cache eviction refetch for thread {}", pubkey);
-            match state
-                .resources
-                .cache
-                .get_thread_or_fetch(&pubkey, &state.resources.rpc_client)
+            }
+        }
+        if pubkeys.is_empty() {
+            return;
+        }
+
+        self.spawn_refetch(myself, state, pubkeys);
+    }
+
+    /// List every thread the program owns, off the actor loop.
+    ///
+    /// Pubkeys only — the answer is almost always "nothing is missing", and
+    /// paying for account data to learn that would make this the most expensive
+    /// thing the scheduler does. Bodies are fetched only for the difference.
+    fn spawn_reconcile(&self, myself: ActorRef<StagingMessage>, state: &StagingState) {
+        let rpc = state.resources.rpc_client.clone();
+        let program_id = state.resources.program_id;
+
+        tokio::spawn(async move {
+            let filters = vec![serde_json::json!({
+                "memcmp": {
+                    "offset": 0,
+                    "bytes": bs58::encode(Thread::DISCRIMINATOR).into_string()
+                }
+            })];
+
+            match rpc
+                .get_program_account_keys(&program_id, Some(filters))
                 .await
             {
-                Ok(thread) => {
-                    // Update tracked thread with fresh data
-                    state.tracked_threads.insert(
-                        pubkey,
-                        TrackedThread {
-                            exec_count: thread.exec_count,
-                            schedule: thread.schedule.clone(),
-                            paused: thread.paused,
-                        },
-                    );
-                    // Skip re-scheduling paused threads
-                    if thread.paused {
-                        debug!("Refetched thread {} is paused, skipping reschedule", pubkey);
-                    } else if let Err(e) = self.schedule_thread(state, pubkey, &thread).await {
-                        warn!(
-                            "Failed to reschedule thread {} after refetch: {:?}",
-                            pubkey, e
-                        );
-                    } else {
-                        info!(
-                            "Refetched and rescheduled thread {} after cache expiry",
-                            pubkey
-                        );
-                    }
+                Ok(keys) => {
+                    let _ = myself.send_message(StagingMessage::Reconciled(keys));
                 }
                 Err(e) => {
-                    // Thread no longer exists or RPC failed - clean up tracking
-                    debug!("Thread {} no longer exists or fetch failed: {}", pubkey, e);
-                    state.tracked_threads.remove(&pubkey);
-                    state.queued_threads.remove(&pubkey);
+                    // Clear the in-flight flag by reporting an empty scan would
+                    // be wrong — it would look like every thread was deleted.
+                    // Send nothing and let the next interval retry; the flag is
+                    // cleared here instead.
+                    warn!("Reconciliation scan failed, retrying next interval: {}", e);
+                    let _ = myself.send_message(StagingMessage::ReconcileFailed);
                 }
             }
-        }
-
-        // Get ready threads from all priority queues
-        let ready_threads = self
-            .get_ready_threads(state, clock.unix_timestamp, clock.slot, clock.epoch)
-            .await;
-
-        if !ready_threads.is_empty() {
-            info!("Found {} ready threads", ready_threads.len());
-        }
-
-        // Push each ready thread to ProcessorFactory
-        for ready_thread in ready_threads {
-            // Check if already queued (additional dedup safety)
-            if state.queued_threads.contains(&ready_thread.thread_pubkey) {
-                debug!(
-                    "Thread {} already queued, skipping",
-                    ready_thread.thread_pubkey
-                );
-                continue;
-            }
-
-            // Mark as queued
-            state.queued_threads.insert(ready_thread.thread_pubkey);
-
-            // Push to ProcessorFactory (if processor ref is set)
-            // ProcessorFactory will fetch full Thread data from cache
-            if let Some(ref processor_ref) = state.processor_ref {
-                if let Err(e) =
-                    processor_ref.send_message(ProcessorMessage::ProcessReady(ready_thread.clone()))
-                {
-                    warn!(
-                        "Failed to send thread {} to processor: {:?}",
-                        ready_thread.thread_pubkey, e
-                    );
-                    // Remove from queued since it wasn't successfully sent
-                    state.queued_threads.remove(&ready_thread.thread_pubkey);
-                } else {
-                    info!(
-                        "Pushed thread {} to processor (overdue_seconds={})",
-                        ready_thread.thread_pubkey, ready_thread.overdue_seconds
-                    );
-                }
-            } else {
-                warn!(
-                    "ProcessorFactory not initialized yet, skipping thread {}",
-                    ready_thread.thread_pubkey
-                );
-                state.queued_threads.remove(&ready_thread.thread_pubkey);
-            }
-        }
-
-        Ok(())
+        });
     }
 
-    /// Schedule a thread in the appropriate priority queue
-    async fn schedule_thread(
-        &self,
-        state: &mut StagingState,
-        thread_pubkey: Pubkey,
-        thread: &Thread,
-    ) -> Result<(), ActorProcessingErr> {
-        // Determine which queue to add to based on trigger type
-        let (queue_type, trigger_value) = match &thread.trigger {
-            Trigger::Immediate { .. }
-            | Trigger::Timestamp { .. }
-            | Trigger::Interval { .. }
-            | Trigger::Cron { .. } => {
-                if let Schedule::Timed { next, .. } = thread.schedule {
-                    ("timestamp", next.max(0) as u64)
-                } else {
-                    warn!(
-                        "Time-based trigger with non-Timed schedule for thread {}",
-                        thread_pubkey
-                    );
-                    return Ok(());
-                }
-            }
-            Trigger::Slot { .. } => {
-                if let Schedule::Block { next, .. } = thread.schedule {
-                    ("slot", next)
-                } else {
-                    warn!(
-                        "Slot trigger with non-Block schedule for thread {}",
-                        thread_pubkey
-                    );
-                    return Ok(());
-                }
-            }
-            Trigger::Epoch { .. } => {
-                if let Schedule::Block { next, .. } = thread.schedule {
-                    ("epoch", next)
-                } else {
-                    warn!(
-                        "Epoch trigger with non-Block schedule for thread {}",
-                        thread_pubkey
-                    );
-                    return Ok(());
-                }
-            }
-            Trigger::Account { .. } => {
-                warn!(
-                    "Account triggers not yet supported for thread {}",
-                    thread_pubkey
-                );
-                return Ok(());
-            }
-        };
-
-        let scheduled = ScheduledThread {
-            trigger_value,
-            thread_pubkey,
-            exec_count: thread.exec_count,
-        };
-
-        // Add to appropriate queue
-        match queue_type {
-            "timestamp" => {
-                state.time_queue.lock().await.push(Reverse(scheduled));
-            }
-            "slot" => {
-                state.slot_queue.lock().await.push(Reverse(scheduled));
-            }
-            "epoch" => {
-                state.epoch_queue.lock().await.push(Reverse(scheduled));
-            }
-            _ => unreachable!(),
-        }
-
-        Ok(())
-    }
-
-    /// Get all threads ready for execution based on current time/slot/epoch
+    /// Fetch fresh state for a set of threads off the actor loop.
     ///
-    /// Returns ReadyThread structs (pubkey + metadata only). ProcessorFactory
-    /// will fetch full Thread data from cache.
-    async fn get_ready_threads(
+    /// Bypasses the cache: the whole point is that our cached copy is stale.
+    fn spawn_refetch(
         &self,
+        myself: ActorRef<StagingMessage>,
         state: &StagingState,
-        timestamp: i64,
-        slot: u64,
-        epoch: u64,
-    ) -> Vec<ReadyThread> {
-        let mut ready = Vec::new();
-        let timestamp_u64 = timestamp.max(0) as u64;
-
-        // Track threads already processed in this call to prevent duplicates
-        let mut processed_in_this_call: HashSet<Pubkey> = HashSet::new();
-
-        // Check timestamp-triggered threads
-        self.check_queue(
-            &state.time_queue,
-            timestamp_u64,
-            timestamp,
-            state,
-            &mut ready,
-            &mut processed_in_this_call,
-            "timestamp",
-        )
-        .await;
-
-        // Check slot-triggered threads
-        self.check_queue(
-            &state.slot_queue,
-            slot,
-            timestamp,
-            state,
-            &mut ready,
-            &mut processed_in_this_call,
-            "slot",
-        )
-        .await;
-
-        // Check epoch-triggered threads
-        self.check_queue(
-            &state.epoch_queue,
-            epoch,
-            timestamp,
-            state,
-            &mut ready,
-            &mut processed_in_this_call,
-            "epoch",
-        )
-        .await;
-
-        ready
-    }
-
-    /// Check a specific queue for ready threads
-    ///
-    /// Creates ReadyThread entries (pubkey + metadata only). Full Thread data
-    /// will be fetched from cache by ProcessorFactory.
-    async fn check_queue(
-        &self,
-        queue: &Arc<Mutex<BinaryHeap<Reverse<ScheduledThread>>>>,
-        current_value: u64,
-        timestamp: i64,
-        state: &StagingState,
-        ready: &mut Vec<ReadyThread>,
-        processed: &mut HashSet<Pubkey>,
-        queue_name: &str,
+        pubkeys: Vec<Pubkey>,
     ) {
-        let mut queue_lock = queue.lock().await;
-        let mut latest_exec_count: HashMap<Pubkey, u64> = HashMap::new();
+        let cache = state.resources.cache.clone();
+        let rpc = state.resources.rpc_client.clone();
 
-        while let Some(Reverse(scheduled)) = queue_lock.peek() {
-            if scheduled.trigger_value <= current_value {
-                let Reverse(scheduled) = queue_lock.pop().unwrap();
-
-                // Skip if already processed in this call
-                if processed.contains(&scheduled.thread_pubkey) {
-                    continue;
-                }
-
-                // Look up tracked thread info (exec_count for dedup)
-                let tracked = match state.tracked_threads.get(&scheduled.thread_pubkey) {
-                    Some(t) => t.clone(),
-                    None => {
-                        debug!(
-                            "Thread {} no longer tracked, skipping stale entry",
-                            scheduled.thread_pubkey
-                        );
-                        continue;
-                    }
-                };
-
-                // Skip paused threads
-                if tracked.paused {
-                    trace!("Thread {} is paused, skipping", scheduled.thread_pubkey);
-                    continue;
-                }
-
-                // Check for stale exec_count
-                if scheduled.exec_count != tracked.exec_count {
-                    debug!(
-                        "Stale queue entry for {} (expected exec_count={}, got={})",
-                        scheduled.thread_pubkey, tracked.exec_count, scheduled.exec_count
-                    );
-                    continue;
-                }
-
-                // Track latest exec_count to filter duplicates
-                if let Some(&latest) = latest_exec_count.get(&scheduled.thread_pubkey) {
-                    if tracked.exec_count < latest {
-                        debug!(
-                            "Skipping stale thread {} with exec_count {} (latest: {})",
-                            scheduled.thread_pubkey, tracked.exec_count, latest
-                        );
-                        continue;
-                    }
-                }
-                latest_exec_count.insert(scheduled.thread_pubkey, tracked.exec_count);
-
-                // Calculate overdue
-                let overdue_seconds = if queue_name == "timestamp" {
-                    timestamp - (scheduled.trigger_value as i64)
-                } else {
-                    0 // Slot/epoch triggers don't have overdue concept
-                };
-
-                debug!(
-                    "Thread {} ready from {} queue (trigger_value={}, current={})",
-                    scheduled.thread_pubkey, queue_name, scheduled.trigger_value, current_value
-                );
-
-                // Create ready thread (pubkey + metadata only)
-                // ProcessorFactory will fetch full Thread from cache
-                let ready_thread = ReadyThread {
-                    thread_pubkey: scheduled.thread_pubkey,
-                    exec_count: tracked.exec_count,
-                    is_overdue: overdue_seconds > 0,
-                    overdue_seconds,
-                };
-
-                ready.push(ready_thread);
-                processed.insert(scheduled.thread_pubkey);
-            } else {
-                // No more ready threads in this queue
-                break;
-            }
-        }
-    }
-
-    /// Compact a priority queue by removing stale entries.
-    /// An entry is stale if its thread is no longer tracked or its exec_count
-    /// doesn't match the current tracked value.
-    async fn compact_queues(&self, state: &StagingState) {
-        let queues = [
-            ("time", &state.time_queue),
-            ("slot", &state.slot_queue),
-            ("epoch", &state.epoch_queue),
-        ];
-
-        for (name, queue) in &queues {
-            let mut lock = queue.lock().await;
-            let before = lock.len();
-            let drained: Vec<Reverse<ScheduledThread>> = lock.drain().collect();
-            for entry in drained {
-                let scheduled = &entry.0;
-                // Keep entry only if thread is still tracked with matching exec_count
-                if let Some(tracked) = state.tracked_threads.get(&scheduled.thread_pubkey) {
-                    if scheduled.exec_count == tracked.exec_count {
-                        lock.push(entry);
+        tokio::spawn(async move {
+            let mut results = Vec::with_capacity(pubkeys.len());
+            for pk in pubkeys {
+                cache.invalidate(&pk).await;
+                match cache.get_thread_or_fetch(&pk, &rpc).await {
+                    Ok(thread) => results.push((pk, Some(thread))),
+                    Err(e) if e.is_gone() => results.push((pk, None)),
+                    Err(e) => {
+                        // A transport or decode failure says nothing about
+                        // whether the thread exists. Leave it tracked.
+                        debug!("Refetch of {} failed, leaving tracked: {}", pk, e);
                     }
                 }
             }
-            let after = lock.len();
-            if before != after {
-                debug!(
-                    "Compacted {} queue: {} -> {} entries ({} stale removed)",
-                    name,
-                    before,
-                    after,
-                    before - after
-                );
+            if results.is_empty() {
+                return;
             }
-        }
+            let _ = myself.send_message(StagingMessage::Refetched(results));
+        });
     }
 
     /// Classify account type
     fn classify_account(&self, data: &[u8], pubkey: &Pubkey) -> AccountType {
-        use anchor_lang::AccountDeserialize;
-
         // Check if it's the clock sysvar
         if *pubkey == solana_sdk::sysvar::clock::ID {
             return AccountType::Clock;
@@ -722,7 +792,6 @@ impl StagingActor {
         }
 
         // Try to deserialize as Thread
-        // The Thread type uses Anchor's #[account] macro which provides try_deserialize
         if let Ok(thread) = Thread::try_deserialize(&mut &data[..]) {
             return AccountType::Thread(thread);
         }
@@ -731,10 +800,230 @@ impl StagingActor {
     }
 }
 
+/// Map a thread's trigger and schedule onto the clock it is scheduled against.
+///
+/// `Trigger::Account` has no off-chain watcher and returns `None`.
+fn kind_and_due(thread: &Thread) -> Option<(Kind, u64)> {
+    match &thread.trigger {
+        Trigger::Immediate { .. }
+        | Trigger::Timestamp { .. }
+        | Trigger::Interval { .. }
+        | Trigger::Cron { .. } => match thread.schedule {
+            Schedule::Timed { next, .. } => Some((Kind::Time, next.max(0) as u64)),
+            _ => None,
+        },
+        Trigger::Slot { .. } => match thread.schedule {
+            Schedule::Block { next, .. } => Some((Kind::Slot, next)),
+            _ => None,
+        },
+        Trigger::Epoch { .. } => match thread.schedule {
+            Schedule::Block { next, .. } => Some((Kind::Epoch, next)),
+            _ => None,
+        },
+        Trigger::Account { .. } => None,
+    }
+}
+
+/// How persistently this thread's pending trigger should be retried.
+///
+/// `window_end` is derived from the trigger definition rather than read from the
+/// account, and that is the point: `schedule.next` only advances when an
+/// execution lands, so a thread whose trigger never fires has no "next moment"
+/// recorded anywhere on-chain. Computing it here is what lets a skippable thread
+/// move on from a moment it could not execute.
+fn retry_policy(thread: &Thread, due: u64) -> Retry {
+    match &thread.trigger {
+        Trigger::Interval {
+            seconds, skippable, ..
+        } => Retry {
+            skippable: *skippable,
+            window_end: (*seconds > 0).then(|| due.saturating_add(*seconds as u64)),
+        },
+        Trigger::Cron {
+            schedule,
+            skippable,
+            ..
+        } => Retry {
+            skippable: *skippable,
+            window_end: next_cron_after(schedule, due),
+        },
+        // One-shot triggers have no later moment to defer to, so there is
+        // nothing to skip to and no window to bound retries by.
+        _ => Retry::default(),
+    }
+}
+
+/// The first cron occurrence strictly after `after`, as a unix timestamp.
+///
+/// Returns `None` on an unparsable schedule — the thread program parses with
+/// `.unwrap()`, but an executor must not panic on state someone else wrote.
+fn next_cron_after(schedule: &str, after: u64) -> Option<u64> {
+    use std::str::FromStr;
+
+    let after = chrono::DateTime::from_timestamp(after as i64, 0)?;
+    antegen_cron::Schedule::from_str(schedule)
+        .ok()?
+        .next_after(&after)
+        .map(|dt| dt.timestamp().max(0) as u64)
+}
+
+/// Just the due value, for change detection.
+fn due_value(thread: &Thread) -> Option<u64> {
+    kind_and_due(thread).map(|(_, due)| due)
+}
+
+/// Drive a single timer that fires when the projected on-chain clock reaches the
+/// earliest pending trigger.
+///
+/// One task for the whole actor, re-armed via a watch channel whenever the head
+/// of the time queue may have changed — not one timer per thread. Firing on a
+/// timer rather than on the next clock notification is what removes the tick
+/// source from the critical path: without it, a thread due at T is not noticed
+/// until the next WebSocket message happens to arrive.
+fn spawn_scheduling_timer(
+    actor: ActorRef<StagingMessage>,
+    mut target_rx: watch::Receiver<Option<Instant>>,
+) {
+    tokio::spawn(async move {
+        loop {
+            let target = *target_rx.borrow_and_update();
+
+            let Some(at) = target else {
+                // Nothing scheduled; wait for an arm.
+                if target_rx.changed().await.is_err() {
+                    return; // actor gone
+                }
+                continue;
+            };
+
+            tokio::select! {
+                _ = tokio::time::sleep_until(at.into()) => {
+                    if actor.send_message(StagingMessage::Fire).is_err() {
+                        return; // actor gone
+                    }
+                    // Wait to be re-armed rather than re-firing on the same
+                    // deadline, which is now in the past and would spin.
+                    if target_rx.changed().await.is_err() {
+                        return;
+                    }
+                }
+                changed = target_rx.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    });
+}
+
 #[derive(Debug)]
 enum AccountType {
     Thread(Thread),
     Clock,
     Deleted,
     Other,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The window is derived from the trigger definition, not from the account.
+    /// `schedule.next` only advances when an execution lands, so a thread whose
+    /// trigger never fires has no next moment recorded anywhere on-chain — this
+    /// is what lets a skippable thread move on from a moment it could not run.
+    #[test]
+    fn interval_window_is_one_period_past_the_deadline() {
+        let thread = thread_with(Trigger::Interval {
+            seconds: 60,
+            skippable: true,
+            jitter: 0,
+        });
+
+        let policy = retry_policy(&thread, 1_000);
+        assert!(policy.skippable);
+        assert_eq!(policy.window_end, Some(1_060));
+    }
+
+    /// A zero-second interval has no next moment to advance to; bounding retries
+    /// by a window equal to the deadline would abandon every attempt instantly.
+    #[test]
+    fn zero_interval_has_no_window() {
+        let thread = thread_with(Trigger::Interval {
+            seconds: 0,
+            skippable: true,
+            jitter: 0,
+        });
+
+        assert_eq!(retry_policy(&thread, 1_000).window_end, None);
+    }
+
+    #[test]
+    fn cron_window_is_the_next_occurrence() {
+        // Every hour on the hour.
+        let thread = thread_with(Trigger::Cron {
+            schedule: "0 0 * * * * *".to_string(),
+            skippable: false,
+            jitter: 0,
+        });
+
+        let policy = retry_policy(&thread, 3_600);
+        assert!(!policy.skippable);
+        assert_eq!(policy.window_end, Some(7_200));
+    }
+
+    /// The thread program parses cron with `.unwrap()`. An executor reads state
+    /// someone else wrote, so it must degrade instead of panicking.
+    #[test]
+    fn an_unparsable_cron_yields_no_window() {
+        let thread = thread_with(Trigger::Cron {
+            schedule: "not a cron schedule".to_string(),
+            skippable: true,
+            jitter: 0,
+        });
+
+        assert_eq!(retry_policy(&thread, 1_000).window_end, None);
+    }
+
+    /// One-shot triggers carry no `skippable` field and have no later moment.
+    #[test]
+    fn one_shot_triggers_are_never_skippable() {
+        for trigger in [
+            Trigger::Timestamp {
+                unix_ts: 1_000,
+                jitter: 0,
+            },
+            Trigger::Immediate { jitter: 0 },
+            Trigger::Slot { slot: 42 },
+            Trigger::Epoch { epoch: 7 },
+        ] {
+            let policy = retry_policy(&thread_with(trigger), 1_000);
+            assert!(!policy.skippable);
+            assert_eq!(policy.window_end, None);
+        }
+    }
+
+    fn thread_with(trigger: Trigger) -> Thread {
+        Thread {
+            version: 1,
+            bump: 255,
+            authority: Pubkey::new_unique(),
+            id: vec![1],
+            name: String::new(),
+            created_at: 0,
+            trigger,
+            schedule: Schedule::Timed { prev: 0, next: 0 },
+            fiber_ids: vec![0],
+            fiber_cursor: 0,
+            fiber_next_id: 1,
+            fiber_signal: Default::default(),
+            paused: false,
+            exec_count: 0,
+            last_executor: Pubkey::new_unique(),
+            nonce_account: Pubkey::default(),
+            last_nonce: String::new(),
+            close_fiber: vec![],
+        }
+    }
 }

@@ -34,7 +34,9 @@ jobs:
 
       client_released: ${{ steps.release.outputs['crates/client--release_created'] }}
       client_tag: ${{ steps.release.outputs['crates/client--tag_name'] }}
-      client_version: ${{ steps.release.outputs['crates/client--version'] }}
+
+      ws_released: ${{ steps.release.outputs['crates/ws--release_created'] }}
+      ws_tag: ${{ steps.release.outputs['crates/ws--tag_name'] }}
 
       thread_released: ${{ steps.release.outputs['programs/thread--release_created'] }}
       thread_tag: ${{ steps.release.outputs['programs/thread--tag_name'] }}
@@ -48,10 +50,6 @@ jobs:
       cli_released: ${{ steps.release.outputs['cli/antegen--release_created'] }}
       cli_tag: ${{ steps.release.outputs['cli/antegen--tag_name'] }}
       cli_version: ${{ steps.release.outputs['cli/antegen--version'] }}
-
-      ctl_released: ${{ steps.release.outputs['cli/antegenctl--release_created'] }}
-      ctl_tag: ${{ steps.release.outputs['cli/antegenctl--tag_name'] }}
-      ctl_version: ${{ steps.release.outputs['cli/antegenctl--version'] }}
 
       geyser_released: ${{ steps.release.outputs['plugin/geyser--release_created'] }}
       geyser_tag: ${{ steps.release.outputs['plugin/geyser--tag_name'] }}
@@ -284,7 +282,7 @@ jobs:
        needs.release-please.outputs.client_released == 'true' ||
        needs.release-please.outputs.cli_core_released == 'true' ||
        needs.release-please.outputs.cli_released == 'true' ||
-       needs.release-please.outputs.ctl_released == 'true')
+       needs.release-please.outputs.ws_released == 'true')
     steps:
       - uses: actions/checkout@v6
 
@@ -297,15 +295,45 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Publish antegen-cron
-        if: needs.release-please.outputs.cron_released == 'true'
+      # antegen-client depends on antegen-cron and antegen-ws. `cargo publish`
+      # strips the path from a path+version dependency and keeps the version
+      # requirement, so both must already exist on crates.io at the version this
+      # workspace pins or the client publish fails outright.
+      #
+      # release-please only marks a package released when commits touched it, so
+      # a dependency that has drifted behind — or was never published at all, as
+      # antegen-ws never has — would otherwise stay missing forever and block
+      # every client release. Publish by what crates.io actually has rather than
+      # by what this run released, and skip when it is already there so reruns
+      # are safe.
+      - name: Publish antegen-client dependencies if missing
+        if: |
+          needs.release-please.outputs.client_released == 'true' ||
+          needs.release-please.outputs.cron_released == 'true' ||
+          needs.release-please.outputs.ws_released == 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p antegen-cron --token "$CARGO_REGISTRY_TOKEN"
+        run: |
+          publish_if_missing() {
+            crate="$1"
+            manifest="$2"
+            version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$manifest" | head -1)"
 
-      - name: Wait for index after cron
-        if: needs.release-please.outputs.cron_released == 'true'
-        run: sleep 30
+            if curl -sSf \
+              -H "User-Agent: antegen-release-please" \
+              "https://crates.io/api/v1/crates/${crate}/${version}" >/dev/null 2>&1
+            then
+              echo "${crate} ${version} already on crates.io"
+              return 0
+            fi
+
+            echo "Publishing ${crate} ${version}"
+            cargo publish -p "${crate}" --token "$CARGO_REGISTRY_TOKEN"
+            sleep 30
+          }
+
+          publish_if_missing antegen-cron crates/cron/Cargo.toml
+          publish_if_missing antegen-ws crates/ws/Cargo.toml
 
       - name: Publish antegen-fiber-program
         if: needs.release-please.outputs.fiber_released == 'true'
@@ -353,14 +381,10 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish -p antegen-cli --token "$CARGO_REGISTRY_TOKEN"
 
-      - name: Publish antegenctl
-        if: needs.release-please.outputs.ctl_released == 'true'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p antegenctl --token "$CARGO_REGISTRY_TOKEN"
-
   # -----------------------------------------------------------------------
-  # Stage 4: Build cross-platform CLI binary and attach to release
+  # Stage 4: Build the cross-platform `antegen` binary and attach it to the
+  # CLI release. This is the only binary we ship for the CLI and the node —
+  # the executor daemon is `antegen node run`.
   # -----------------------------------------------------------------------
   build-cli:
     name: Build antegen-cli binary
@@ -392,6 +416,20 @@ jobs:
       - name: Install LLVM (macOS)
         if: runner.os == 'macOS'
         run: brew install llvm
+
+      - name: Sync Cargo.lock with the release version bumps
+        # release-please rewrites versions in each package's Cargo.toml but
+        # leaves Cargo.lock alone, so at this point the two disagree and
+        # `--locked` refuses to proceed:
+        #
+        #   error: cannot update the lock file ... because --locked was passed
+        #
+        # That is why every binary release since per-package releases landed has
+        # attached zero assets while the program releases succeeded — those build
+        # through solana-verify, which does not pass --locked. `--workspace`
+        # rewrites only the local member versions; third-party pins stay exactly
+        # as the lock file has them, so the build stays reproducible.
+        run: cargo update --workspace
 
       - name: Build CLI
         env:
@@ -445,178 +483,7 @@ jobs:
           append_body: false
 
   # -----------------------------------------------------------------------
-  # Stage 5: Build cross-platform antegenctl binary and attach to release
-  # -----------------------------------------------------------------------
-  build-ctl:
-    name: Build antegenctl binary
-    runs-on: ${{ matrix.os }}
-    needs: release-please
-    if: needs.release-please.outputs.ctl_released == 'true'
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - os: macos-14
-            target: x86_64-apple-darwin
-          - os: macos-14
-            target: aarch64-apple-darwin
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          targets: ${{ matrix.target }}
-
-      - name: Install LLVM (macOS)
-        if: runner.os == 'macOS'
-        run: brew install llvm
-
-      - name: Build antegenctl
-        env:
-          CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
-          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
-          CC_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
-          CC_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
-          AR_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
-          AR_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
-        run: cargo build -p antegenctl --release --features prod --target ${{ matrix.target }} --locked
-
-      - name: Package artifact
-        run: |
-          mkdir -p artifacts
-          cp target/${{ matrix.target }}/release/antegenctl \
-            artifacts/antegenctl-v${{ needs.release-please.outputs.ctl_version }}-${{ matrix.target }}
-          chmod +x artifacts/*
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ctl-${{ matrix.target }}
-          path: artifacts/*
-          retention-days: 1
-
-  attach-ctl:
-    name: Attach antegenctl binary to release
-    runs-on: ubuntu-22.04
-    needs: [release-please, build-ctl]
-    if: needs.release-please.outputs.ctl_released == 'true' && needs.build-ctl.result == 'success'
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-          pattern: ctl-*
-          merge-multiple: true
-
-      - name: Generate checksums
-        run: |
-          cd artifacts
-          sha256sum * > checksums.txt
-          cat checksums.txt
-
-      - name: Attach to GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ needs.release-please.outputs.ctl_tag }}
-          files: artifacts/*
-          append_body: false
-
-  # -----------------------------------------------------------------------
-  # Stage 6: Build cross-platform antegen-node binary (from antegen-client
-  # with --features node) and attach to the antegen-client release.
-  # -----------------------------------------------------------------------
-  build-node:
-    name: Build antegen-node binary
-    runs-on: ${{ matrix.os }}
-    needs: release-please
-    if: needs.release-please.outputs.client_released == 'true'
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - os: macos-14
-            target: x86_64-apple-darwin
-          - os: macos-14
-            target: aarch64-apple-darwin
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          targets: ${{ matrix.target }}
-
-      - name: Install LLVM (macOS)
-        if: runner.os == 'macOS'
-        run: brew install llvm
-
-      - name: Build node
-        env:
-          CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
-          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
-          CC_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
-          CC_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
-          AR_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
-          AR_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
-        run: cargo build -p antegen-client --release --features node --target ${{ matrix.target }} --locked
-
-      - name: Package artifact
-        run: |
-          mkdir -p artifacts
-          cp target/${{ matrix.target }}/release/antegen-node \
-            artifacts/antegen-node-v${{ needs.release-please.outputs.client_version }}-${{ matrix.target }}
-          chmod +x artifacts/*
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: node-${{ matrix.target }}
-          path: artifacts/*
-          retention-days: 1
-
-  attach-node:
-    name: Attach antegen-node binary to release
-    runs-on: ubuntu-22.04
-    needs: [release-please, build-node]
-    if: needs.release-please.outputs.client_released == 'true' && needs.build-node.result == 'success'
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-          pattern: node-*
-          merge-multiple: true
-
-      - name: Generate checksums
-        run: |
-          cd artifacts
-          sha256sum * > checksums.txt
-          cat checksums.txt
-
-      - name: Attach to GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ needs.release-please.outputs.client_tag }}
-          files: artifacts/*
-          append_body: false
-
-  # -----------------------------------------------------------------------
-  # Stage 7: Build geyser plugin shared libraries (publish=false → binary
+  # Stage 5: Build geyser plugin shared libraries (publish=false → binary
   # release only) and attach to release.
   # -----------------------------------------------------------------------
   build-geyser:
@@ -652,6 +519,20 @@ jobs:
       - name: Install LLVM (macOS)
         if: runner.os == 'macOS'
         run: brew install llvm
+
+      - name: Sync Cargo.lock with the release version bumps
+        # release-please rewrites versions in each package's Cargo.toml but
+        # leaves Cargo.lock alone, so at this point the two disagree and
+        # `--locked` refuses to proceed:
+        #
+        #   error: cannot update the lock file ... because --locked was passed
+        #
+        # That is why every binary release since per-package releases landed has
+        # attached zero assets while the program releases succeeded — those build
+        # through solana-verify, which does not pass --locked. `--workspace`
+        # rewrites only the local member versions; third-party pins stay exactly
+        # as the lock file has them, so the build stays reproducible.
+        run: cargo update --workspace
 
       - name: Build geyser plugin
         env:

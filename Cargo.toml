@@ -25,7 +25,6 @@ members = [
     "crates/*",
     "cli/core",
     "cli/antegen",
-    "cli/antegenctl",
     "plugin/geyser",
     "programs/fiber",
     "programs/reentrance-test",
@@ -62,14 +61,14 @@ large_enum_variant = "allow"
 [workspace.dependencies]
 # Internal workspace crates (each has its own version)
 antegen-cli-core = { version = "6.1.0", path = "cli/core" }
-antegen-cron = { version = "4.0.0", path = "crates/cron" }
+antegen-cron = { version = "4.1.0", path = "crates/cron" }
 antegen-client = { version = "5.2.0", path = "crates/client" }
 antegen-geyser-plugin = { version = "5.1.0", path = "plugin/geyser" }
 antegen-ws = { version = "0.1.0", path = "crates/ws" }
-antegen-fiber-program = { version = "5.1.0", path = "programs/fiber", features = [
+antegen-fiber-program = { version = "5.2.0", path = "programs/fiber", features = [
     "cpi",
 ] }
-antegen-thread-program = { version = "5.1.0", path = "programs/thread", features = [
+antegen-thread-program = { version = "5.2.0", path = "programs/thread", features = [
     "cpi",
 ] }
 
@@ -99,7 +98,7 @@ getrandom = { version = "=0.2.16", features = ["custom"] }
 hex = "=0.4.3"
 hyper = { version = "=0.14.32", features = ["server", "tcp", "http1"] }
 lazy_static = "=1.5.0"
-loa-core = "=2.0.1"
+loa-core = "=3.0.0"
 log = "=0.4.29"
 moka = { version = "=0.12.11", features = ["future"] }
 nom = "=7.1.3"

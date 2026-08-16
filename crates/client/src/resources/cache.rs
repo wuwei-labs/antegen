@@ -6,17 +6,53 @@
 //! - Slot/Epoch/Account triggers: no TTL (persist until capacity eviction)
 
 use crate::config::CacheConfig;
+use crate::rpc::response::decode_account_data;
 use crate::rpc::RpcPool;
 use anchor_lang::AccountDeserialize;
 use antegen_thread_program::state::{Schedule, Thread, Trigger};
-use base64::prelude::*;
 use moka::future::Cache;
 use moka::notification::RemovalCause;
 use moka::policy::Expiry;
 use solana_sdk::pubkey::Pubkey;
+use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
+
+/// Why a thread fetch failed.
+///
+/// The distinction matters: only `NotFound` is evidence that the thread is
+/// really gone. Treating a transport or decode failure as "gone" drops the
+/// thread from scheduling entirely, and nothing re-adds it until an unrelated
+/// account update happens to arrive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FetchError {
+    /// The RPC returned a null account — the thread has been closed.
+    NotFound,
+    /// The request failed. Says nothing about whether the thread exists.
+    Transport(String),
+    /// The account was returned but could not be decoded or deserialized.
+    Decode(String),
+}
+
+impl FetchError {
+    /// True only when the thread is known to no longer exist.
+    pub fn is_gone(&self) -> bool {
+        matches!(self, FetchError::NotFound)
+    }
+}
+
+impl fmt::Display for FetchError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FetchError::NotFound => write!(f, "account not found"),
+            FetchError::Transport(e) => write!(f, "transport error: {}", e),
+            FetchError::Decode(e) => write!(f, "decode error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for FetchError {}
 
 /// Trigger type for cache expiration logic
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -287,12 +323,12 @@ impl AccountCache {
         &self,
         key: &Pubkey,
         rpc_client: &Arc<RpcPool>,
-    ) -> Result<Thread, String> {
+    ) -> Result<Thread, FetchError> {
         // Try cache first
         if let Some(cached) = self.cache.get(key).await {
             // Deserialize thread from cached data
             return Thread::try_deserialize(&mut cached.data.as_slice())
-                .map_err(|e| format!("Failed to deserialize cached thread: {}", e));
+                .map_err(|e| FetchError::Decode(format!("cached thread: {}", e)));
         }
 
         // Cache miss - fetch from RPC
@@ -301,17 +337,18 @@ impl AccountCache {
         let ui_account = rpc_client
             .get_account(key)
             .await
-            .map_err(|e| format!("Failed to fetch account {}: {}", key, e))?
-            .ok_or_else(|| format!("Account {} not found", key))?;
+            .map_err(|e| FetchError::Transport(format!("fetch account {}: {}", key, e)))?
+            .ok_or(FetchError::NotFound)?;
 
-        // Decode base64 account data
-        let account_data = BASE64_STANDARD
-            .decode(&ui_account.data.0)
-            .map_err(|e| format!("Failed to decode account data: {}", e))?;
+        // Honour the response encoding. `get_account` requests `base64+zstd`,
+        // so decoding as plain base64 silently produces a zstd frame that then
+        // fails to deserialize one line later.
+        let account_data = decode_account_data(&ui_account.data.0, &ui_account.data.1)
+            .map_err(|e| FetchError::Decode(format!("account data: {}", e)))?;
 
         // Deserialize to get trigger type
         let thread = Thread::try_deserialize(&mut account_data.as_slice())
-            .map_err(|e| format!("Failed to deserialize fetched thread: {}", e))?;
+            .map_err(|e| FetchError::Decode(format!("fetched thread: {}", e)))?;
 
         let trigger_type = CacheTriggerType::from_thread(&thread);
 

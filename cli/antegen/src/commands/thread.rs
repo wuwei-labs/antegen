@@ -649,6 +649,29 @@ mod test_commands {
             .map_err(|e| anyhow!("Failed to create RPC client: {}", e))?;
 
         match cmd {
+            TestCommands::Load {
+                count,
+                min_interval,
+                max_interval,
+                concurrency,
+                fund,
+            } => {
+                return create_load_threads(
+                    &client,
+                    &payer,
+                    &test_authority,
+                    count,
+                    min_interval,
+                    max_interval,
+                    concurrency,
+                    fund,
+                )
+                .await;
+            }
+            TestCommands::LoadClean { count, concurrency } => {
+                return clean_load_threads(&client, &payer, &test_authority, count, concurrency)
+                    .await;
+            }
             TestCommands::Create {
                 trigger: trigger_str,
                 signal: signals,
@@ -901,6 +924,203 @@ mod test_commands {
 
     /// Create a test thread with thread_memo as default fiber and optional additional fibers
     /// All instructions are bundled into a single transaction
+    /// Deterministic ID for a load-test thread, so cleanup needs no registry.
+    fn load_thread_id(index: u32) -> String {
+        format!("load-{:05}", index)
+    }
+
+    /// Create many threads for load testing.
+    ///
+    /// Interval triggers are spread across [min, max] so deadlines land at
+    /// different times instead of stacking into one burst — which is what makes
+    /// the numbers representative rather than a thundering-herd artifact.
+    #[allow(clippy::too_many_arguments)]
+    async fn create_load_threads(
+        client: &RpcPool,
+        payer: &Keypair,
+        authority: &Keypair,
+        count: u32,
+        min_interval: u64,
+        max_interval: u64,
+        concurrency: usize,
+        fund: u64,
+    ) -> Result<()> {
+        use futures::stream::{self, StreamExt};
+
+        if count == 0 {
+            return Err(anyhow!("--count must be greater than zero"));
+        }
+        if min_interval == 0 || max_interval < min_interval {
+            return Err(anyhow!(
+                "require 0 < --min-interval <= --max-interval (got {} and {})",
+                min_interval,
+                max_interval
+            ));
+        }
+
+        let total_fund = fund.saturating_mul(count as u64);
+        println!(
+            "\nCreating {} threads, intervals {}..={}s, funding {:.4} SOL total",
+            count,
+            min_interval,
+            max_interval,
+            total_fund as f64 / LAMPORTS_PER_SOL as f64
+        );
+
+        let span = max_interval - min_interval + 1;
+        let started = std::time::Instant::now();
+
+        let results: Vec<Result<()>> = stream::iter(0..count)
+            .map(|i| {
+                // Spread intervals deterministically across the range.
+                let interval = min_interval + (i as u64 % span);
+                let thread_id = load_thread_id(i);
+                async move {
+                    let (thread_pubkey, _) = derive_thread_pda(authority.pubkey(), &thread_id);
+
+                    let memo = build_thread_memo_instruction(
+                        thread_pubkey,
+                        format!("load {}", thread_id),
+                        None,
+                    );
+                    let serializable_ix: SerializableInstruction = memo.into();
+
+                    // Supplying an initial instruction requires the fiber
+                    // accounts: thread_create CPIs into the fiber program to
+                    // create fiber 0.
+                    let fiber_pubkey =
+                        antegen_fiber_program::state::FiberState::pubkey(thread_pubkey, 0);
+
+                    let accounts = antegen_thread_program::accounts::ThreadCreate {
+                        authority: authority.pubkey(),
+                        payer: payer.pubkey(),
+                        thread: thread_pubkey,
+                        nonce_account: None,
+                        recent_blockhashes: None,
+                        rent: None,
+                        system_program: anchor_lang::system_program::ID,
+                        fiber: Some(fiber_pubkey),
+                        fiber_program: Some(antegen_fiber_program::ID),
+                    }
+                    .to_account_metas(Some(false));
+
+                    let data = antegen_thread_program::instruction::CreateThread {
+                        amount: fund,
+                        id: thread_id.clone().into(),
+                        trigger: Trigger::Interval {
+                            seconds: interval as i64,
+                            skippable: false,
+                            jitter: 0,
+                        },
+                        paused: None,
+                        instruction: Some(serializable_ix),
+                        priority_fee: Some(0),
+                        lookup_tables: Vec::new(),
+                    }
+                    .data();
+
+                    let ix = Instruction {
+                        program_id: antegen_thread_program::ID,
+                        accounts,
+                        data,
+                    };
+
+                    // A local validator will refuse connections when driven
+                    // hard enough, so treat transport failures as transient and
+                    // retry with backoff rather than losing the thread.
+                    const ATTEMPTS: u32 = 5;
+                    let mut last: String = String::new();
+                    for attempt in 0..ATTEMPTS {
+                        if attempt > 0 {
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                200 * (1 << attempt.min(4)),
+                            ))
+                            .await;
+                        }
+
+                        let blockhash = match client.get_latest_blockhash().await {
+                            Ok((bh, _)) => bh,
+                            Err(e) => {
+                                last = e.to_string();
+                                continue;
+                            }
+                        };
+                        let message = Message::new(&[ix.clone()], Some(&payer.pubkey()));
+                        let tx = Transaction::new(&[payer, authority], message, blockhash);
+
+                        match client.send_and_confirm_transaction(&tx).await {
+                            Ok(_) => return Ok(()),
+                            Err(e) => last = e.to_string(),
+                        }
+                    }
+                    Err(anyhow!("{}: {}", thread_id, last))
+                }
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
+
+        let created = results.iter().filter(|r| r.is_ok()).count();
+        let failed: Vec<String> = results
+            .into_iter()
+            .filter_map(|r| r.err().map(|e| e.to_string()))
+            .collect();
+
+        println!(
+            "\nCreated {}/{} threads in {:.1}s",
+            created,
+            count,
+            started.elapsed().as_secs_f64()
+        );
+        if !failed.is_empty() {
+            println!("{} failed; first few:", failed.len());
+            for e in failed.iter().take(5) {
+                println!("  {}", e);
+            }
+        }
+        Ok(())
+    }
+
+    /// Delete threads created by `create_load_threads`.
+    async fn clean_load_threads(
+        client: &RpcPool,
+        payer: &Keypair,
+        authority: &Keypair,
+        count: u32,
+        concurrency: usize,
+    ) -> Result<()> {
+        use futures::stream::{self, StreamExt};
+
+        println!("\nDeleting up to {} load threads...", count);
+        let started = std::time::Instant::now();
+
+        let results: Vec<bool> = stream::iter(0..count)
+            .map(|i| {
+                let thread_id = load_thread_id(i);
+                async move {
+                    let (thread_pubkey, _) = derive_thread_pda(authority.pubkey(), &thread_id);
+                    // Absent threads are not an error — the range is allowed to
+                    // over-cover what was actually created.
+                    match client.get_account(&thread_pubkey).await {
+                        Ok(Some(_)) => delete_test_thread(client, payer, authority, thread_pubkey)
+                            .await
+                            .is_ok(),
+                        _ => false,
+                    }
+                }
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
+
+        println!(
+            "Deleted {} threads in {:.1}s",
+            results.iter().filter(|ok| **ok).count(),
+            started.elapsed().as_secs_f64()
+        );
+        Ok(())
+    }
+
     async fn create_test_thread(
         client: &RpcPool,
         payer: &Keypair,

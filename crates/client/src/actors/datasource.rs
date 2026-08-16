@@ -8,15 +8,17 @@
 //! before forwarding to StagingActor.
 
 use crate::actors::messages::{
-    DatasourceMessage, GeyserSourceMessage, RpcSourceMessage, StagingMessage,
+    ClockSource, DatasourceMessage, GeyserSourceMessage, RpcSourceMessage, StagingMessage,
 };
 use crate::config::{ClientConfig, EndpointRole, RpcEndpoint};
 use crate::datasources::RpcSubscription;
 use crate::resources::SharedResources;
 use crate::types::AccountUpdate;
-use ractor::{Actor, ActorProcessingErr, ActorRef};
+use ractor::{Actor, ActorProcessingErr, ActorRef, SupervisionEvent};
 use std::collections::HashMap;
 use std::error::Error;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -121,6 +123,69 @@ impl Actor for DatasourceSupervisor {
         }
     }
 
+    /// Losing one datasource must not take down the node.
+    ///
+    /// ractor's default supervisor behaviour is to stop on any child exit, which
+    /// propagates to the root supervisor and shuts the process down. That makes
+    /// configuring redundant datasources actively harmful: any one endpoint
+    /// flapping kills a node that had N-1 healthy sources still delivering.
+    /// Escalate only when nothing is left to listen with.
+    async fn handle_supervisor_evt(
+        &self,
+        myself: ActorRef<Self::Msg>,
+        message: SupervisionEvent,
+        state: &mut Self::State,
+    ) -> Result<(), ActorProcessingErr> {
+        let (who, why) = match message {
+            SupervisionEvent::ActorTerminated(who, _, reason) => {
+                (who, reason.unwrap_or_else(|| "terminated".to_string()))
+            }
+            SupervisionEvent::ActorFailed(who, error) => (who, error.to_string()),
+            _ => return Ok(()),
+        };
+
+        let name = who.get_name().unwrap_or_default();
+        state.rpc_sources.remove(&name);
+        if state
+            .geyser_source
+            .as_ref()
+            .is_some_and(|r| r.get_name().unwrap_or_default() == name)
+        {
+            state.geyser_source = None;
+        }
+
+        let rpc_live = state.rpc_sources.len();
+        let total_live = rpc_live + usize::from(state.geyser_source.is_some());
+
+        if total_live == 0 {
+            log::error!(
+                "Datasource {} down ({}). No datasources remain — escalating.",
+                name,
+                why
+            );
+            myself.stop(None);
+            return Ok(());
+        }
+
+        log::warn!(
+            "Datasource {} down ({}). {} datasource(s) still live.",
+            name,
+            why,
+            total_live
+        );
+
+        if rpc_live == 0 {
+            // Scheduling ticks come from the clock subscription on an RPC
+            // datasource, so losing all of them stops execution even though a
+            // Geyser feed is still delivering account updates.
+            log::error!(
+                "No RPC datasources remain — clock ticks have stopped, threads will not fire"
+            );
+        }
+
+        Ok(())
+    }
+
     async fn post_stop(
         &self,
         _myself: ActorRef<Self::Msg>,
@@ -141,16 +206,83 @@ impl Actor for DatasourceSupervisor {
 #[derive(Default)]
 pub struct RpcSourceActor;
 
-/// Maximum number of subscription restart attempts before the actor gives up
+/// Maximum subscription restarts allowed within `RESTART_WINDOW` before the
+/// actor gives up on this endpoint.
 const MAX_SUBSCRIPTION_RESTARTS: u32 = 3;
+
+/// Window over which restarts are counted. Without a window this is a *lifetime*
+/// budget: a connection that flaps three times over days of uptime is treated
+/// the same as one flapping three times a minute, and the endpoint is abandoned
+/// despite being healthy in between.
+const RESTART_WINDOW: Duration = Duration::from_secs(300);
+
+/// How often the fallback poller checks whether the clock subscription has gone
+/// quiet.
+const CLOCK_POLL_INTERVAL: Duration = Duration::from_millis(400);
+
+/// How long the clock subscription may be silent before the poller takes over.
+///
+/// Slots are ~400ms, so a healthy subscription delivers well inside this. Sized
+/// to tolerate a brief gap without flapping between the two sources.
+const CLOCK_SUBSCRIPTION_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Rate limiter for subscription restarts.
+#[derive(Debug, Default)]
+struct RestartBudget {
+    count: u32,
+    window_start: Option<Instant>,
+}
+
+impl RestartBudget {
+    /// Backoff before re-attempting, growing with consecutive failures.
+    ///
+    /// Without this the budget is meaningless: `WsClient::build` returns
+    /// immediately when the initial connect fails, so the watcher reports the
+    /// death instantly and the whole window's worth of restarts is consumed in
+    /// milliseconds — turning a briefly unreachable endpoint into a node
+    /// shutdown, which is the opposite of what the budget is for.
+    fn backoff(&self) -> Duration {
+        const BASE: Duration = Duration::from_millis(250);
+        const CAP: Duration = Duration::from_secs(10);
+        BASE.saturating_mul(1u32.checked_shl(self.count.min(6)).unwrap_or(u32::MAX))
+            .min(CAP)
+    }
+
+    /// Record a restart. Returns the count within the current window.
+    fn record(&mut self) -> u32 {
+        let now = Instant::now();
+        match self.window_start {
+            Some(start) if now.duration_since(start) <= RESTART_WINDOW => {
+                self.count += 1;
+            }
+            _ => {
+                // First restart, or the previous window has aged out — the
+                // subscription was healthy for long enough to earn a fresh
+                // budget.
+                self.window_start = Some(now);
+                self.count = 1;
+            }
+        }
+        self.count
+    }
+
+    fn exhausted(&self) -> bool {
+        self.count > MAX_SUBSCRIPTION_RESTARTS
+    }
+}
 
 pub struct RpcSourceState {
     ws_url: String,
     staging_ref: ActorRef<StagingMessage>,
     resources: SharedResources,
     cancel_token: CancellationToken,
-    program_restart_count: u32,
-    clock_restart_count: u32,
+    program_restarts: RestartBudget,
+    clock_restarts: RestartBudget,
+    /// When the *subscription* last delivered a clock. Shared with the fallback
+    /// poller, which stays idle while this is fresh.
+    last_subscription_clock: Arc<Mutex<Instant>>,
+    /// Guards against a reconnect storm stacking up backfills.
+    backfill_in_flight: bool,
 }
 
 impl Actor for RpcSourceActor {
@@ -173,18 +305,41 @@ impl Actor for RpcSourceActor {
         log::debug!("  - Clock sysvar: {}", solana_sdk::sysvar::clock::ID);
 
         let cancel_token = CancellationToken::new();
+        let last_subscription_clock = Arc::new(Mutex::new(Instant::now()));
+
+        spawn_clock_fallback(
+            &ws_url,
+            &resources,
+            myself.clone(),
+            cancel_token.clone(),
+            last_subscription_clock.clone(),
+        );
 
         // Spawn monitored subscription tasks
-        spawn_program_subscription(&ws_url, &resources, myself.clone(), cancel_token.clone());
-        spawn_clock_subscription(&ws_url, &resources, myself.clone(), cancel_token.clone());
+        spawn_program_subscription(
+            &ws_url,
+            &resources,
+            myself.clone(),
+            cancel_token.clone(),
+            Duration::ZERO,
+        );
+        spawn_clock_subscription(
+            &ws_url,
+            &resources,
+            myself.clone(),
+            cancel_token.clone(),
+            Duration::ZERO,
+        );
 
         Ok(RpcSourceState {
             ws_url,
             staging_ref,
             resources,
             cancel_token,
-            program_restart_count: 0,
-            clock_restart_count: 0,
+            program_restarts: RestartBudget::default(),
+            clock_restarts: RestartBudget::default(),
+            backfill_in_flight: false,
+            last_subscription_clock,
         })
     }
 
@@ -205,12 +360,20 @@ impl Actor for RpcSourceActor {
                 );
 
                 // Push to cache first - this deduplicates and stores the data
-                // Returns true only if this is new/newer data
+                // Returns true only if this is new/newer data. With several
+                // datasources racing, this is the arbitration point: the first
+                // endpoint to deliver a given state wins and the rest are
+                // dropped here.
                 let is_new = state
                     .resources
                     .cache
                     .put_if_newer(update.pubkey, update.data.clone(), update.slot)
                     .await;
+
+                state
+                    .resources
+                    .ingest_stats
+                    .record_account(&state.ws_url, is_new);
 
                 if is_new {
                     log::debug!(
@@ -235,13 +398,36 @@ impl Actor for RpcSourceActor {
 
                 Ok(())
             }
-            RpcSourceMessage::ClockReceived(clock) => {
+            RpcSourceMessage::ClockReceived(clock, source) => {
+                if source == ClockSource::Subscription {
+                    *state
+                        .last_subscription_clock
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()) = Instant::now();
+                }
+
                 log::trace!(
                     "[{}] Received clock update: slot={}, timestamp={}",
                     state.ws_url,
                     clock.slot,
                     clock.unix_timestamp
                 );
+
+                // Attribute the clock race. Whichever endpoint raises the slot
+                // high-water mark first is the one actually driving scheduling;
+                // the others are paying for a subscription that adds nothing.
+                if let Some(lag) = state.resources.ingest_stats.record_clock(
+                    &state.ws_url,
+                    clock.slot,
+                    Instant::now(),
+                ) {
+                    log::trace!(
+                        "[{}] lost clock race for slot {} by {}ms",
+                        state.ws_url,
+                        clock.slot,
+                        lag.as_millis()
+                    );
+                }
 
                 // Clock is NOT cached - always forward fresh to StagingActor
                 state
@@ -252,46 +438,80 @@ impl Actor for RpcSourceActor {
                 Ok(())
             }
             RpcSourceMessage::Reconnected => {
-                // WebSocket connected - perform backfill to load/refresh threads
-                let subscription = RpcSubscription::new(
-                    state.ws_url.clone(),
-                    state.resources.program_id,
-                    state.resources.rpc_client.clone(),
-                );
-                if let Err(e) = subscription.perform_backfill(myself.clone()).await {
-                    log::error!("[{}] Backfill failed: {}", state.ws_url, e);
+                // Backfill is an unpaginated getProgramAccounts — seconds on a
+                // large program. Awaiting it here would hold this actor's
+                // mailbox for the whole call, stalling every clock tick and
+                // account update from this endpoint. Run it off the actor loop;
+                // it already reports results back by message.
+                if state.backfill_in_flight {
+                    log::debug!("[{}] Backfill already in flight, skipping", state.ws_url);
+                    return Ok(());
                 }
+
+                // Debounced across every datasource, not just this one. With
+                // redundant endpoints each reconnect would otherwise trigger its
+                // own full program scan, and all but the first are discarded as
+                // duplicates by the cache.
+                if !state.resources.ingest_stats.try_claim_backfill() {
+                    log::debug!(
+                        "[{}] Another datasource backfilled recently, skipping",
+                        state.ws_url
+                    );
+                    return Ok(());
+                }
+                state.backfill_in_flight = true;
+
+                let subscription =
+                    RpcSubscription::from_resources(state.ws_url.clone(), &state.resources);
+                let ws_url = state.ws_url.clone();
+                let actor_ref = myself.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = subscription.perform_backfill(actor_ref.clone()).await {
+                        log::error!("[{}] Backfill failed: {}", ws_url, e);
+                    }
+                    let _ = actor_ref.send_message(RpcSourceMessage::BackfillFinished);
+                });
 
                 Ok(())
             }
+            RpcSourceMessage::BackfillFinished => {
+                state.backfill_in_flight = false;
+                Ok(())
+            }
             RpcSourceMessage::SubscriptionDied(which) => {
-                // A subscription background task has exited — restart it if under retry limit
-                let (restart_count, limit_name) = match which.as_str() {
-                    "program" => (&mut state.program_restart_count, "program"),
-                    "clock" => (&mut state.clock_restart_count, "clock"),
+                // A subscription background task has exited — restart it if the
+                // endpoint has not been flapping.
+                let (budget, limit_name) = match which.as_str() {
+                    "program" => (&mut state.program_restarts, "program"),
+                    "clock" => (&mut state.clock_restarts, "clock"),
                     other => {
                         log::warn!("[{}] Unknown subscription died: {}", state.ws_url, other);
                         return Ok(());
                     }
                 };
 
-                *restart_count += 1;
+                let count = budget.record();
+                let delay = budget.backoff();
                 log::warn!(
-                    "[{}] {} subscription died (restart {}/{})",
+                    "[{}] {} subscription died (restart {}/{} within {}s)",
                     state.ws_url,
                     limit_name,
-                    *restart_count,
-                    MAX_SUBSCRIPTION_RESTARTS
+                    count,
+                    MAX_SUBSCRIPTION_RESTARTS,
+                    RESTART_WINDOW.as_secs()
                 );
+                log::debug!("[{}] Retrying in {:?}", state.ws_url, delay);
 
-                if *restart_count > MAX_SUBSCRIPTION_RESTARTS {
+                if budget.exhausted() {
                     log::error!(
-                        "[{}] {} subscription exceeded max restarts, stopping actor",
+                        "[{}] {} subscription is flapping, giving up on this endpoint",
                         state.ws_url,
                         limit_name
                     );
+                    // Stopping this actor takes down only this datasource. The
+                    // supervisor decides whether any remain.
                     return Err(From::from(format!(
-                        "{} subscription exceeded max restarts",
+                        "{} subscription exceeded restart budget",
                         limit_name
                     )));
                 }
@@ -304,6 +524,7 @@ impl Actor for RpcSourceActor {
                             &state.resources,
                             myself.clone(),
                             state.cancel_token.clone(),
+                            delay,
                         );
                     }
                     "clock" => {
@@ -312,6 +533,7 @@ impl Actor for RpcSourceActor {
                             &state.resources,
                             myself.clone(),
                             state.cancel_token.clone(),
+                            delay,
                         );
                     }
                     _ => {}
@@ -342,14 +564,21 @@ fn spawn_program_subscription(
     resources: &SharedResources,
     actor_ref: ActorRef<RpcSourceMessage>,
     cancel_token: CancellationToken,
+    delay: Duration,
 ) {
     let program_ws_url = ws_url.to_string();
-    let program_id = resources.program_id;
-    let rpc_client = resources.rpc_client.clone();
+    let sub_resources = resources.clone();
     let sub_actor_ref = actor_ref.clone();
 
     let handle = tokio::spawn(async move {
-        let subscription = RpcSubscription::new(program_ws_url, program_id, rpc_client);
+        // Waiting here rather than in the actor keeps its mailbox free.
+        if !delay.is_zero() {
+            tokio::select! {
+                _ = tokio::time::sleep(delay) => {}
+                _ = cancel_token.cancelled() => return,
+            }
+        }
+        let subscription = RpcSubscription::from_resources(program_ws_url, &sub_resources);
         tokio::select! {
             _ = subscription.subscribe_to_program_accounts(sub_actor_ref) => {}
             _ = cancel_token.cancelled() => {
@@ -365,6 +594,94 @@ fn spawn_program_subscription(
     });
 }
 
+/// Poll the Clock sysvar whenever the subscription goes quiet.
+///
+/// The clock is the only thing that advances scheduling, so losing it is total
+/// — and it fails silently, because an RPC that does not push sysvar account
+/// notifications still acknowledges the subscription. This keeps the node
+/// working (in a degraded, poll-driven mode) instead of sitting idle reporting
+/// success.
+///
+/// While the subscription is healthy this costs one cheap comparison per tick
+/// and issues no requests.
+fn spawn_clock_fallback(
+    ws_url: &str,
+    resources: &SharedResources,
+    actor_ref: ActorRef<RpcSourceMessage>,
+    cancel_token: CancellationToken,
+    last_subscription_clock: Arc<Mutex<Instant>>,
+) {
+    let label = ws_url.to_string();
+    let rpc = resources.rpc_client.clone();
+
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(CLOCK_POLL_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut warned = false;
+
+        loop {
+            tokio::select! {
+                _ = ticker.tick() => {}
+                _ = cancel_token.cancelled() => return,
+            }
+
+            let quiet_for = {
+                let last = last_subscription_clock
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                last.elapsed()
+            };
+            if quiet_for < CLOCK_SUBSCRIPTION_TIMEOUT {
+                warned = false;
+                continue;
+            }
+
+            if !warned {
+                warned = true;
+                log::warn!(
+                    "[{}] Clock subscription silent for {:?}; falling back to polling. \
+                     Scheduling still works but each tick costs an RPC round trip.",
+                    label,
+                    quiet_for
+                );
+            }
+
+            let account = match rpc.get_account(&solana_sdk::sysvar::clock::ID).await {
+                Ok(Some(a)) => a,
+                Ok(None) => {
+                    log::error!("[{}] Clock sysvar not found", label);
+                    continue;
+                }
+                Err(e) => {
+                    log::debug!("[{}] Clock poll failed: {}", label, e);
+                    continue;
+                }
+            };
+
+            let data =
+                match crate::rpc::response::decode_account_data(&account.data.0, &account.data.1) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        log::debug!("[{}] Failed to decode polled clock: {}", label, e);
+                        continue;
+                    }
+                };
+
+            match bincode::deserialize::<solana_sdk::clock::Clock>(&data) {
+                Ok(clock) => {
+                    if actor_ref
+                        .send_message(RpcSourceMessage::ClockReceived(clock, ClockSource::Poll))
+                        .is_err()
+                    {
+                        return; // actor gone
+                    }
+                }
+                Err(e) => log::debug!("[{}] Failed to deserialize polled clock: {}", label, e),
+            }
+        }
+    });
+}
+
 /// Spawn a monitored clock subscription task.
 /// Same pattern as `spawn_program_subscription`.
 fn spawn_clock_subscription(
@@ -372,14 +689,21 @@ fn spawn_clock_subscription(
     resources: &SharedResources,
     actor_ref: ActorRef<RpcSourceMessage>,
     cancel_token: CancellationToken,
+    delay: Duration,
 ) {
     let clock_ws_url = ws_url.to_string();
-    let program_id = resources.program_id;
-    let rpc_client = resources.rpc_client.clone();
+    let sub_resources = resources.clone();
     let sub_actor_ref = actor_ref.clone();
 
     let handle = tokio::spawn(async move {
-        let subscription = RpcSubscription::new(clock_ws_url, program_id, rpc_client);
+        // Waiting here rather than in the actor keeps its mailbox free.
+        if !delay.is_zero() {
+            tokio::select! {
+                _ = tokio::time::sleep(delay) => {}
+                _ = cancel_token.cancelled() => return,
+            }
+        }
+        let subscription = RpcSubscription::from_resources(clock_ws_url, &sub_resources);
         tokio::select! {
             _ = subscription.subscribe_to_clock(sub_actor_ref) => {}
             _ = cancel_token.cancelled() => {
@@ -452,6 +776,32 @@ impl Actor for GeyserSourceActor {
                             update.data.len()
                         );
 
+                        // The clock sysvar drives scheduling and must arrive as a
+                        // ClockTick. Sent as a plain AccountUpdate it is classified
+                        // as AccountType::Clock and discarded, which left plugin
+                        // deployments depending entirely on a remote WebSocket
+                        // subscription while a bank-local clock — the lowest
+                        // latency source available — went unused.
+                        //
+                        // It is deliberately not cached: it changes every slot, so
+                        // caching it only churns a no-TTL entry.
+                        if update.pubkey == solana_sdk::sysvar::clock::ID {
+                            match bincode::deserialize::<solana_sdk::clock::Clock>(&update.data) {
+                                Ok(clock) => {
+                                    if let Err(e) =
+                                        staging.send_message(StagingMessage::ClockTick(clock))
+                                    {
+                                        log::error!("[Geyser] Failed to send clock to staging: {}", e);
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!("[Geyser] Failed to decode clock sysvar: {}", e);
+                                }
+                            }
+                            continue;
+                        }
+
                         // Push to cache first - this deduplicates and stores the data
                         let is_new = cache
                             .put_if_newer(update.pubkey, update.data.clone(), update.slot)
@@ -520,5 +870,60 @@ impl Actor for GeyserSourceActor {
         state.cancel_token.cancel();
         log::info!("GeyserSourceActor stopped");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restart_backoff_grows_and_is_capped() {
+        let mut b = RestartBudget::default();
+
+        // First failure retries quickly; repeats back off.
+        assert_eq!(b.backoff(), Duration::from_millis(250));
+        b.record();
+        assert_eq!(b.backoff(), Duration::from_millis(500));
+        b.record();
+        assert_eq!(b.backoff(), Duration::from_secs(1));
+
+        for _ in 0..20 {
+            b.record();
+        }
+        assert_eq!(b.backoff(), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn budget_is_not_exhaustible_faster_than_the_backoff_allows() {
+        // Regression: an endpoint refusing connections returns from `build()`
+        // immediately, so without backoff the entire window's budget burned in
+        // milliseconds and took the node down. The accumulated wait to exhaust
+        // the budget must be a meaningful fraction of the window.
+        let mut b = RestartBudget::default();
+        let mut waited = Duration::ZERO;
+        while !b.exhausted() {
+            waited += b.backoff();
+            b.record();
+        }
+        assert!(
+            waited >= Duration::from_secs(3),
+            "budget exhausted after only {waited:?} of backoff"
+        );
+    }
+
+    #[test]
+    fn healthy_period_earns_a_fresh_budget() {
+        let mut b = RestartBudget::default();
+        for _ in 0..=MAX_SUBSCRIPTION_RESTARTS {
+            b.record();
+        }
+        assert!(b.exhausted());
+
+        // Simulate the window ageing out: a subscription healthy for longer than
+        // the window must not be penalised for restarts from hours ago.
+        b.window_start = Some(Instant::now() - RESTART_WINDOW - Duration::from_secs(1));
+        b.record();
+        assert!(!b.exhausted());
     }
 }

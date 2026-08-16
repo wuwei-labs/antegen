@@ -53,6 +53,19 @@ impl Default for ExecutorConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RpcConfig {
     pub endpoints: Vec<RpcEndpoint>,
+    /// Skip the RPC node's preflight simulation when submitting.
+    ///
+    /// The client already simulates before signing, so preflight is a third,
+    /// server-side simulation on the critical path. Skipping it means paying
+    /// the fee for a transaction that would have been rejected at preflight —
+    /// set to `false` if that shows up as meaningful fee waste. Note that TPU
+    /// submission never preflights, so this only affects the RPC fallback.
+    #[serde(default = "default_skip_preflight")]
+    pub skip_preflight: bool,
+}
+
+fn default_skip_preflight() -> bool {
+    true
 }
 
 /// Individual RPC endpoint
@@ -105,10 +118,28 @@ pub enum EndpointRole {
 /// Datasource configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DatasourceConfig {
+    /// Commitment for the thread program subscription.
+    ///
+    /// Kept at `confirmed`: thread state drives execution dedup, load-balancer
+    /// ownership and `exec_count` checks, and acting on a `processed` update
+    /// that is later rolled back would mean executing against state that never
+    /// existed.
     #[serde(default = "default_commitment")]
     pub commitment: String,
+    /// Commitment for the clock sysvar subscription.
+    ///
+    /// Defaults to `processed`, which is one to two slots ahead of `confirmed`.
+    /// The clock is only a scheduling hint — the on-chain `require!` in
+    /// `thread_exec` is the real gate — so firing a slot early costs at worst a
+    /// short wait, while firing a slot late costs ~400ms on every execution.
+    #[serde(default = "default_clock_commitment")]
+    pub clock_commitment: String,
     #[serde(default = "default_program_id", with = "pubkey_string")]
     pub program_id: Pubkey,
+}
+
+fn default_clock_commitment() -> String {
+    "processed".to_string()
 }
 
 fn default_program_id() -> Pubkey {
@@ -400,6 +431,13 @@ impl ClientConfig {
 
         // Validate commitment level
         let valid_commitments = ["processed", "confirmed", "finalized"];
+        if !valid_commitments.contains(&self.datasources.clock_commitment.as_str()) {
+            return Err(anyhow::anyhow!(
+                "Invalid clock commitment level: {}. Must be one of: {}",
+                self.datasources.clock_commitment,
+                valid_commitments.join(", ")
+            ));
+        }
         if !valid_commitments.contains(&self.datasources.commitment.as_str()) {
             anyhow::bail!(
                 "Invalid commitment level: {}. Must be one of: {}",
@@ -431,9 +469,11 @@ impl Default for ClientConfig {
                     role: EndpointRole::Both,
                     priority: 1,
                 }],
+                skip_preflight: default_skip_preflight(),
             },
             datasources: DatasourceConfig {
-                commitment: "confirmed".to_string(),
+                commitment: default_commitment(),
+                clock_commitment: default_clock_commitment(),
                 program_id: default_program_id(),
             },
             processor: ProcessorConfig {

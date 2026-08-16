@@ -21,6 +21,7 @@ use antegen_thread_program::{
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
     account::Account,
+    hash::Hash,
     instruction::{AccountMeta, Instruction},
     message::Message,
     pubkey::Pubkey,
@@ -32,7 +33,7 @@ use solana_sdk::{
 use std::collections::HashSet;
 
 use anyhow::{anyhow, Result};
-use log::{debug, info, warn};
+use log::{debug, warn};
 use std::sync::Arc;
 
 /// Maximum serialized transaction size in bytes (Solana's PACKET_DATA_SIZE)
@@ -92,16 +93,25 @@ impl ExecutorLogic {
     /// Returns (instructions, priority_fee, needs_continuation)
     /// Build a single transaction batch to execute a thread.
     ///
-    /// Returns (instructions, priority_fee, needs_continuation, next_fiber_cursor).
+    /// Returns (instructions, priority_fee, needs_continuation, next_fiber_cursor,
+    /// simulated_units).
+    ///
     /// When `needs_continuation` is true, `next_fiber_cursor` holds the cursor
     /// that the next batch should start from (needed because on-chain Chain
     /// signal doesn't advance `fiber_cursor`).
+    ///
+    /// `simulated_units` carries the compute units observed by the batching
+    /// simulation, but only when that simulation covered the *final* instruction
+    /// set. It is `None` when the loop appended an instruction after its last
+    /// simulate, in which case the caller must estimate separately. Reusing it
+    /// saves a full simulate round trip on the single-fiber path, which is the
+    /// overwhelming majority of executions.
     pub async fn build_execute_transaction(
         &self,
         thread_pubkey: &Pubkey,
         thread: &Thread,
         override_fiber_cursor: Option<u8>,
-    ) -> Result<(Vec<Instruction>, u64, bool, Option<u8>)> {
+    ) -> Result<(Vec<Instruction>, u64, bool, Option<u8>, Option<u64>)> {
         // Log thread state for debugging
         self.log_thread_debug(thread, thread_pubkey);
 
@@ -110,13 +120,16 @@ impl ExecutorLogic {
         let mut ixs: Vec<Instruction> = Vec::new();
         let mut needs_continuation = false;
         let mut next_fiber_cursor: Option<u8> = None;
+        // Units from the most recent simulate, valid only while `ixs` is
+        // unchanged since. Cleared on every push.
+        let mut simulated_units: Option<u64> = None;
 
         // Track fiber_cursor through the chaining loop
         // Signal::Chain tells us to execute next fiber in sequence
         let mut current_fiber_cursor = override_fiber_cursor.unwrap_or(thread.fiber_cursor);
 
         // Build first instruction
-        info!(
+        debug!(
             "{}: starting build: thread.fiber_cursor={}, override={:?}, using={}",
             thread_pubkey, thread.fiber_cursor, override_fiber_cursor, current_fiber_cursor
         );
@@ -131,8 +144,8 @@ impl ExecutorLogic {
 
         // Empty fiber — nothing to submit
         let Some(first_ix) = first_ix else {
-            info!("{}: first fiber is empty, nothing to submit", thread_pubkey);
-            return Ok((vec![], 0, false, None));
+            debug!("{}: first fiber is empty, nothing to submit", thread_pubkey);
+            return Ok((vec![], 0, false, None, None));
         };
 
         debug!(
@@ -163,8 +176,9 @@ impl ExecutorLogic {
                 "Simulating transaction with {} instruction(s) to check for batching...",
                 ixs.len()
             );
-            let (signal, _units) = self.simulate_transaction(&ixs, thread_pubkey).await?;
-            info!(
+            let (signal, units) = self.simulate_transaction(&ixs, thread_pubkey).await?;
+            simulated_units = Some(units);
+            debug!(
                 "{}: fiber {} simulation signal={:?}",
                 thread_pubkey, current_fiber_cursor, signal
             );
@@ -175,7 +189,7 @@ impl ExecutorLogic {
                     // Calculate next fiber in sequence
                     current_fiber_cursor =
                         Self::next_fiber_in_sequence(&thread.fiber_ids, current_fiber_cursor);
-                    info!(
+                    debug!(
                         "Batching: Signal::Chain, adding thread_exec for fiber {}",
                         current_fiber_cursor
                     );
@@ -190,7 +204,7 @@ impl ExecutorLogic {
 
                     // Empty fiber — stop chaining
                     let Some(next_ix) = next_ix else {
-                        info!(
+                        debug!(
                             "{}: chained fiber {} is empty, stopping chain",
                             thread_pubkey, current_fiber_cursor
                         );
@@ -203,12 +217,16 @@ impl ExecutorLogic {
                     let trial_size = self.estimate_transaction_size_with_budget(&trial);
                     if trial_size <= MAX_TRANSACTION_SIZE {
                         ixs.push(next_ix);
+                        // The batch grew; the estimate no longer covers it. If
+                        // the loop now exits on MAX_BATCHED_EXECS this stays
+                        // None and the caller estimates properly.
+                        simulated_units = None;
                     } else {
                         // Doesn't fit — return what we have and signal continuation.
                         // The worker will submit this batch, confirm it, re-fetch
                         // the thread, and call us again for the next batch.
                         let current_size = self.estimate_transaction_size_with_budget(&ixs);
-                        info!(
+                        debug!(
                             "{}: transaction full ({} ix, {} bytes), adding fiber {} would be {} bytes (max {}), needs continuation",
                             thread_pubkey,
                             ixs.len(),
@@ -224,7 +242,7 @@ impl ExecutorLogic {
                 }
                 Signal::Close => {
                     // Build thread_exec that executes the pre-compiled close_fiber
-                    info!("Signal::Close detected - building thread_exec with close_fiber");
+                    debug!("Signal::Close detected - building thread_exec with close_fiber");
                     let close_ix = self.build_close_thread_exec(thread_pubkey, thread).await?;
 
                     // Check if close instruction fits in current batch
@@ -232,8 +250,10 @@ impl ExecutorLogic {
                     trial.push(close_ix.clone());
                     if self.would_fit_in_transaction(&trial) {
                         ixs.push(close_ix);
+                        // close_ix was never simulated.
+                        simulated_units = None;
                     } else {
-                        info!(
+                        debug!(
                             "{}: transaction full ({} ix), close deferred to continuation",
                             thread_pubkey,
                             ixs.len()
@@ -244,7 +264,7 @@ impl ExecutorLogic {
                 }
                 _ => {
                     // No batching needed for None, Repeat, Next, Update
-                    info!(
+                    debug!(
                         "{}: signal={:?}, no chaining needed ({} exec instruction(s))",
                         thread_pubkey,
                         signal,
@@ -260,7 +280,7 @@ impl ExecutorLogic {
             let mut all_pubkeys: HashSet<Pubkey> = HashSet::new();
             for (i, ix) in ixs.iter().enumerate() {
                 let ix_pubkeys: HashSet<Pubkey> = ix.accounts.iter().map(|a| a.pubkey).collect();
-                info!(
+                debug!(
                     "{}: ix[{}] has {} accounts ({} unique)",
                     thread_pubkey,
                     i,
@@ -270,7 +290,7 @@ impl ExecutorLogic {
                 all_pubkeys.extend(ix_pubkeys);
             }
             let message = Message::new(&ixs, Some(&self.keypair.pubkey()));
-            info!(
+            debug!(
                 "{}: batched transaction: {} instructions, {} unique accounts in message, {} account_keys",
                 thread_pubkey,
                 ixs.len(),
@@ -279,7 +299,7 @@ impl ExecutorLogic {
             );
         }
 
-        info!(
+        debug!(
             "{}: built {} instruction(s), priority_fee={}, continuation={}",
             thread_pubkey,
             ixs.len(),
@@ -287,7 +307,13 @@ impl ExecutorLogic {
             needs_continuation
         );
 
-        Ok((ixs, priority_fee, needs_continuation, next_fiber_cursor))
+        Ok((
+            ixs,
+            priority_fee,
+            needs_continuation,
+            next_fiber_cursor,
+            simulated_units,
+        ))
     }
 
     /// Fetch thread account from RPC and deserialize.
@@ -395,7 +421,7 @@ impl ExecutorLogic {
 
         // Empty compiled_instruction = cleared fiber (e.g. after close). Skip.
         if fiber_read.compiled_instruction().is_empty() {
-            info!(
+            debug!(
                 "fiber_{} has empty compiled_instruction, skipping",
                 fiber_cursor
             );
@@ -538,7 +564,7 @@ impl ExecutorLogic {
 
         match decompile_instruction(&compiled) {
             Ok(decompiled) => {
-                info!(
+                debug!(
                     "fiber_{} account audit: compiled_table={} unique, decompiled_accounts={}, program_id={}",
                     fiber_cursor,
                     compiled.accounts.len(),
@@ -600,7 +626,7 @@ impl ExecutorLogic {
         }
         .data();
 
-        info!(
+        debug!(
             "fiber_{} instruction: program={}, base_accounts={}, remaining={}, total={}, data_len={}",
             fiber_cursor,
             self.program_id,
@@ -744,23 +770,20 @@ impl ExecutorLogic {
             }
         }
 
-        // 1. Get blockhash from RPC pool
-        let (blockhash, _) = self
-            .resources
-            .rpc_client
-            .get_latest_blockhash()
-            .await
-            .map_err(|e| anyhow!("Failed to get blockhash for simulation: {}", e))?;
-        debug!("Got blockhash for simulation: {}", blockhash);
-
-        // 2. Build transaction with generous CU limit for simulation headroom.
-        // The actual CU limit is set precisely later by the worker (cu_estimate * 1.1).
+        // 1. Build transaction with generous CU limit for simulation headroom.
+        // The actual CU limit is set precisely later by the worker.
+        //
+        // No blockhash is fetched: the simulation request sets
+        // `replaceRecentBlockhash: true` and `sigVerify: false`, so the
+        // validator substitutes its own and ignores whatever we send. Fetching
+        // one here was a round trip on the critical path whose result was
+        // discarded server-side.
         let mut sim_ixs = vec![ComputeBudgetInstruction::set_compute_unit_limit(1_400_000)];
         sim_ixs.extend_from_slice(instructions);
         let message = Message::new(&sim_ixs, Some(&self.keypair.pubkey()));
-        let tx = Transaction::new(&[self.keypair.as_ref()], message, blockhash);
+        let tx = Transaction::new(&[self.keypair.as_ref()], message, Hash::default());
 
-        // 3. Simulate via RPC pool (handles failover, returns result with accounts)
+        // 2. Simulate via RPC pool (handles failover, returns result with accounts)
         let result = match self
             .resources
             .rpc_client
@@ -769,19 +792,25 @@ impl ExecutorLogic {
         {
             Ok(r) => r,
             Err(e) => {
-                // Log each instruction's accounts for diagnosis on simulation error
-                for (i, ix) in instructions.iter().enumerate() {
-                    warn!(
-                        "  IX[{}] program={}, {} accounts:",
-                        i,
-                        ix.program_id,
-                        ix.accounts.len()
-                    );
-                    for (j, acc) in ix.accounts.iter().enumerate() {
+                // Dump the account list for diagnosis — but only for genuine
+                // failures. Trigger-not-ready and paused are expected outcomes
+                // of firing on a projected clock, and the caller retries them;
+                // logging a full account dump each time buries real problems.
+                let rendered = e.to_string();
+                if !rendered.contains("6004") && !rendered.contains("6006") {
+                    for (i, ix) in instructions.iter().enumerate() {
                         warn!(
-                            "    [{}]: {} signer={} writable={}",
-                            j, acc.pubkey, acc.is_signer, acc.is_writable
+                            "  IX[{}] program={}, {} accounts:",
+                            i,
+                            ix.program_id,
+                            ix.accounts.len()
                         );
+                        for (j, acc) in ix.accounts.iter().enumerate() {
+                            warn!(
+                                "    [{}]: {} signer={} writable={}",
+                                j, acc.pubkey, acc.is_signer, acc.is_writable
+                            );
+                        }
                     }
                 }
                 return Err(e);
@@ -817,7 +846,7 @@ impl ExecutorLogic {
                         } else {
                             match Thread::try_deserialize(&mut data.as_slice()) {
                                 Ok(thread) => {
-                                    info!(
+                                    debug!(
                                         "{}: extracted signal={:?} from simulation",
                                         thread_pubkey, thread.fiber_signal
                                     );

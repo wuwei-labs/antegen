@@ -1,4 +1,4 @@
-//! Antegen CLI Core — shared library for antegen and antegenctl binaries
+//! Antegen CLI Core — shared library backing the `antegen` binary
 
 use clap::{Subcommand, ValueEnum};
 use std::path::PathBuf;
@@ -30,7 +30,7 @@ impl LogLevel {
 }
 
 // =============================================================================
-// Node config commands (shared between antegenctl and backward-compat aliases)
+// Node config commands
 // =============================================================================
 
 #[derive(Subcommand)]
@@ -45,10 +45,10 @@ pub enum NodeConfigCommands {
     /// Update configuration values
     #[command(after_long_help = "\
 EXAMPLES:
-    antegenctl config set --max-threads 20
-    antegenctl config set --commitment finalized --tpu-enabled false
-    antegenctl config set --keypair-path ~/.antegen/my-keypair.json
-    antegenctl config set --grace-period 15 --eviction-buffer 30
+    antegen config set --max-threads 20
+    antegen config set --commitment finalized --tpu-enabled false
+    antegen config set --keypair-path ~/.antegen/my-keypair.json
+    antegen config set --grace-period 15 --eviction-buffer 30
 ")]
     Set {
         /// Path to config file (defaults to ~/.config/antegen/antegen.toml)

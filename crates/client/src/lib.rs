@@ -19,22 +19,35 @@
 //! ```
 
 pub mod actors;
+pub mod clockref;
 pub mod config;
+pub mod confirm;
 pub mod datasources;
 pub mod executor;
 pub mod load_balancer;
 pub mod resources;
 pub mod rpc;
 pub mod tpu;
+pub mod trace;
 pub mod types;
 
+/// Version of the executor runtime linked into the calling binary.
+///
+/// The daemon ships inside `antegen`, which carries the CLI's version number,
+/// so `antegen --version` reports this alongside its own to keep "which client
+/// is my node running" answerable.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // Re-exports
+pub use clockref::ClockRef;
 pub use config::ClientConfig;
+pub use confirm::{Confirmation, SignatureWatcher};
 pub use executor::ExecutorLogic;
 pub use load_balancer::{LoadBalancer, LoadBalancerConfig, LoadBalancerStats, ProcessDecision};
 pub use resources::{AccountCache, CachedAccount, SharedResources};
 pub use rpc::RpcPool;
 pub use tpu::{TpuClient, TpuClientConfig};
+pub use trace::{ExecTrace, Outcome, SendPath};
 pub use types::{AccountUpdate, DurableTransactionMessage, ProcessorMessage, TransactionMessage};
 
 use anyhow::Result;

@@ -6,6 +6,5 @@
   "programs/fiber": "5.2.0",
   "cli/core": "6.1.0",
   "cli/antegen": "6.1.0",
-  "cli/antegenctl": "6.0.0",
   "plugin/geyser": "5.1.0"
 }

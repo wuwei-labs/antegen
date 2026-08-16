@@ -17,7 +17,8 @@ use solana_sdk::{clock::Clock, pubkey::Pubkey, sysvar};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::actors::messages::RpcSourceMessage;
+use crate::actors::messages::{ClockSource, RpcSourceMessage};
+use crate::resources::IngestStats;
 use crate::rpc::response::decode_account_data;
 use crate::rpc::websocket::{build_account_subscribe_request, build_program_subscribe_request};
 use crate::rpc::RpcPool;
@@ -30,16 +31,41 @@ pub struct RpcSubscription {
     ws_url: String,
     program_id: Pubkey,
     rpc_client: Arc<RpcPool>,
+    ingest_stats: Arc<IngestStats>,
+    commitment: Arc<str>,
+    clock_commitment: Arc<str>,
 }
 
 impl RpcSubscription {
     /// Create a new RPC subscription manager
-    pub fn new(ws_url: String, program_id: Pubkey, rpc_client: Arc<RpcPool>) -> Self {
+    pub fn new(
+        ws_url: String,
+        program_id: Pubkey,
+        rpc_client: Arc<RpcPool>,
+        ingest_stats: Arc<IngestStats>,
+        commitment: Arc<str>,
+        clock_commitment: Arc<str>,
+    ) -> Self {
         Self {
             ws_url,
             program_id,
             rpc_client,
+            ingest_stats,
+            commitment,
+            clock_commitment,
         }
+    }
+
+    /// Build a subscription manager from shared resources.
+    pub fn from_resources(ws_url: String, resources: &crate::resources::SharedResources) -> Self {
+        Self::new(
+            ws_url,
+            resources.program_id,
+            resources.rpc_client.clone(),
+            resources.ingest_stats.clone(),
+            resources.commitment.clone(),
+            resources.clock_commitment.clone(),
+        )
     }
 
     /// Perform backfill using getProgramAccounts via custom RpcPool
@@ -64,7 +90,7 @@ impl RpcSubscription {
             }
         })];
 
-        let accounts = self
+        let (slot, accounts) = self
             .rpc_client
             .get_program_accounts(&self.program_id, Some(filters))
             .await?;
@@ -88,11 +114,11 @@ impl RpcSubscription {
                 }
             };
 
-            let update = AccountUpdate {
-                pubkey,
-                data,
-                slot: 0, // Backfill uses slot 0; live updates will supersede with real slots
-            };
+            // Stamp with the snapshot's real slot. Using 0 here makes every
+            // backfilled account look stale to the cache, so a reconnect
+            // backfill silently updates nothing that is already cached —
+            // exactly when it is most needed.
+            let update = AccountUpdate::new(pubkey, data, slot);
 
             trace!("[{}] Backfilling Thread account: {}", self.ws_url, pubkey);
 
@@ -127,7 +153,7 @@ impl RpcSubscription {
             }
         })];
         let (_, subscribe_msg) =
-            build_program_subscribe_request(&self.program_id, "confirmed", Some(filters));
+            build_program_subscribe_request(&self.program_id, &self.commitment, Some(filters));
 
         let builder = match antegen_ws::WsClient::builder(&ws_url) {
             Ok(b) => b,
@@ -139,14 +165,26 @@ impl RpcSubscription {
 
         let actor_on_connect = actor_ref.clone();
         let url_on_connect = ws_url.clone();
+        let stats_on_connect = self.ingest_stats.clone();
         let mut handle = match builder
             .keepalive(KEEPALIVE)
             .on_connect(move |tx| {
                 let msg = subscribe_msg.clone();
                 let actor = actor_on_connect.clone();
                 let url = url_on_connect.clone();
+                let stats = stats_on_connect.clone();
                 async move {
-                    debug!("[{}] WS program connected, subscribing...", url);
+                    // `on_connect` fires on the initial connect and on every
+                    // reconnect. Counting them is the only reconnect signal the
+                    // client currently has — the transport's lifecycle events
+                    // are emitted with `try_send` onto a channel nobody drains,
+                    // so they are silently discarded once it fills.
+                    let connects = stats.record_connect(&url);
+                    if connects > 1 {
+                        warn!("[{}] WS program reconnected (connect #{})", url, connects);
+                    } else {
+                        debug!("[{}] WS program connected, subscribing...", url);
+                    }
                     if let Err(e) = tx.send_text(msg).await {
                         error!("[{}] Failed to send program subscription: {e}", url);
                         return Ok(());
@@ -187,7 +225,8 @@ impl RpcSubscription {
             ws_url
         );
 
-        let (_, subscribe_msg) = build_account_subscribe_request(&sysvar::clock::ID, "confirmed");
+        let (_, subscribe_msg) =
+            build_account_subscribe_request(&sysvar::clock::ID, &self.clock_commitment);
 
         let builder = match antegen_ws::WsClient::builder(&ws_url) {
             Ok(b) => b,
@@ -224,7 +263,10 @@ impl RpcSubscription {
         while let Some(msg) = handle.recv().await {
             if let WsMessage::Text(text) = msg {
                 if let Some(clock) = parse_clock_notification(&text) {
-                    if let Err(e) = actor_ref.send_message(RpcSourceMessage::ClockReceived(clock)) {
+                    if let Err(e) = actor_ref.send_message(RpcSourceMessage::ClockReceived(
+                        clock,
+                        ClockSource::Subscription,
+                    )) {
                         error!("[{}] Failed to send clock update: {:?}", ws_url, e);
                         break;
                     }
@@ -317,11 +359,7 @@ fn parse_program_notification(text: &str) -> Option<AccountUpdate> {
     let account_data = &params.result.value.account.data;
     let data = decode_account_data(&account_data.0, &account_data.1).ok()?;
 
-    Some(AccountUpdate {
-        pubkey,
-        data,
-        slot: params.result.context.slot,
-    })
+    Some(AccountUpdate::new(pubkey, data, params.result.context.slot))
 }
 
 /// Parse a clock account notification message

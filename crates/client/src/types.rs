@@ -9,12 +9,21 @@ pub struct AccountUpdate {
     pub pubkey: Pubkey,
     pub data: Vec<u8>,
     pub slot: u64,
+    /// When this update was decoded off the wire. Used to measure ingest
+    /// latency — the gap between a frame arriving and the thread being
+    /// scheduled — separately from execution latency.
+    pub received_at: std::time::Instant,
 }
 
 impl AccountUpdate {
-    /// Create a new account update
+    /// Create a new account update, stamped as received now.
     pub fn new(pubkey: Pubkey, data: Vec<u8>, slot: u64) -> Self {
-        Self { pubkey, data, slot }
+        Self {
+            pubkey,
+            data,
+            slot,
+            received_at: std::time::Instant::now(),
+        }
     }
 }
 

@@ -139,8 +139,38 @@ fn do_init(rpc: Option<String>, force: bool) -> Result<PathBuf> {
     Ok(config_path)
 }
 
+/// Whether `--version` output came from a pre-consolidation `antegen-node`.
+fn is_legacy_daemon(version_output: &str) -> bool {
+    version_output.starts_with("antegen-node")
+}
+
+/// Arguments the service should pass to a daemon binary.
+///
+/// The daemon used to be a separate `antegen-node` binary that took `--config`
+/// directly; it is now `antegen node run`. Both can be installed at once — an
+/// operator rolling back to a pre-consolidation version still has its binary on
+/// disk — so ask the binary which it is rather than guessing from a version
+/// number. `antegen-node` identifies itself in `--version`; anything else is
+/// assumed to be the consolidated CLI.
+fn daemon_args(binary: &Path, config_path: &Path) -> Vec<OsString> {
+    let legacy = std::process::Command::new(binary)
+        .arg("--version")
+        .output()
+        .map(|o| is_legacy_daemon(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or(false);
+
+    let mut args = Vec::new();
+    if !legacy {
+        args.push(OsString::from("node"));
+        args.push(OsString::from("run"));
+    }
+    args.push(OsString::from("--config"));
+    args.push(OsString::from(config_path.as_os_str()));
+    args
+}
+
 /// Install the service (helper for start command).
-/// Uses the `antegen-node` binary directly instead of the CLI binary.
+/// Runs the versioned daemon binary, which is independent of the CLI on PATH.
 async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()> {
     let manager = get_service_manager()?;
     let label = get_label()?;
@@ -159,7 +189,7 @@ async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()
                     Err(e) => {
                         anyhow::bail!(
                             "No node binary available: {}\n  \
-                             Run `antegenctl install <version>` when a release is available.",
+                             Run `antegen node install <version>` when a release is available.",
                             e
                         );
                     }
@@ -177,11 +207,12 @@ async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()
         .context("Could not determine log directory")?;
     std::fs::create_dir_all(&log_dir)?;
 
-    // antegen-node takes --config directly (no "run" subcommand)
+    let args = daemon_args(&binary, config_path);
+
     #[cfg(target_os = "macos")]
     let contents = Some(generate_launchd_plist(
         &binary,
-        config_path,
+        &args,
         &log_dir.join("antegen.out"),
         &log_dir.join("antegen.log"),
     ));
@@ -193,10 +224,7 @@ async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()
         .install(ServiceInstallCtx {
             label: label.clone(),
             program: binary.clone(),
-            args: vec![
-                OsString::from("--config"),
-                OsString::from(config_path.as_os_str()),
-            ],
+            args,
             contents,
             username: None,
             working_directory: None,
@@ -222,10 +250,16 @@ async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()
 #[cfg(target_os = "macos")]
 fn generate_launchd_plist(
     binary: &std::path::Path,
-    config_path: &std::path::Path,
+    args: &[OsString],
     stdout_log: &std::path::Path,
     stderr_log: &std::path::Path,
 ) -> String {
+    let program_arguments = std::iter::once(binary.to_string_lossy().into_owned())
+        .chain(args.iter().map(|a| a.to_string_lossy().into_owned()))
+        .map(|a| format!("        <string>{}</string>", a))
+        .collect::<Vec<_>>()
+        .join("\n");
+
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -235,9 +269,7 @@ fn generate_launchd_plist(
     <string>{}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{}</string>
-        <string>--config</string>
-        <string>{}</string>
+{}
     </array>
     <key>StandardOutPath</key>
     <string>{}</string>
@@ -255,8 +287,7 @@ fn generate_launchd_plist(
 </dict>
 </plist>"#,
         SERVICE_LABEL,
-        binary.display(),
-        config_path.display(),
+        program_arguments,
         stdout_log.display(),
         stderr_log.display(),
     )
@@ -290,6 +321,7 @@ pub fn ensure_config() -> Result<PathBuf> {
 /// Start the antegen service (init + install + start)
 /// If the service is already installed, stops and uninstalls it first (clean reinstall).
 pub async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
+    super::update::clean_legacy_layout();
     let config_path = do_init(rpc, false)?;
 
     // Clean reinstall: stop + uninstall existing service if present
@@ -320,21 +352,26 @@ pub async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
             println!("✓ Service started");
             println!();
             println!("Antegen is now running as a user service.");
-            println!("Use `antegenctl stop` to stop or `antegenctl restart` to restart.");
+            println!("Use `antegen node stop` to stop or `antegen node restart` to restart.");
 
             // Check for updates
             print_update_notices().await;
         }
+        // Report these as failures. `antegen node update` reinstalls the service
+        // to move the daemon onto a new binary; exiting 0 here would report a
+        // successful update while the node was not running at all.
         ServiceStatus::Stopped(reason) => {
-            println!("✗ Service started but crashed immediately");
-            if let Some(msg) = reason {
-                println!("  Reason: {}", msg);
-            }
-            println!();
-            println!("Check the configuration and try `antegenctl run` to see error output.");
+            anyhow::bail!(
+                "Service started but crashed immediately{}\n  \
+                 Run `antegen node run` to see the error output, or \
+                 `antegen node logs` for the service log.",
+                reason
+                    .map(|m| format!("\n  Reason: {}", m))
+                    .unwrap_or_default()
+            );
         }
         ServiceStatus::NotInstalled => {
-            println!("✗ Service failed to install");
+            anyhow::bail!("Service failed to install");
         }
     }
 
@@ -505,6 +542,11 @@ pub fn is_installed() -> bool {
     )
 }
 
+/// How to update the CLI itself. The CLI no longer manages its own versions —
+/// the installer owns `~/.local/bin/antegen`, so re-running it is the update.
+pub const INSTALL_HINT: &str =
+    "Re-run: curl -sSfL https://raw.githubusercontent.com/wuwei-labs/antegen/main/scripts/install.sh | bash";
+
 /// Print update notices for CLI and node if newer versions are available
 async fn print_update_notices() {
     #[cfg(not(feature = "prod"))]
@@ -524,7 +566,7 @@ async fn print_update_notices() {
         },
         async {
             let installed = super::update::read_node_version()?;
-            let latest = super::update::fetch_latest_node_version().await.ok()?;
+            let latest = super::update::fetch_latest_version().await.ok()?;
             if super::update::version_less_than(&installed, &latest) {
                 Some(latest)
             } else {
@@ -537,12 +579,74 @@ async fn print_update_notices() {
         println!();
     }
     if let Some(latest) = cli_update {
-        println!("CLI update available: {} -> Run `antegen update`", latest);
+        println!("CLI update available: {} -> {}", latest, INSTALL_HINT);
     }
     if let Some(latest) = node_update {
         println!(
-            "Node update available: {} -> Run `antegenctl update`",
+            "Node update available: {} -> Run `antegen node update`",
             latest
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The exact `--version` output of both daemons, verified against a
+    /// downloaded `antegen-node-v5.1.3` and a locally built `antegen`. The
+    /// service unit's argv depends on telling them apart, and a wrong answer
+    /// produces a unit that cannot start.
+    #[test]
+    fn distinguishes_legacy_daemon_from_consolidated_cli() {
+        assert!(is_legacy_daemon("antegen-node 5.1.3\n"));
+        assert!(!is_legacy_daemon("antegen 6.1.0 (client 5.2.0)\n"));
+    }
+
+    /// Exercises the real `daemon_args` against stub binaries that identify
+    /// themselves the way each daemon does.
+    #[test]
+    fn argv_shape_follows_the_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Path::new("/tmp/antegen.toml");
+
+        let stub = |name: &str, version_line: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, format!("#!/bin/sh\necho '{}'\n", version_line)).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            path
+        };
+
+        let legacy = stub("antegen-node-v5.1.3", "antegen-node 5.1.3");
+        assert_eq!(
+            daemon_args(&legacy, config),
+            vec![
+                OsString::from("--config"),
+                OsString::from(config.as_os_str())
+            ]
+        );
+
+        let consolidated = stub("antegen-node-v7.0.0", "antegen 7.0.0 (client 6.0.0)");
+        assert_eq!(
+            daemon_args(&consolidated, config),
+            vec![
+                OsString::from("node"),
+                OsString::from("run"),
+                OsString::from("--config"),
+                OsString::from(config.as_os_str())
+            ]
+        );
+    }
+
+    /// A binary we cannot execute must not be assumed legacy — new installs are
+    /// the common case, and the old argv against a new binary fails to start.
+    #[test]
+    fn unreadable_binary_assumes_consolidated() {
+        let args = daemon_args(Path::new("/nonexistent/antegen"), Path::new("/tmp/c.toml"));
+        assert_eq!(args[0], OsString::from("node"));
     }
 }
