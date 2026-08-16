@@ -1,9 +1,9 @@
 //! Staging Actor
 //!
-//! Owns thread scheduling: which threads exist, when each is next due, and which
-//! are currently dispatched. The scheduling decisions themselves live in
-//! [`crate::actors::sched::Sched`], which is pure and unit-tested; this actor is
-//! the I/O shell around it.
+//! Owns discovery — which threads exist — and the I/O around scheduling them:
+//! the mailbox, the timer, dispatch to the processor, and the RPC calls that
+//! keep the tracked set honest. When each thread next runs is decided by
+//! [`crate::actors::scheduler::Scheduler`], which is pure and unit-tested.
 //!
 //! Two things drive dispatch:
 //! - a timer armed on the earliest pending time trigger, projected onto the local
@@ -16,7 +16,7 @@
 
 use crate::actors::messages::{ProcessorMessage, ReadyThread, StagingMessage, StagingStatus};
 use crate::actors::processor::LATENCY_TARGET;
-use crate::actors::sched::{Dispatched, Kind, Outcome, Retry, Sched};
+use crate::actors::scheduler::{Dispatched, Kind, Outcome, Retry, Scheduler};
 use crate::clockref::ClockRef;
 use crate::config::ClientConfig;
 use crate::load_balancer::LoadBalancer;
@@ -68,7 +68,7 @@ pub struct StagingActor;
 
 pub struct StagingState {
     /// Scheduling state: what is tracked, when it is due, and its phase.
-    sched: Sched,
+    sched: Scheduler,
 
     /// Maps on-chain time onto the local monotonic clock, so a trigger deadline
     /// can be expressed as a local instant.
@@ -138,7 +138,7 @@ impl Actor for StagingActor {
 
         let now = Instant::now();
         Ok(StagingState {
-            sched: Sched::new(),
+            sched: Scheduler::new(),
             clock_ref: ClockRef::new(),
             last_slot: 0,
             last_epoch: 0,

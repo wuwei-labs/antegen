@@ -11,7 +11,7 @@
 use crate::actors::messages::{
     ExecutionResult, ProcessorMessage, ProcessorStatus, ReadyThread, StagingMessage,
 };
-use crate::actors::sched::Outcome as SchedOutcome;
+use crate::actors::scheduler::Outcome as SchedOutcome;
 use crate::actors::WorkerActor;
 use crate::config::ClientConfig;
 use crate::executor::ExecutorLogic;

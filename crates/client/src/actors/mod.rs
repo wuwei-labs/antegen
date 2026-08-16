@@ -3,7 +3,7 @@ pub mod messages;
 pub mod observability;
 pub mod processor;
 pub mod root;
-pub mod sched;
+pub mod scheduler;
 pub mod staging;
 pub mod worker;
 

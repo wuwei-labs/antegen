@@ -1,6 +1,6 @@
 //! Message types for actor communication
 
-use crate::actors::sched::Outcome;
+use crate::actors::scheduler::Outcome;
 use crate::trace::ExecTrace;
 use crate::types::AccountUpdate;
 use solana_sdk::{clock::Clock, pubkey::Pubkey};
