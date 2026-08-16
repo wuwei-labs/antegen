@@ -5,6 +5,11 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Shared library for Antegen CLI binaries"
+# Depends on a patched fork of service-manager. `[patch]` does not survive
+# publishing, so a published build resolves upstream service-manager instead and
+# fails to compile — the fork's RestartPolicy differs. Binaries are the
+# distribution path for the CLI; see the release workflow.
+publish = false
 repository.workspace = true
 homepage.workspace = true
 

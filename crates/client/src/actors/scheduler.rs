@@ -213,12 +213,24 @@ impl Scheduler {
         self.entries.keys().copied()
     }
 
-    /// Entries eligible to run right now, ignoring their due value. A large
-    /// backlog here means dispatch, not scheduling, is the bottleneck.
-    pub fn count_due(&self) -> usize {
-        self.entries
-            .values()
-            .filter(|e| e.phase == Phase::Due && !e.paused)
+    /// Entries that could be dispatched right now: past their deadline, past
+    /// any backoff, not paused, not already in flight.
+    ///
+    /// A backlog here means dispatch is the bottleneck, not scheduling. The
+    /// previous version of this counted every entry in the `Due` phase
+    /// regardless of its due value, so a healthy node with a hundred threads
+    /// waiting on future deadlines reported the same number as one that had
+    /// stopped dispatching entirely — the one thing the metric existed to tell
+    /// apart.
+    pub fn count_ready(&self, kind: Kind, current: u64, now: Instant) -> usize {
+        self.range_of(kind)
+            .filter_map(|pk| self.entries.get(&pk))
+            .filter(|e| {
+                e.phase == Phase::Due
+                    && !e.paused
+                    && e.due <= current
+                    && e.retry_after.is_none_or(|t| t <= now)
+            })
             .count()
     }
 
@@ -1069,6 +1081,39 @@ mod tests {
         let e = s.get(&pk(1)).unwrap();
         assert_eq!(e.original_due, 100);
         assert_eq!(e.attempts, 1);
+    }
+
+    /// The whole point of the metric: future deadlines are not a backlog.
+    #[test]
+    fn count_ready_excludes_entries_whose_deadline_has_not_arrived() {
+        let mut s = Scheduler::new();
+        let now = Instant::now();
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
+        s.upsert(pk(2), Kind::Time, 5_000, 0, false, Retry::default());
+
+        assert_eq!(s.count_ready(Kind::Time, 200, now), 1, "only pk(1) is due");
+        assert_eq!(s.count_ready(Kind::Time, 9_999, now), 2);
+    }
+
+    #[test]
+    fn count_ready_excludes_dispatched_paused_and_backed_off_entries() {
+        let mut s = Scheduler::new();
+        let now = Instant::now();
+
+        s.upsert(pk(1), Kind::Time, 100, 0, true, Retry::default());
+        assert_eq!(s.count_ready(Kind::Time, 200, now), 0, "paused");
+
+        s.upsert(pk(2), Kind::Time, 100, 0, false, Retry::default());
+        s.take_due(Kind::Time, 200, now);
+        assert_eq!(s.count_ready(Kind::Time, 200, now), 0, "in flight");
+
+        s.complete(&pk(2), Outcome::Retryable, 0, 200, now);
+        assert_eq!(s.count_ready(Kind::Time, 200, now), 0, "backing off");
+        assert_eq!(
+            s.count_ready(Kind::Time, 200, now + Duration::from_secs(120)),
+            1,
+            "ready once the backoff expires"
+        );
     }
 
     #[test]

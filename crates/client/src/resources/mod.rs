@@ -9,6 +9,7 @@
 
 mod cache;
 mod ingest;
+pub mod latency;
 
 pub use cache::{AccountCache, CacheTriggerType, CachedAccount, FetchError};
 pub use ingest::{IngestSnapshot, IngestStats};
@@ -43,6 +44,9 @@ pub struct SharedResources {
     pub program_id: Pubkey,
     /// Per-endpoint ingest attribution — which datasource is winning the race.
     pub ingest_stats: Arc<IngestStats>,
+    /// Rolling execution-latency window, so the node reports its own
+    /// percentiles instead of requiring logs to be shipped and parsed.
+    pub latency_stats: Arc<latency::LatencyStats>,
     /// Commitment for the thread program subscription.
     pub commitment: Arc<str>,
     /// Commitment for the clock sysvar subscription.
@@ -125,6 +129,7 @@ impl SharedResources {
                 tpu_client,
                 program_id: config.datasources.program_id,
                 ingest_stats: Arc::new(IngestStats::new()),
+                latency_stats: Arc::new(latency::LatencyStats::new()),
                 commitment: config.datasources.commitment.as_str().into(),
                 clock_commitment: config.datasources.clock_commitment.as_str().into(),
                 confirmations,
@@ -143,6 +148,7 @@ impl SharedResources {
             tpu_client: None,
             program_id: antegen_thread_program::ID,
             ingest_stats: Arc::new(IngestStats::new()),
+            latency_stats: Arc::new(latency::LatencyStats::new()),
             commitment: "confirmed".into(),
             clock_commitment: "processed".into(),
             confirmations: SignatureWatcher::spawn(rpc_client_for_watcher, None),

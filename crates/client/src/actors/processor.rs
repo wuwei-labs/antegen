@@ -427,6 +427,15 @@ impl ProcessorFactory {
         };
         log::debug!(target: LATENCY_TARGET, "{}", result.trace.render(trace_outcome));
 
+        // Only landed executions. A skip or a failure carries a lag that
+        // measures nothing anyone acted on, and mixing those in would describe
+        // a distribution that does not exist.
+        if trace_outcome == Outcome::Ok {
+            if let Some(lag) = result.trace.lag_ms() {
+                state.resources.latency_stats.record(lag);
+            }
+        }
+
         // Notify StagingActor that thread completed
         state
             .staging_ref

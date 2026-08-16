@@ -242,6 +242,10 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.gate.outputs.tag }}
+          # Keep it drafted — `promote` is the only thing that publishes. The
+          # action defaults to draft:false and applies it on update, which
+          # undrafts the release (creating the tag) before the gate has run.
+          draft: true
           files: |
             target/deploy/${{ matrix.program }}.so
             target/deploy/${{ matrix.program }}.so.sha256
@@ -342,8 +346,11 @@ jobs:
           publish_if_missing antegen-fiber-program  programs/fiber/Cargo.toml
           publish_if_missing antegen-thread-program programs/thread/Cargo.toml
           publish_if_missing antegen-client         crates/client/Cargo.toml
-          publish_if_missing antegen-cli-core       cli/core/Cargo.toml
-          publish_if_missing antegen-cli            cli/antegen/Cargo.toml
+          # antegen-cli-core and antegen-cli are `publish = false`: they depend
+          # on a patched fork of service-manager, and `[patch]` does not survive
+          # publishing, so a published build resolves upstream and fails to
+          # compile. They still get versioned, tagged and changelogged; their
+          # distribution is the binary attached to the release.
 
   # -----------------------------------------------------------------------
   # Stage 4: Build the cross-platform `antegen` binary and attach it to the
@@ -443,6 +450,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.release-please.outputs.cli_tag }}
+          draft: true
           files: artifacts/*
           append_body: false
 
@@ -546,6 +554,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.release-please.outputs.geyser_tag }}
+          draft: true
           files: artifacts/*
           append_body: false
 

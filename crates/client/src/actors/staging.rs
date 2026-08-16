@@ -608,15 +608,32 @@ impl StagingActor {
 
         if now.duration_since(state.last_heartbeat) >= HEARTBEAT_INTERVAL {
             state.last_heartbeat = now;
+            // Ready across every kind, each against its own clock.
+            let ready: usize = [Kind::Time, Kind::Slot, Kind::Epoch]
+                .into_iter()
+                .map(|k| state.sched.count_ready(k, state.current(k), now))
+                .sum();
+
+            // Percentiles over the recent window, so a run measures itself
+            // rather than needing its logs shipped and parsed.
+            let lag = match state.resources.latency_stats.snapshot() {
+                Some(s) => format!(
+                    ", lag_p50={} lag_p90={} lag_p99={} lag_max={} n={}",
+                    s.p50, s.p90, s.p99, s.max, s.count
+                ),
+                None => String::new(),
+            };
+
             info!(
-                "Scheduler heartbeat: slot={}, tracked={}, in_flight={}, due={}, clock_anchor_age_ms={}, anchor_ts={}, projected_ts={}",
+                "Scheduler heartbeat: slot={}, tracked={}, in_flight={}, ready={}, clock_anchor_age_ms={}, anchor_ts={}, projected_ts={}{}",
                 state.last_slot,
                 state.sched.len(),
                 state.sched.in_flight(),
-                state.sched.count_due(),
+                ready,
                 state.clock_ref.anchor_age().as_millis(),
                 state.clock_ref.anchor_ts(),
                 state.clock_ref.anchor_ts_projected(),
+                lag,
             );
 
             // A thread sitting in Due well past its deadline should have been
