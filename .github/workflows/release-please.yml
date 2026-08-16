@@ -275,14 +275,7 @@ jobs:
     if: |
       always() &&
       needs.release-please.outputs.releases_created == 'true' &&
-      needs.verifiable-build.result != 'failure' &&
-      (needs.release-please.outputs.cron_released == 'true' ||
-       needs.release-please.outputs.fiber_released == 'true' ||
-       needs.release-please.outputs.thread_released == 'true' ||
-       needs.release-please.outputs.client_released == 'true' ||
-       needs.release-please.outputs.cli_core_released == 'true' ||
-       needs.release-please.outputs.cli_released == 'true' ||
-       needs.release-please.outputs.ws_released == 'true')
+      needs.verifiable-build.result != 'failure'
     steps:
       - uses: actions/checkout@v6
 
@@ -306,11 +299,21 @@ jobs:
       # every client release. Publish by what crates.io actually has rather than
       # by what this run released, and skip when it is already there so reruns
       # are safe.
-      - name: Publish antegen-client dependencies if missing
-        if: |
-          needs.release-please.outputs.client_released == 'true' ||
-          needs.release-please.outputs.cron_released == 'true' ||
-          needs.release-please.outputs.ws_released == 'true'
+      # Publish anything whose manifest version is not on crates.io yet, in
+      # dependency order.
+      #
+      # Gating each crate on release-please's per-package flag looked right but
+      # cannot converge: a package is only flagged when commits touched it, so
+      # anything that missed a publish stays missing forever and blocks every
+      # dependent. That is how the registry ended up far behind this repo —
+      # antegen-cli on 4.0.8 against 6.1.0, antegen-cli-core and antegen-ws
+      # never published at all — after one run where this job was skipped.
+      #
+      # Deciding from what crates.io actually has instead means a failed or
+      # skipped publish is repaired by the next release rather than needing
+      # someone to notice. Already-published versions are skipped, so reruns
+      # are safe.
+      - name: Publish crates that are missing from crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
@@ -332,54 +335,15 @@ jobs:
             sleep 30
           }
 
-          publish_if_missing antegen-cron crates/cron/Cargo.toml
-          publish_if_missing antegen-ws crates/ws/Cargo.toml
-
-      - name: Publish antegen-fiber-program
-        if: needs.release-please.outputs.fiber_released == 'true'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p antegen-fiber-program --token "$CARGO_REGISTRY_TOKEN"
-
-      - name: Wait for index after fiber
-        if: needs.release-please.outputs.fiber_released == 'true'
-        run: sleep 30
-
-      - name: Publish antegen-thread-program
-        if: needs.release-please.outputs.thread_released == 'true'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p antegen-thread-program --token "$CARGO_REGISTRY_TOKEN"
-
-      - name: Wait for index after thread
-        if: needs.release-please.outputs.thread_released == 'true'
-        run: sleep 30
-
-      - name: Publish antegen-client
-        if: needs.release-please.outputs.client_released == 'true'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p antegen-client --token "$CARGO_REGISTRY_TOKEN"
-
-      - name: Wait for index after client
-        if: needs.release-please.outputs.client_released == 'true'
-        run: sleep 30
-
-      - name: Publish antegen-cli-core
-        if: needs.release-please.outputs.cli_core_released == 'true'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p antegen-cli-core --token "$CARGO_REGISTRY_TOKEN"
-
-      - name: Wait for index after cli-core
-        if: needs.release-please.outputs.cli_core_released == 'true'
-        run: sleep 30
-
-      - name: Publish antegen-cli
-        if: needs.release-please.outputs.cli_released == 'true'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p antegen-cli --token "$CARGO_REGISTRY_TOKEN"
+          # Dependency order: a crate must be on the registry before anything
+          # that depends on it is published.
+          publish_if_missing antegen-cron           crates/cron/Cargo.toml
+          publish_if_missing antegen-ws             crates/ws/Cargo.toml
+          publish_if_missing antegen-fiber-program  programs/fiber/Cargo.toml
+          publish_if_missing antegen-thread-program programs/thread/Cargo.toml
+          publish_if_missing antegen-client         crates/client/Cargo.toml
+          publish_if_missing antegen-cli-core       cli/core/Cargo.toml
+          publish_if_missing antegen-cli            cli/antegen/Cargo.toml
 
   # -----------------------------------------------------------------------
   # Stage 4: Build the cross-platform `antegen` binary and attach it to the
