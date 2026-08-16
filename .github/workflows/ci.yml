@@ -29,6 +29,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Check workspace dependency pins
+        # `[workspace.dependencies]` pins each internal crate by version as well
+        # as path, because cargo strips the path on publish and keeps the
+        # version requirement. release-please bumps a member's own Cargo.toml
+        # and leaves the pin, so the two drift and the workspace stops
+        # resolving — that has broken main and failed the publish job on three
+        # consecutive releases. Runs before the toolchain so it fails in
+        # seconds, and catches a Release PR carrying drift before it merges.
+        run: ./scripts/sync-workspace-pins.sh --check
+
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
@@ -82,34 +92,6 @@ jobs:
         # Integration tests `include_bytes!` the program `.so` artifacts.
         # Build them before `cargo test` compiles the test binaries.
         run: anchor build --ignore-keys
-
-      - name: Check workspace dependency pins
-        # `[workspace.dependencies]` pins each internal crate by version as well
-        # as path. release-please bumps the member's own Cargo.toml and leaves
-        # the pin alone, so the two drift apart and the workspace stops
-        # resolving — `^0.1.0` does not admit 0.2.0, and main was briefly
-        # unbuildable for exactly that reason. cargo only complains once
-        # something asks for a full resolve, which `cargo check` on a warm
-        # target does not always do.
-        run: |
-          status=0
-          while read -r crate path; do
-            pinned="$(sed -n "s/^${crate} = { version = \"\([^\"]*\)\".*/\1/p" Cargo.toml | head -1)"
-            actual="$(sed -n 's/^version = "\(.*\)"/\1/p' "${path}/Cargo.toml" | head -1)"
-            if [ "$pinned" != "$actual" ]; then
-              echo "::error::${crate}: workspace pin is ${pinned} but ${path} is ${actual}"
-              status=1
-            fi
-          done <<'CRATES'
-          antegen-cli-core cli/core
-          antegen-cron crates/cron
-          antegen-client crates/client
-          antegen-geyser-plugin plugin/geyser
-          antegen-ws crates/ws
-          antegen-fiber-program programs/fiber
-          antegen-thread-program programs/thread
-          CRATES
-          exit $status
 
       - name: cargo test
         run: cargo test --workspace --locked

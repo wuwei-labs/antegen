@@ -1,0 +1,117 @@
+name: Build Binaries
+
+# Build the `antegen` binary on demand, from any ref, and optionally attach it
+# to a release.
+#
+# The release workflow only builds binaries when release-please decides to
+# release the CLI, which means a failed or skipped release leaves no way to
+# produce one at all — `antegen-cli-v6.1.0` has sat with zero assets since May
+# for exactly that reason. This decouples "I need a binary" from "the release
+# machinery agrees a release happened".
+#
+# With no tag input it uploads workflow artifacts, so it doubles as a way to
+# hand someone a build of a branch without releasing anything.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach binaries to (leave empty to upload artifacts only)"
+        required: false
+        type: string
+
+env:
+  RUST_TOOLCHAIN: "1.94.1"
+
+jobs:
+  build:
+    name: Build antegen binary
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Build the tag's code when attaching to a release, so the binary
+          # matches what was tagged rather than whatever main has moved on to.
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libudev-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: brew install llvm
+
+      - name: Sync Cargo.lock
+        # Same reason as the release workflow: a tag cut by release-please has
+        # bumped versions in Cargo.toml that Cargo.lock has not caught up with,
+        # and `--locked` refuses to proceed.
+        run: cargo update --workspace
+
+      - name: Build
+        env:
+          CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
+          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
+          CC_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          CC_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/clang
+          AR_aarch64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
+          AR_x86_64_apple_darwin: /opt/homebrew/opt/llvm/bin/llvm-ar
+        run: cargo build -p antegen-cli --release --features prod --target ${{ matrix.target }} --locked
+
+      - name: Package
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' cli/antegen/Cargo.toml | head -1)"
+          mkdir -p artifacts
+          cp "target/${{ matrix.target }}/release/antegen" \
+            "artifacts/antegen-v${version}-${{ matrix.target }}"
+          chmod +x artifacts/*
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: antegen-${{ matrix.target }}
+          path: artifacts/*
+          retention-days: 7
+
+  attach:
+    name: Attach to release
+    runs-on: ubuntu-22.04
+    needs: build
+    if: inputs.tag != ''
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: antegen-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Attach
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: artifacts/*
+          append_body: false
