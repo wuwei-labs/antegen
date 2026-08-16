@@ -1,5 +1,14 @@
 # Changelog
 
+## [6.0.1](https://github.com/wuwei-labs/antegen/compare/antegen-client-v6.0.0...antegen-client-v6.0.1) (2026-08-16)
+
+
+### Bug Fixes
+
+* **client:** never let the observability agent stop the node ([e84d150](https://github.com/wuwei-labs/antegen/commit/e84d1504b527c279091eaad7a4d73f4916c507d3))
+* **client:** redact endpoint credentials, recover the clock subscription, report latency ([77ccacf](https://github.com/wuwei-labs/antegen/commit/77ccacfd8263a56771564df51b3b18a606e142d1))
+* keep the node alive, stop leaking credentials, and hold the release gate ([c1e42e3](https://github.com/wuwei-labs/antegen/commit/c1e42e3def473e55f0e77343ad0aef65dda0510a))
+
 ## [6.0.0](https://github.com/wuwei-labs/antegen/compare/antegen-client-v5.2.0...antegen-client-v6.0.0) (2026-08-16)
 
 
