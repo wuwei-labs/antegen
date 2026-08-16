@@ -383,6 +383,20 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install llvm
 
+      - name: Sync Cargo.lock with the release version bumps
+        # release-please rewrites versions in each package's Cargo.toml but
+        # leaves Cargo.lock alone, so at this point the two disagree and
+        # `--locked` refuses to proceed:
+        #
+        #   error: cannot update the lock file ... because --locked was passed
+        #
+        # That is why every binary release since per-package releases landed has
+        # attached zero assets while the program releases succeeded — those build
+        # through solana-verify, which does not pass --locked. `--workspace`
+        # rewrites only the local member versions; third-party pins stay exactly
+        # as the lock file has them, so the build stays reproducible.
+        run: cargo update --workspace
+
       - name: Build CLI
         env:
           CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: /opt/homebrew/opt/llvm/bin/clang
@@ -471,6 +485,20 @@ jobs:
       - name: Install LLVM (macOS)
         if: runner.os == 'macOS'
         run: brew install llvm
+
+      - name: Sync Cargo.lock with the release version bumps
+        # release-please rewrites versions in each package's Cargo.toml but
+        # leaves Cargo.lock alone, so at this point the two disagree and
+        # `--locked` refuses to proceed:
+        #
+        #   error: cannot update the lock file ... because --locked was passed
+        #
+        # That is why every binary release since per-package releases landed has
+        # attached zero assets while the program releases succeeded — those build
+        # through solana-verify, which does not pass --locked. `--workspace`
+        # rewrites only the local member versions; third-party pins stay exactly
+        # as the lock file has them, so the build stays reproducible.
+        run: cargo update --workspace
 
       - name: Build geyser plugin
         env:
