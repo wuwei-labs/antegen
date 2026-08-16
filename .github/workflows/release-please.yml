@@ -242,6 +242,10 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.gate.outputs.tag }}
+          # Keep it drafted — `promote` is the only thing that publishes. The
+          # action defaults to draft:false and applies it on update, which
+          # undrafts the release (creating the tag) before the gate has run.
+          draft: true
           files: |
             target/deploy/${{ matrix.program }}.so
             target/deploy/${{ matrix.program }}.so.sha256
@@ -443,6 +447,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.release-please.outputs.cli_tag }}
+          draft: true
           files: artifacts/*
           append_body: false
 
@@ -546,6 +551,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.release-please.outputs.geyser_tag }}
+          draft: true
           files: artifacts/*
           append_body: false
 
