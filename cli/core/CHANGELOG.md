@@ -1,5 +1,13 @@
 # Changelog
 
+## [8.0.1](https://github.com/wuwei-labs/antegen/compare/antegen-cli-core-v8.0.0...antegen-cli-core-v8.0.1) (2026-08-16)
+
+
+### Bug Fixes
+
+* **cli:** stop publishing antegen-cli and antegen-cli-core ([52663b5](https://github.com/wuwei-labs/antegen/commit/52663b575b157cbe0af66b6fc7d4a47cb8e47d6b))
+* keep the node alive, stop leaking credentials, and hold the release gate ([c1e42e3](https://github.com/wuwei-labs/antegen/commit/c1e42e3def473e55f0e77343ad0aef65dda0510a))
+
 ## [8.0.0](https://github.com/wuwei-labs/antegen/compare/antegen-cli-core-v7.0.0...antegen-cli-core-v8.0.0) (2026-08-16)
 
 
