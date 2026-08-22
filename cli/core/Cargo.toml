@@ -1,6 +1,6 @@
 [package]
 name = "antegen-cli-core"
-version = "8.0.2"
+version = "9.0.0"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
