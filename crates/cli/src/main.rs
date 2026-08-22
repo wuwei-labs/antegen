@@ -1,16 +1,44 @@
-//! Antegen CLI — developer-facing: program, thread, geyser commands
+//! The `antegen` binary: developer tooling, node operations, and the executor
+//! daemon itself.
+//!
+//! One binary does all three. `antegen node run` is the process the service
+//! supervises — the daemon is not a separate program — so the CLI you type and
+//! the node you operate are the same artifact and the same version.
+#![warn(unreachable_pub)]
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
-use config_cmd::{dispatch_config, LogLevel, NodeConfigCommands};
+use clap::{Parser, Subcommand, ValueEnum};
+use commands::config::{dispatch_config, NodeConfigCommands};
 use std::path::PathBuf;
 
 mod commands;
-mod config_cmd;
 mod download;
 
+#[derive(Clone, Debug, ValueEnum)]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Off,
+}
+
+impl LogLevel {
+    pub fn to_level_filter(&self) -> log::LevelFilter {
+        match self {
+            LogLevel::Trace => log::LevelFilter::Trace,
+            LogLevel::Debug => log::LevelFilter::Debug,
+            LogLevel::Info => log::LevelFilter::Info,
+            LogLevel::Warn => log::LevelFilter::Warn,
+            LogLevel::Error => log::LevelFilter::Error,
+            LogLevel::Off => log::LevelFilter::Off,
+        }
+    }
+}
+
 // =============================================================================
-// Antegen CLI (developer-facing: program, thread, geyser)
+// Node config commands
 // =============================================================================
 
 /// `<cli> (client <client>)` — the daemon ships inside this binary, so the

@@ -1,4 +1,10 @@
-//! Self-update command for the antegen CLI and node version management
+//! Node version management: which daemon build is installed, and switching
+//! between them.
+//!
+//! The CLI does not update itself — re-running the install script does that.
+//! What lives here is the versioned daemon binaries under `~/.local/bin`, the
+//! `antegen-node` symlink the service points at, and the release lookup that
+//! decides what is available.
 
 use anyhow::{Context, Result};
 use std::fs;
@@ -29,12 +35,12 @@ fn is_node_version_supported(version: &str) -> bool {
 // =============================================================================
 
 /// Get the current CLI version
-pub fn current_version() -> &'static str {
+pub(crate) fn current_version() -> &'static str {
     concat!("v", env!("CARGO_PKG_VERSION"))
 }
 
 /// Parse a version string like "v4.3.2" into (major, minor, patch)
-pub fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
+pub(crate) fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
     let v = v.strip_prefix('v').unwrap_or(v);
     let parts: Vec<&str> = v.split('.').collect();
     if parts.len() != 3 {
@@ -48,7 +54,7 @@ pub fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
 }
 
 /// Compare two version strings, returns true if v1 < v2
-pub fn version_less_than(v1: &str, v2: &str) -> bool {
+pub(crate) fn version_less_than(v1: &str, v2: &str) -> bool {
     match (parse_version(v1), parse_version(v2)) {
         (Some(a), Some(b)) => a < b,
         _ => false,
@@ -56,7 +62,7 @@ pub fn version_less_than(v1: &str, v2: &str) -> bool {
 }
 
 /// Get the platform target string for the current system
-pub fn get_platform_target() -> &'static str {
+pub(crate) fn get_platform_target() -> &'static str {
     self_update::get_target()
 }
 
@@ -77,7 +83,7 @@ fn normalize_version(version: &str) -> String {
 }
 
 /// Download a binary to a temporary file
-pub async fn download_binary(url: &str, temp_name: &str) -> Result<PathBuf> {
+pub(crate) async fn download_binary(url: &str, temp_name: &str) -> Result<PathBuf> {
     use std::io::Write;
 
     println!("Downloading from: {}", url);
@@ -214,7 +220,7 @@ fn write_release_cache(versions: &[String]) {
 ///
 /// One page of the releases API is enough — a version old enough to have fallen
 /// off it is far below `MIN_NODE_VERSION` anyway.
-pub async fn fetch_all_versions() -> Result<Vec<String>> {
+pub(crate) async fn fetch_all_versions() -> Result<Vec<String>> {
     fetch_all_versions_inner(false).await
 }
 
@@ -225,7 +231,7 @@ pub async fn fetch_all_versions() -> Result<Vec<String>> {
 /// `antegen node status` and `antegen info`. That check hitting the GitHub API
 /// each time is what the cache exists to prevent; being a few hours stale costs
 /// nothing, because nothing acts on it.
-pub async fn fetch_all_versions_cached() -> Result<Vec<String>> {
+pub(crate) async fn fetch_all_versions_cached() -> Result<Vec<String>> {
     fetch_all_versions_inner(true).await
 }
 
@@ -266,7 +272,7 @@ async fn fetch_all_versions_inner(use_cache: bool) -> Result<Vec<String>> {
 }
 
 /// Latest released `antegen` version, fetched live.
-pub async fn fetch_latest_version() -> Result<String> {
+pub(crate) async fn fetch_latest_version() -> Result<String> {
     fetch_all_versions()
         .await?
         .into_iter()
@@ -291,12 +297,12 @@ fn get_dev_binary() -> Option<PathBuf> {
 }
 
 #[cfg(not(feature = "prod"))]
-pub fn is_dev_build() -> bool {
+pub(crate) fn is_dev_build() -> bool {
     get_dev_binary().is_some()
 }
 
 /// Latest released version for the passive update notice.
-pub async fn fetch_latest_version_cached() -> Result<String> {
+pub(crate) async fn fetch_latest_version_cached() -> Result<String> {
     fetch_all_versions_cached()
         .await?
         .into_iter()
@@ -317,7 +323,7 @@ pub async fn fetch_latest_version_cached() -> Result<String> {
 /// removed; a real file there belongs to someone else.
 ///
 /// Idempotent, and never fatal: failing to tidy up must not stop an update.
-pub fn clean_legacy_layout() {
+pub(crate) fn clean_legacy_layout() {
     #[cfg(unix)]
     {
         let Some(home) = dirs::home_dir() else {
@@ -337,7 +343,7 @@ pub fn clean_legacy_layout() {
 }
 
 /// Get the node binary symlink path (~/.local/bin/antegen-node)
-pub fn node_binary_path() -> Result<PathBuf> {
+pub(crate) fn node_binary_path() -> Result<PathBuf> {
     dirs::home_dir()
         .map(|p| p.join(".local/bin/antegen-node"))
         .context("Could not determine home directory")
@@ -351,7 +357,7 @@ fn versioned_node_binary_path(version: &str) -> Result<PathBuf> {
 }
 
 /// Build the download URL for the node binary
-pub fn build_node_download_url(version: &str) -> String {
+pub(crate) fn build_node_download_url(version: &str) -> String {
     let target = get_platform_target();
     format!(
         "https://github.com/{}/{}/releases/download/{}{}/antegen-{}-{}",
@@ -404,7 +410,7 @@ fn node_version_path() -> Result<PathBuf> {
 }
 
 /// Write the active node version to the tracking file
-pub fn write_node_version(version: &str) -> Result<()> {
+pub(crate) fn write_node_version(version: &str) -> Result<()> {
     let path = node_version_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -414,7 +420,7 @@ pub fn write_node_version(version: &str) -> Result<()> {
 }
 
 /// Read the active node version from the tracking file
-pub fn read_node_version() -> Option<String> {
+pub(crate) fn read_node_version() -> Option<String> {
     node_version_path()
         .ok()
         .and_then(|p| fs::read_to_string(&p).ok())
@@ -436,7 +442,7 @@ fn get_installed_node_version() -> Option<String> {
 }
 
 /// Ensure a specific node version is downloaded. Returns the versioned path.
-pub async fn ensure_node_downloaded(version: &str) -> Result<PathBuf> {
+pub(crate) async fn ensure_node_downloaded(version: &str) -> Result<PathBuf> {
     let version = normalize_version(version);
     let versioned_path = versioned_node_binary_path(&version)?;
 
@@ -503,7 +509,7 @@ fn detect_local_node_build() -> Option<(PathBuf, String)> {
 /// Build `antegen` from the local workspace and install it as a node version
 ///
 /// Returns the version string of the built binary.
-pub fn cargo_build_and_install_node() -> Result<String> {
+pub(crate) fn cargo_build_and_install_node() -> Result<String> {
     let workspace_root = find_workspace_root()?;
 
     println!("Building antegen from {}...", workspace_root.display());
@@ -574,7 +580,7 @@ fn find_workspace_root() -> Result<PathBuf> {
 /// Update node to latest or a specific version (for `antegen node update`).
 /// Downloads the node binary, updates the `antegen-node` symlink, writes node-version.
 /// Does NOT touch the interactive CLI at ~/.local/bin/antegen.
-pub async fn update_node(version: Option<String>, local: bool) -> Result<()> {
+pub(crate) async fn update_node(version: Option<String>, local: bool) -> Result<()> {
     clean_legacy_layout();
     if local {
         let version = cargo_build_and_install_node()?;
@@ -659,7 +665,7 @@ pub async fn update_node(version: Option<String>, local: bool) -> Result<()> {
 /// Switch node to a specific version (for `antegen node use <version>`).
 /// Downloads if needed, updates symlink, writes node-version, reinstalls service.
 /// Does NOT touch CLI symlinks.
-pub async fn use_node_version(version: String) -> Result<()> {
+pub(crate) async fn use_node_version(version: String) -> Result<()> {
     clean_legacy_layout();
     // Handle "local" keyword — copy workspace build into version manager
     if version == "local" {
@@ -729,7 +735,7 @@ pub async fn use_node_version(version: String) -> Result<()> {
 }
 
 /// Download a specific node version without switching (for `antegen node install <version>`)
-pub async fn install_node_version(version: Option<String>, local: bool) -> Result<()> {
+pub(crate) async fn install_node_version(version: Option<String>, local: bool) -> Result<()> {
     clean_legacy_layout();
     if local {
         let version = cargo_build_and_install_node()?;
@@ -770,7 +776,7 @@ pub async fn install_node_version(version: Option<String>, local: bool) -> Resul
 
 /// Download the latest supported node binary and set it as active.
 /// Used by `antegen init` for out-of-box readiness.
-pub async fn download_latest_node() -> Result<()> {
+pub(crate) async fn download_latest_node() -> Result<()> {
     let latest = fetch_latest_version().await?;
 
     if !is_node_version_supported(&latest) {
@@ -795,7 +801,7 @@ pub async fn download_latest_node() -> Result<()> {
 
 /// List node versions (for `antegen node list`)
 /// Shows installed versions, local cargo build (if detected), and available remote versions.
-pub async fn list_node() -> Result<()> {
+pub(crate) async fn list_node() -> Result<()> {
     let bin_dir = bin_dir()?;
     let active_version = get_installed_node_version().or_else(read_node_version);
 

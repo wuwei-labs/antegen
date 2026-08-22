@@ -16,7 +16,7 @@ const LOA_STATUS_BASE_URL: &str = "https://status.loa.sh";
 
 /// Info output structure for JSON serialization
 #[derive(Serialize)]
-pub struct InfoOutput {
+pub(crate) struct InfoOutput {
     pub version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_version: Option<String>,
@@ -37,7 +37,7 @@ pub struct InfoOutput {
 
 /// Observability info
 #[derive(Serialize)]
-pub struct ObservabilityInfo {
+pub(crate) struct ObservabilityInfo {
     pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -315,7 +315,7 @@ fn print_info(info: &InfoOutput) {
 }
 
 /// Execute the info command
-pub async fn info(json: bool) -> Result<()> {
+pub(crate) async fn info(json: bool) -> Result<()> {
     let info = gather_info().await?;
 
     if json {

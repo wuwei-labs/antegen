@@ -20,7 +20,7 @@ use crate::commands::get_rpc_url;
 // =============================================================================
 
 /// Fetch and display a thread account
-pub async fn get(address: String, rpc_url: Option<String>) -> Result<()> {
+pub(crate) async fn get(address: String, rpc_url: Option<String>) -> Result<()> {
     // Parse the public key
     let thread_pubkey =
         Pubkey::from_str(&address).map_err(|e| anyhow!("Invalid pubkey '{}': {}", address, e))?;

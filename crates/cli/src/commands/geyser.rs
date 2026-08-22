@@ -8,7 +8,7 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 /// Initialize Geyser plugin for validator
-pub async fn init(output: PathBuf, config_path: PathBuf) -> Result<()> {
+pub(crate) async fn init(output: PathBuf, config_path: PathBuf) -> Result<()> {
     println!("Initializing Geyser plugin...");
 
     // Determine plugin directory
@@ -85,7 +85,7 @@ pub async fn init(output: PathBuf, config_path: PathBuf) -> Result<()> {
 }
 
 /// Extract plugin .so to custom location
-pub async fn extract(output: PathBuf) -> Result<()> {
+pub(crate) async fn extract(output: PathBuf) -> Result<()> {
     println!("Downloading Geyser plugin...");
 
     let version = current_version();

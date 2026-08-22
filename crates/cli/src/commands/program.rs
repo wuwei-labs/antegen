@@ -167,7 +167,7 @@ async fn verify_program(pubkey: Pubkey, rpc_url: &str) -> Result<()> {
 /// - **Full deploy**: omit the binary → auto-discovers fiber + thread from
 ///   `target/deploy/`, resolves keypairs from `--keys-dir`, and deploys both
 ///   in dependency order (fiber → thread → ThreadConfig init).
-pub async fn deploy(
+pub(crate) async fn deploy(
     program_binary: Option<PathBuf>,
     rpc: Option<String>,
     keypair_path: Option<PathBuf>,
@@ -311,7 +311,7 @@ pub async fn deploy(
 // =============================================================================
 
 /// Initialize the ThreadConfig account
-pub async fn config_init(rpc: Option<String>, keypair_path: Option<PathBuf>) -> Result<()> {
+pub(crate) async fn config_init(rpc: Option<String>, keypair_path: Option<PathBuf>) -> Result<()> {
     let rpc_url = get_rpc_url(rpc)?;
     let admin = get_keypair(keypair_path)?;
 
@@ -374,7 +374,7 @@ pub async fn config_init(rpc: Option<String>, keypair_path: Option<PathBuf>) -> 
 }
 
 /// Display the current ThreadConfig
-pub async fn config_get(rpc: Option<String>) -> Result<()> {
+pub(crate) async fn config_get(rpc: Option<String>) -> Result<()> {
     let rpc_url = get_rpc_url(rpc)?;
     println!("RPC: {}", rpc_url);
 

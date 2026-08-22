@@ -42,9 +42,6 @@ solana-cli-config = { workspace = true }
 solana-system-interface = { workspace = true }
 reqwest = { workspace = true }
 shellexpand = { workspace = true }
-toml = { workspace = true }
-tar = { workspace = true }
-flate2 = { workspace = true }
 tempfile = { workspace = true }
 service-manager = "0.11"
 self_update = { version = "0.42", default-features = false, features = [

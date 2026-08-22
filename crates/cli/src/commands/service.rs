@@ -316,7 +316,7 @@ fn start_service() -> Result<()> {
 }
 
 /// Initialize config only (no service installation)
-pub fn init(rpc: Option<String>, force: bool) -> Result<()> {
+pub(crate) fn init(rpc: Option<String>, force: bool) -> Result<()> {
     let config_path = do_init(rpc, force)?;
     println!("✓ Config created: {}", config_path.display());
     Ok(())
@@ -324,13 +324,13 @@ pub fn init(rpc: Option<String>, force: bool) -> Result<()> {
 
 /// Ensure config exists, init if needed. Returns config path.
 /// Used by `run` command when no config is specified.
-pub fn ensure_config() -> Result<PathBuf> {
+pub(crate) fn ensure_config() -> Result<PathBuf> {
     do_init(None, false)
 }
 
 /// Start the antegen service (init + install + start)
 /// If the service is already installed, stops and uninstalls it first (clean reinstall).
-pub async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
+pub(crate) async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
     super::update::clean_legacy_layout();
     let config_path = do_init(rpc, false)?;
 
@@ -389,7 +389,7 @@ pub async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
 }
 
 /// Show service status
-pub fn status() -> Result<()> {
+pub(crate) fn status() -> Result<()> {
     let manager = get_service_manager()?;
     let label = get_label()?;
 
@@ -425,7 +425,7 @@ pub fn status() -> Result<()> {
 }
 
 /// Stop the antegen service
-pub fn stop() -> Result<()> {
+pub(crate) fn stop() -> Result<()> {
     let manager = get_service_manager()?;
     let label = get_label()?;
 
@@ -440,7 +440,7 @@ pub fn stop() -> Result<()> {
 }
 
 /// Restart the antegen service
-pub fn restart() -> Result<()> {
+pub(crate) fn restart() -> Result<()> {
     let manager = get_service_manager()?;
     let label = get_label()?;
 
@@ -461,7 +461,7 @@ pub fn restart() -> Result<()> {
 }
 
 /// Uninstall the antegen service
-pub fn uninstall() -> Result<()> {
+pub(crate) fn uninstall() -> Result<()> {
     let manager = get_service_manager()?;
     let label = get_label()?;
 
@@ -495,7 +495,7 @@ fn get_log_path() -> Result<PathBuf> {
 }
 
 /// View service logs
-pub fn logs(follow: bool) -> Result<()> {
+pub(crate) fn logs(follow: bool) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         let log_file = get_log_path()?;
@@ -538,7 +538,7 @@ pub fn logs(follow: bool) -> Result<()> {
 }
 
 /// Check if the service is installed (for update command)
-pub fn is_installed() -> bool {
+pub(crate) fn is_installed() -> bool {
     let Ok(manager) = get_service_manager() else {
         return false;
     };
@@ -554,7 +554,7 @@ pub fn is_installed() -> bool {
 
 /// How to update the CLI itself. The CLI no longer manages its own versions —
 /// the installer owns `~/.local/bin/antegen`, so re-running it is the update.
-pub const INSTALL_HINT: &str =
+pub(crate) const INSTALL_HINT: &str =
     "Re-run: curl -sSfL https://raw.githubusercontent.com/wuwei-labs/antegen/main/scripts/install.sh | bash";
 
 /// Print update notices for CLI and node if newer versions are available

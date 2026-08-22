@@ -26,7 +26,7 @@ fn load_keypair_from_config(config: &ClientConfig) -> Result<solana_sdk::signatu
 ///
 /// - `amount = Some(x)`: transfers exactly `x` SOL to executor
 /// - `amount = None`: checks executor balance, tops up deficit to MIN_BALANCE_LAMPORTS
-pub async fn fund(
+pub(crate) async fn fund(
     config_path: PathBuf,
     amount: Option<f64>,
     keypair_path: Option<PathBuf>,
@@ -127,7 +127,7 @@ pub async fn fund(
 ///
 /// - `amount = Some(x)`: withdraws exactly `x` SOL from executor
 /// - `amount = None`: withdraws everything above MIN_BALANCE_LAMPORTS + fee buffer
-pub async fn withdraw(
+pub(crate) async fn withdraw(
     config_path: PathBuf,
     amount: Option<f64>,
     rpc_override: Option<String>,
