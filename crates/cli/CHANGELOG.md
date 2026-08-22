@@ -1,5 +1,16 @@
 # Changelog
 
+## [8.0.0](https://github.com/wuwei-labs/antegen/compare/antegen-cli-v7.0.1...antegen-cli-v8.0.0) (2026-08-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** the `antegen-cli-core` crate is removed; its contents are modules of `antegen-cli`. Neither crate was published, so this affects only in-repo paths.
+
+### Code Refactoring
+
+* **cli:** merge cli-core into the CLI and move it to crates/cli ([c3b8db2](https://github.com/wuwei-labs/antegen/commit/c3b8db2af98a84077fcb17953e1f439634ce1219))
+
 ## [7.0.1](https://github.com/wuwei-labs/antegen/compare/antegen-cli-v7.0.0...antegen-cli-v7.0.1) (2026-08-16)
 
 
