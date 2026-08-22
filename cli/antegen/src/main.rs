@@ -13,6 +13,12 @@ mod commands;
 
 /// `<cli> (client <client>)` — the daemon ships inside this binary, so the
 /// runtime version is no longer visible from the package version alone.
+///
+/// This is also why `antegen-cli` has to be released whenever the libraries it
+/// links move: the version an operator sees, and the code they actually run,
+/// both change even when nothing under `cli/antegen` does. release-please
+/// attributes by path and cannot see that, so a client-only fix has to be
+/// released with a commit scoped to this crate or it never reaches a binary.
 fn version_string() -> &'static str {
     static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     VERSION.get_or_init(|| {
