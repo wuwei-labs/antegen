@@ -9,6 +9,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::config::{dispatch_config, NodeConfigCommands};
+use commands::node::NodeCommands;
 use std::path::PathBuf;
 
 mod commands;
@@ -49,6 +50,21 @@ impl LogLevel {
 /// both change even when nothing under `cli/antegen` does. release-please
 /// attributes by path and cannot see that, so a client-only fix has to be
 /// released with a commit scoped to this crate or it never reaches a binary.
+/// This binary's version, `v`-prefixed to match release tags.
+pub(crate) fn current_version() -> &'static str {
+    concat!("v", env!("CARGO_PKG_VERSION"))
+}
+
+/// The target triple this binary was built for, used to pick the right release
+/// asset — for the node binary and for the geyser plugin alike.
+///
+/// `self_update::get_target()` reports the actual build target. The alternative,
+/// matching on `target_os`/`target_arch` by hand, was maintained separately for
+/// the plugin download and could disagree with this one about the same host.
+pub(crate) fn get_platform_target() -> &'static str {
+    self_update::get_target()
+}
+
 fn version_string() -> &'static str {
     static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     VERSION.get_or_init(|| {
@@ -182,77 +198,6 @@ enum Commands {
 // =============================================================================
 // Node commands
 // =============================================================================
-
-#[derive(Subcommand)]
-enum NodeCommands {
-    /// Run the executor in the foreground (no service, blocking)
-    Run {
-        /// Path to configuration file
-        #[arg(short, long)]
-        config: Option<PathBuf>,
-    },
-
-    /// Install and start the antegen service
-    Start {
-        /// RPC endpoint URL (prompts if not provided and interactive)
-        #[arg(long)]
-        rpc: Option<String>,
-
-        /// Start a specific version (e.g., v6.0.0)
-        #[arg(long, value_name = "VERSION")]
-        version: Option<String>,
-    },
-
-    /// Stop the antegen service
-    Stop,
-
-    /// Restart the antegen service
-    Restart,
-
-    /// Show service status
-    Status,
-
-    /// View service logs
-    Logs {
-        /// Follow log output (like tail -f)
-        #[arg(short, long)]
-        follow: bool,
-    },
-
-    /// Uninstall the antegen service
-    Uninstall,
-
-    /// Update the node to the latest version
-    Update {
-        /// Update to a specific version (e.g., v6.0.0)
-        #[arg(long, value_name = "VERSION")]
-        version: Option<String>,
-
-        /// Build and install from the local workspace instead of downloading
-        #[arg(long)]
-        local: bool,
-    },
-
-    /// List installed and available node versions
-    List,
-
-    /// Switch the node to a specific version (reinstalls the service)
-    Use {
-        /// Version to switch to (e.g., v6.0.0)
-        version: String,
-    },
-
-    /// Download a specific node version (doesn't switch)
-    Install {
-        /// Version to install (e.g., v6.0.0)
-        #[arg(required_unless_present = "local")]
-        version: Option<String>,
-
-        /// Build and install from the local workspace instead of downloading
-        #[arg(long)]
-        local: bool,
-    },
-}
 
 // =============================================================================
 // Program commands
@@ -580,46 +525,22 @@ async fn run_antegen() -> Result<()> {
         // =================================================================
         // Node commands
         // =================================================================
-        Commands::Node(node_cmd) => match node_cmd {
-            NodeCommands::Run { config } => {
-                let cfg = match config {
-                    Some(p) => p,
-                    None => crate::commands::service::ensure_config()?,
-                };
-                commands::node::run(cfg, cli.rpc, cli.log_level).await
-            }
-            NodeCommands::Start { rpc, version } => {
-                crate::commands::service::start(rpc, version).await
-            }
-            NodeCommands::Stop => crate::commands::service::stop(),
-            NodeCommands::Restart => crate::commands::service::restart(),
-            NodeCommands::Status => crate::commands::service::status(),
-            NodeCommands::Logs { follow } => crate::commands::service::logs(follow),
-            NodeCommands::Uninstall => crate::commands::service::uninstall(),
-            NodeCommands::Update { version, local } => {
-                crate::commands::update::update_node(version, local).await
-            }
-            NodeCommands::List => crate::commands::update::list_node().await,
-            NodeCommands::Use { version } => {
-                crate::commands::update::use_node_version(version).await
-            }
-            NodeCommands::Install { version, local } => {
-                crate::commands::update::install_node_version(version, local).await
-            }
-        },
+        Commands::Node(node_cmd) => {
+            commands::node::dispatch(node_cmd, cli.rpc, cli.log_level).await
+        }
 
         // =================================================================
         // Top-level operator commands
         // =================================================================
-        Commands::Init { rpc, force } => crate::commands::service::init(rpc, force),
+        Commands::Init { rpc, force } => crate::commands::node::service::init(rpc, force),
         Commands::Info { json } => crate::commands::info::info(json).await,
         Commands::Fund { amount } => {
             let config = crate::commands::default_config_path()?;
-            crate::commands::client::fund(config, amount, cli.keypair, cli.rpc).await
+            crate::commands::wallet::fund(config, amount, cli.keypair, cli.rpc).await
         }
         Commands::Withdraw { amount } => {
             let config = crate::commands::default_config_path()?;
-            crate::commands::client::withdraw(config, amount, cli.rpc).await
+            crate::commands::wallet::withdraw(config, amount, cli.rpc).await
         }
         Commands::Config(config_cmd) => dispatch_config(config_cmd, cli.rpc),
 
@@ -628,27 +549,27 @@ async fn run_antegen() -> Result<()> {
         // =================================================================
         Commands::Start { rpc, version } => {
             deprecation_warning("start", "start");
-            crate::commands::service::start(rpc, version).await
+            crate::commands::node::service::start(rpc, version).await
         }
         Commands::Status => {
             deprecation_warning("status", "status");
-            crate::commands::service::status()
+            crate::commands::node::service::status()
         }
         Commands::Logs { follow } => {
             deprecation_warning("logs", "logs");
-            crate::commands::service::logs(follow)
+            crate::commands::node::service::logs(follow)
         }
         Commands::Stop => {
             deprecation_warning("stop", "stop");
-            crate::commands::service::stop()
+            crate::commands::node::service::stop()
         }
         Commands::Restart => {
             deprecation_warning("restart", "restart");
-            crate::commands::service::restart()
+            crate::commands::node::service::restart()
         }
         Commands::Uninstall => {
             deprecation_warning("uninstall", "uninstall");
-            crate::commands::service::uninstall()
+            crate::commands::node::service::uninstall()
         }
     }
 }

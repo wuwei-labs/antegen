@@ -1,7 +1,7 @@
 //! Geyser plugin commands
 
 use crate::download::{
-    current_version, download_geyser_plugin, get_library_filename, needs_update, save_version_info,
+    download_geyser_plugin, get_library_filename, needs_update, save_version_info,
 };
 use antegen_client::ClientConfig;
 use anyhow::Result;
@@ -24,7 +24,7 @@ pub(crate) async fn init(output: PathBuf, config_path: PathBuf) -> Result<()> {
     let so_path = plugin_dir.join(&so_filename);
 
     // Download the plugin if needed
-    let version = current_version();
+    let version = crate::current_version();
     if needs_update(&so_path, version)? {
         download_geyser_plugin(version, &so_path).await?;
         save_version_info(&so_path, version)?;
@@ -88,7 +88,7 @@ pub(crate) async fn init(output: PathBuf, config_path: PathBuf) -> Result<()> {
 pub(crate) async fn extract(output: PathBuf) -> Result<()> {
     println!("Downloading Geyser plugin...");
 
-    let version = current_version();
+    let version = crate::current_version();
     download_geyser_plugin(version, &output).await?;
     save_version_info(&output, version)?;
 

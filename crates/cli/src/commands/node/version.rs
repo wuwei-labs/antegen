@@ -35,10 +35,6 @@ fn is_node_version_supported(version: &str) -> bool {
 // =============================================================================
 
 /// Get the current CLI version
-pub(crate) fn current_version() -> &'static str {
-    concat!("v", env!("CARGO_PKG_VERSION"))
-}
-
 /// Parse a version string like "v4.3.2" into (major, minor, patch)
 pub(crate) fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
     let v = v.strip_prefix('v').unwrap_or(v);
@@ -62,10 +58,6 @@ pub(crate) fn version_less_than(v1: &str, v2: &str) -> bool {
 }
 
 /// Get the platform target string for the current system
-pub(crate) fn get_platform_target() -> &'static str {
-    self_update::get_target()
-}
-
 /// Get the bin directory path
 fn bin_dir() -> Result<PathBuf> {
     dirs::home_dir()
@@ -100,7 +92,7 @@ pub(crate) async fn download_binary(url: &str, temp_name: &str) -> Result<PathBu
                  - Pre-built binaries aren't available for your platform ({})\n\
                  \n\
                  You can download manually from: https://github.com/{}/{}/releases",
-                get_platform_target(),
+                crate::get_platform_target(),
                 REPO_OWNER,
                 REPO_NAME
             );
@@ -358,7 +350,7 @@ fn versioned_node_binary_path(version: &str) -> Result<PathBuf> {
 
 /// Build the download URL for the node binary
 pub(crate) fn build_node_download_url(version: &str) -> String {
-    let target = get_platform_target();
+    let target = crate::get_platform_target();
     format!(
         "https://github.com/{}/{}/releases/download/{}{}/antegen-{}-{}",
         REPO_OWNER,
@@ -374,7 +366,7 @@ pub(crate) fn build_node_download_url(version: &str) -> String {
 /// a `node-v*` tag. Kept so an operator can still roll back to a version that
 /// predates the merge into `antegen`.
 fn build_legacy_node_download_url(version: &str) -> String {
-    let target = get_platform_target();
+    let target = crate::get_platform_target();
     format!(
         "https://github.com/{}/{}/releases/download/node-{}/antegen-node-{}-{}",
         REPO_OWNER, REPO_NAME, version, version, target

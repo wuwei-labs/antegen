@@ -9,15 +9,13 @@ use std::path::{Path, PathBuf};
 /// Must exceed rent-exempt minimum for a system account (~890,880 lamports)
 pub(crate) const MIN_BALANCE_LAMPORTS: u64 = 1_000_000;
 
-pub(crate) mod client;
 pub(crate) mod config;
 pub(crate) mod geyser;
 pub(crate) mod info;
 pub(crate) mod node;
 pub(crate) mod program;
-pub(crate) mod service;
 pub(crate) mod thread;
-pub(crate) mod update;
+pub(crate) mod wallet;
 
 /// Get RPC URL from arg or Solana CLI config
 pub(crate) fn get_rpc_url(rpc: Option<String>) -> Result<String> {

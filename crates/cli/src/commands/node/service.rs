@@ -128,7 +128,7 @@ fn do_init(rpc: Option<String>, force: bool) -> Result<PathBuf> {
     let keypair_path = data_dir.join("executor.json");
 
     // Generate config using existing config init logic
-    super::config::init(
+    super::super::config::init(
         config_path.clone(),
         Some(rpc_url),
         Some(keypair_path.to_string_lossy().to_string()),
@@ -178,13 +178,13 @@ async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()
     // Resolve the node binary to use for the service
     let node_version = match version {
         Some(v) => v.to_string(),
-        None => match super::update::read_node_version() {
+        None => match super::version::read_node_version() {
             Some(v) => v,
             None => {
                 // No node version tracked — download latest
                 println!("No node binary found. Downloading latest...");
-                match super::update::download_latest_node().await {
-                    Ok(()) => super::update::read_node_version()
+                match super::version::download_latest_node().await {
+                    Ok(()) => super::version::read_node_version()
                         .context("Failed to determine node version after download")?,
                     Err(e) => {
                         anyhow::bail!(
@@ -198,7 +198,7 @@ async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()
         },
     };
 
-    let binary = super::update::ensure_node_downloaded(&node_version).await?;
+    let binary = super::version::ensure_node_downloaded(&node_version).await?;
     let binary = binary.canonicalize().unwrap_or(binary);
 
     // Create logs directory
@@ -249,7 +249,7 @@ async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()
     // Track the node version from the binary filename (e.g., antegen-node-v4.1.1)
     if let Some(filename) = binary.file_name().and_then(|f| f.to_str()) {
         if let Some(ver) = filename.strip_prefix("antegen-node-") {
-            let _ = super::update::write_node_version(ver);
+            let _ = super::version::write_node_version(ver);
         }
     }
 
@@ -331,7 +331,7 @@ pub(crate) fn ensure_config() -> Result<PathBuf> {
 /// Start the antegen service (init + install + start)
 /// If the service is already installed, stops and uninstalls it first (clean reinstall).
 pub(crate) async fn start(rpc: Option<String>, version: Option<String>) -> Result<()> {
-    super::update::clean_legacy_layout();
+    super::version::clean_legacy_layout();
     let config_path = do_init(rpc, false)?;
 
     // Clean reinstall: stop + uninstall existing service if present
@@ -560,24 +560,24 @@ pub(crate) const INSTALL_HINT: &str =
 /// Print update notices for CLI and node if newer versions are available
 async fn print_update_notices() {
     #[cfg(not(feature = "prod"))]
-    if super::update::is_dev_build() {
+    if super::version::is_dev_build() {
         return;
     }
 
     let (cli_update, node_update) = tokio::join!(
         async {
-            let installed = super::update::current_version();
-            let latest = super::update::fetch_latest_version_cached().await.ok()?;
-            if super::update::version_less_than(installed, &latest) {
+            let installed = crate::current_version();
+            let latest = super::version::fetch_latest_version_cached().await.ok()?;
+            if super::version::version_less_than(installed, &latest) {
                 Some(latest)
             } else {
                 None
             }
         },
         async {
-            let installed = super::update::read_node_version()?;
-            let latest = super::update::fetch_latest_version_cached().await.ok()?;
-            if super::update::version_less_than(&installed, &latest) {
+            let installed = super::version::read_node_version()?;
+            let latest = super::version::fetch_latest_version_cached().await.ok()?;
+            if super::version::version_less_than(&installed, &latest) {
                 Some(latest)
             } else {
                 None

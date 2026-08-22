@@ -9,33 +9,6 @@ use std::path::Path;
 const GITHUB_REPO: &str = "wuwei-labs/antegen";
 
 /// Get the current CLI version (used to match plugin version)
-pub(crate) fn current_version() -> &'static str {
-    concat!("v", env!("CARGO_PKG_VERSION"))
-}
-
-/// Get the platform target string for the current system
-fn get_platform_target() -> &'static str {
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    return "x86_64-unknown-linux-gnu";
-
-    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-    return "aarch64-unknown-linux-gnu";
-
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    return "x86_64-apple-darwin";
-
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    return "aarch64-apple-darwin";
-
-    #[cfg(not(any(
-        all(target_os = "linux", target_arch = "x86_64"),
-        all(target_os = "linux", target_arch = "aarch64"),
-        all(target_os = "macos", target_arch = "x86_64"),
-        all(target_os = "macos", target_arch = "aarch64"),
-    )))]
-    compile_error!("Unsupported platform for geyser plugin download");
-}
-
 /// Get the platform-specific library extension
 pub(crate) fn get_library_extension() -> &'static str {
     #[cfg(target_os = "linux")]
@@ -59,7 +32,7 @@ pub(crate) fn get_library_filename() -> String {
 
 /// Build the download URL for the geyser plugin
 fn build_download_url(version: &str) -> String {
-    let target = get_platform_target();
+    let target = crate::get_platform_target();
     // Note: Release artifacts use .so extension even for macOS dylib
     format!(
         "https://github.com/{}/releases/download/{}/antegen-geyser-{}-{}.so",
@@ -95,7 +68,7 @@ pub(crate) async fn download_geyser_plugin(version: &str, dest: &Path) -> Result
                  \n\
                  You can download manually from: https://github.com/{}/releases",
                 version,
-                get_platform_target(),
+                crate::get_platform_target(),
                 GITHUB_REPO
             ));
         }
@@ -170,7 +143,7 @@ mod tests {
 
     #[test]
     fn test_current_version() {
-        let version = current_version();
+        let version = crate::current_version();
         assert!(version.starts_with('v'));
     }
 
