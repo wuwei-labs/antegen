@@ -1,5 +1,14 @@
 # Changelog
 
+## [8.0.2](https://github.com/wuwei-labs/antegen/compare/antegen-cli-core-v8.0.1...antegen-cli-core-v8.0.2) (2026-08-22)
+
+
+### Bug Fixes
+
+* **cli-core:** do not answer version queries from the cache ([ccb7105](https://github.com/wuwei-labs/antegen/commit/ccb710569e973e5afe38e8d7ec25caedb06d26a6))
+* **client:** exit non-zero when the node stops on a failure ([45be73d](https://github.com/wuwei-labs/antegen/commit/45be73d35ff99a00c0057b322864dc7e15143ce0))
+* live version lookups, and stop the release pin drift for good ([5d0d630](https://github.com/wuwei-labs/antegen/commit/5d0d6308b21acf51db9bd2a5dbd402cde570eae1))
+
 ## [8.0.1](https://github.com/wuwei-labs/antegen/compare/antegen-cli-core-v8.0.0...antegen-cli-core-v8.0.1) (2026-08-16)
 
 
