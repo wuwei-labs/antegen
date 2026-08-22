@@ -1,5 +1,15 @@
 # Changelog
 
+## [6.0.2](https://github.com/wuwei-labs/antegen/compare/antegen-client-v6.0.1...antegen-client-v6.0.2) (2026-08-22)
+
+
+### Bug Fixes
+
+* **client:** exit non-zero when the node stops on a failure ([45be73d](https://github.com/wuwei-labs/antegen/commit/45be73d35ff99a00c0057b322864dc7e15143ce0))
+* **client:** redact the endpoint in ingest stats too ([87cd008](https://github.com/wuwei-labs/antegen/commit/87cd008ddf8ec7539713851762a774165f0c8697))
+* **client:** stop a worker name collision from killing the node ([d0bafe3](https://github.com/wuwei-labs/antegen/commit/d0bafe3a89057a652fb06cbe67cde7ccbde8ced2))
+* live version lookups, and stop the release pin drift for good ([5d0d630](https://github.com/wuwei-labs/antegen/commit/5d0d6308b21acf51db9bd2a5dbd402cde570eae1))
+
 ## [6.0.1](https://github.com/wuwei-labs/antegen/compare/antegen-client-v6.0.0...antegen-client-v6.0.1) (2026-08-16)
 
 
