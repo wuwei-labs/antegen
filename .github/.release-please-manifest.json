@@ -4,6 +4,6 @@
   "crates/ws": "0.2.0",
   "programs/thread": "5.2.0",
   "programs/fiber": "5.2.0",
-  "crates/cli": "7.0.1",
+  "crates/cli": "8.0.0",
   "plugin/geyser": "5.1.0"
 }
