@@ -15,7 +15,7 @@ must follow them too.
    - Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`,
      `test`, `build`, `ci`, `chore`, `revert`.
    - Allowed scopes (optional): `cron`, `client`, `ws`, `thread`,
-     `fiber`, `cli-core`, `cli`, `geyser`. Scope tells
+     `fiber`, `cli`, `geyser`. Scope tells
      `release-please` which package's changelog the commit belongs to.
    - Append `!` after type/scope (or include a `BREAKING CHANGE:`
      footer) for breaking changes — these become a major version bump.
@@ -93,8 +93,7 @@ in `.github/release-please-config.json`. The current mapping:
 | `crates/ws` | `antegen-ws` | `antegen-ws-v<X.Y.Z>` | crates.io |
 | `programs/thread` | `antegen-thread-program` | `antegen-thread-program-v<X.Y.Z>` | crates.io + verifiable `.so` |
 | `programs/fiber` | `antegen-fiber-program` | `antegen-fiber-program-v<X.Y.Z>` | crates.io + verifiable `.so` |
-| `cli/core` | `antegen-cli-core` | `antegen-cli-core-v<X.Y.Z>` | none (`publish = false`) |
-| `cli/antegen` | `antegen-cli` | `antegen-cli-v<X.Y.Z>` | `antegen` binary (CLI **and** node daemon) |
+| `crates/cli` | `antegen-cli` | `antegen-cli-v<X.Y.Z>` | `antegen` binary (CLI **and** node daemon) |
 | `plugin/geyser` | `antegen-geyser-plugin` | `antegen-geyser-plugin-v<X.Y.Z>` | binary only (`publish = false`) |
 
 `programs/reentrance-test` is a test-only program (`publish = false`)
@@ -129,7 +128,8 @@ chore(client): wire resume_paused into ThreadClient
 Common couplings to watch:
 - `antegen-thread-program` IDL change → bump `antegen-client`
 - `antegen-cron` API change → bump `antegen-thread-program`
-- `antegen-client` API change → bump `antegen-cli-core` and `antegen-cli`
+- `antegen-client` change → bump `antegen-cli`, or the fix never reaches a
+  binary (release-please attributes by path and cannot see the dependency)
 
 ### New packages
 

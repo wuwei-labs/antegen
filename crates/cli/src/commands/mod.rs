@@ -11,8 +11,12 @@ pub const MIN_BALANCE_LAMPORTS: u64 = 1_000_000;
 
 pub mod client;
 pub mod config;
+pub mod geyser;
 pub mod info;
+pub mod node;
+pub mod program;
 pub mod service;
+pub mod thread;
 pub mod update;
 
 /// Get RPC URL from arg or Solana CLI config

@@ -1,11 +1,13 @@
 //! Antegen CLI — developer-facing: program, thread, geyser commands
 
-use antegen_cli_core::{dispatch_config, LogLevel, NodeConfigCommands};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use config_cmd::{dispatch_config, LogLevel, NodeConfigCommands};
 use std::path::PathBuf;
 
 mod commands;
+mod config_cmd;
+mod download;
 
 // =============================================================================
 // Antegen CLI (developer-facing: program, thread, geyser)
@@ -554,42 +556,42 @@ async fn run_antegen() -> Result<()> {
             NodeCommands::Run { config } => {
                 let cfg = match config {
                     Some(p) => p,
-                    None => antegen_cli_core::commands::service::ensure_config()?,
+                    None => crate::commands::service::ensure_config()?,
                 };
                 commands::node::run(cfg, cli.rpc, cli.log_level).await
             }
             NodeCommands::Start { rpc, version } => {
-                antegen_cli_core::commands::service::start(rpc, version).await
+                crate::commands::service::start(rpc, version).await
             }
-            NodeCommands::Stop => antegen_cli_core::commands::service::stop(),
-            NodeCommands::Restart => antegen_cli_core::commands::service::restart(),
-            NodeCommands::Status => antegen_cli_core::commands::service::status(),
-            NodeCommands::Logs { follow } => antegen_cli_core::commands::service::logs(follow),
-            NodeCommands::Uninstall => antegen_cli_core::commands::service::uninstall(),
+            NodeCommands::Stop => crate::commands::service::stop(),
+            NodeCommands::Restart => crate::commands::service::restart(),
+            NodeCommands::Status => crate::commands::service::status(),
+            NodeCommands::Logs { follow } => crate::commands::service::logs(follow),
+            NodeCommands::Uninstall => crate::commands::service::uninstall(),
             NodeCommands::Update { version, local } => {
-                antegen_cli_core::commands::update::update_node(version, local).await
+                crate::commands::update::update_node(version, local).await
             }
-            NodeCommands::List => antegen_cli_core::commands::update::list_node().await,
+            NodeCommands::List => crate::commands::update::list_node().await,
             NodeCommands::Use { version } => {
-                antegen_cli_core::commands::update::use_node_version(version).await
+                crate::commands::update::use_node_version(version).await
             }
             NodeCommands::Install { version, local } => {
-                antegen_cli_core::commands::update::install_node_version(version, local).await
+                crate::commands::update::install_node_version(version, local).await
             }
         },
 
         // =================================================================
         // Top-level operator commands
         // =================================================================
-        Commands::Init { rpc, force } => antegen_cli_core::commands::service::init(rpc, force),
-        Commands::Info { json } => antegen_cli_core::commands::info::info(json).await,
+        Commands::Init { rpc, force } => crate::commands::service::init(rpc, force),
+        Commands::Info { json } => crate::commands::info::info(json).await,
         Commands::Fund { amount } => {
-            let config = antegen_cli_core::commands::default_config_path()?;
-            antegen_cli_core::commands::client::fund(config, amount, cli.keypair, cli.rpc).await
+            let config = crate::commands::default_config_path()?;
+            crate::commands::client::fund(config, amount, cli.keypair, cli.rpc).await
         }
         Commands::Withdraw { amount } => {
-            let config = antegen_cli_core::commands::default_config_path()?;
-            antegen_cli_core::commands::client::withdraw(config, amount, cli.rpc).await
+            let config = crate::commands::default_config_path()?;
+            crate::commands::client::withdraw(config, amount, cli.rpc).await
         }
         Commands::Config(config_cmd) => dispatch_config(config_cmd, cli.rpc),
 
@@ -598,27 +600,27 @@ async fn run_antegen() -> Result<()> {
         // =================================================================
         Commands::Start { rpc, version } => {
             deprecation_warning("start", "start");
-            antegen_cli_core::commands::service::start(rpc, version).await
+            crate::commands::service::start(rpc, version).await
         }
         Commands::Status => {
             deprecation_warning("status", "status");
-            antegen_cli_core::commands::service::status()
+            crate::commands::service::status()
         }
         Commands::Logs { follow } => {
             deprecation_warning("logs", "logs");
-            antegen_cli_core::commands::service::logs(follow)
+            crate::commands::service::logs(follow)
         }
         Commands::Stop => {
             deprecation_warning("stop", "stop");
-            antegen_cli_core::commands::service::stop()
+            crate::commands::service::stop()
         }
         Commands::Restart => {
             deprecation_warning("restart", "restart");
-            antegen_cli_core::commands::service::restart()
+            crate::commands::service::restart()
         }
         Commands::Uninstall => {
             deprecation_warning("uninstall", "uninstall");
-            antegen_cli_core::commands::service::uninstall()
+            crate::commands::service::uninstall()
         }
     }
 }

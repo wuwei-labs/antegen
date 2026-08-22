@@ -44,12 +44,9 @@ jobs:
       fiber_released: ${{ steps.release.outputs['programs/fiber--release_created'] }}
       fiber_tag: ${{ steps.release.outputs['programs/fiber--tag_name'] }}
 
-      cli_core_released: ${{ steps.release.outputs['cli/core--release_created'] }}
-      cli_core_tag: ${{ steps.release.outputs['cli/core--tag_name'] }}
-
-      cli_released: ${{ steps.release.outputs['cli/antegen--release_created'] }}
-      cli_tag: ${{ steps.release.outputs['cli/antegen--tag_name'] }}
-      cli_version: ${{ steps.release.outputs['cli/antegen--version'] }}
+      cli_released: ${{ steps.release.outputs['crates/cli--release_created'] }}
+      cli_tag: ${{ steps.release.outputs['crates/cli--tag_name'] }}
+      cli_version: ${{ steps.release.outputs['crates/cli--version'] }}
 
       geyser_released: ${{ steps.release.outputs['plugin/geyser--release_created'] }}
       geyser_tag: ${{ steps.release.outputs['plugin/geyser--tag_name'] }}
@@ -386,7 +383,7 @@ jobs:
           publish_if_missing antegen-fiber-program  programs/fiber/Cargo.toml
           publish_if_missing antegen-thread-program programs/thread/Cargo.toml
           publish_if_missing antegen-client         crates/client/Cargo.toml
-          # antegen-cli-core and antegen-cli are `publish = false`: they depend
+          # antegen-cli is `publish = false`: it depends
           # on a patched fork of service-manager, and `[patch]` does not survive
           # publishing, so a published build resolves upstream and fails to
           # compile. They still get versioned, tagged and changelogged; their
@@ -640,7 +637,6 @@ jobs:
             ${{ needs.release-please.outputs.client_tag }}
             ${{ needs.release-please.outputs.thread_tag }}
             ${{ needs.release-please.outputs.fiber_tag }}
-            ${{ needs.release-please.outputs.cli_core_tag }}
             ${{ needs.release-please.outputs.cli_tag }}
             ${{ needs.release-please.outputs.geyser_tag }}
         run: |

@@ -1,10 +1,11 @@
-//! Antegen CLI Core — shared library backing the `antegen` binary
+//! Log level, node config commands, and their dispatch.
+//!
+//! Was the root of the `antegen-cli-core` crate, which existed so `antegen` and
+//! `antegenctl` could share code. `antegenctl` is gone and this binary was its
+//! only consumer, so the split bought a second version number and nothing else.
 
 use clap::{Subcommand, ValueEnum};
 use std::path::PathBuf;
-
-pub mod commands;
-pub mod download;
 
 #[derive(Clone, Debug, ValueEnum)]
 pub enum LogLevel {
@@ -155,8 +156,8 @@ pub fn dispatch_config(
         NodeConfigCommands::Get { config } => {
             let path = config
                 .map(Ok)
-                .unwrap_or_else(commands::default_config_path)?;
-            commands::config::get(path)
+                .unwrap_or_else(crate::commands::default_config_path)?;
+            crate::commands::config::get(path)
         }
         NodeConfigCommands::Set {
             config,
@@ -176,8 +177,8 @@ pub fn dispatch_config(
         } => {
             let path = config
                 .map(Ok)
-                .unwrap_or_else(commands::default_config_path)?;
-            commands::config::set(
+                .unwrap_or_else(crate::commands::default_config_path)?;
+            crate::commands::config::set(
                 path,
                 global_rpc,
                 keypair_path,
@@ -204,9 +205,9 @@ pub fn dispatch_config(
         } => {
             let path = output
                 .map(Ok)
-                .unwrap_or_else(commands::default_config_path)?;
-            commands::config::init(path, rpc, keypair_path, storage_path, force)
+                .unwrap_or_else(crate::commands::default_config_path)?;
+            crate::commands::config::init(path, rpc, keypair_path, storage_path, force)
         }
-        NodeConfigCommands::Validate { config } => commands::config::validate(config),
+        NodeConfigCommands::Validate { config } => crate::commands::config::validate(config),
     }
 }

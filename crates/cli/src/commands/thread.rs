@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 #[cfg(feature = "dev")]
-use antegen_cli_core::commands::get_keypair;
-use antegen_cli_core::commands::get_rpc_url;
+use crate::commands::get_keypair;
+use crate::commands::get_rpc_url;
 
 // =============================================================================
 // Thread inspection commands (always available)

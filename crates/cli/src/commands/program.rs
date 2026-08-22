@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
 
-use antegen_cli_core::commands::{get_keypair, get_rpc_url};
+use crate::commands::{get_keypair, get_rpc_url};
 
 // =============================================================================
 // Deploy helpers

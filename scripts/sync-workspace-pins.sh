@@ -26,7 +26,6 @@ CHECK=0
 
 # crate name -> directory holding its Cargo.toml
 MEMBERS="
-antegen-cli-core cli/core
 antegen-cron crates/cron
 antegen-client crates/client
 antegen-geyser-plugin plugin/geyser

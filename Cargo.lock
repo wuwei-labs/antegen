@@ -487,7 +487,6 @@ name = "antegen-cli"
 version = "7.0.1"
 dependencies = [
  "anchor-lang",
- "antegen-cli-core",
  "antegen-client",
  "antegen-fiber-program",
  "antegen-thread-program",
@@ -496,27 +495,9 @@ dependencies = [
  "clap 4.5.53",
  "dirs 5.0.1",
  "env_logger 0.10.2",
- "futures",
- "log",
- "serde",
- "serde_json",
- "serde_yaml",
- "solana-sdk",
- "tokio",
-]
-
-[[package]]
-name = "antegen-cli-core"
-version = "8.0.2"
-dependencies = [
- "antegen-client",
- "anyhow",
- "chrono",
- "clap 4.5.53",
- "dirs 5.0.1",
- "env_logger 0.10.2",
  "file-owner",
  "flate2",
+ "futures",
  "libc",
  "loa-core",
  "log",
