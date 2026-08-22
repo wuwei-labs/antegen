@@ -55,12 +55,52 @@ jobs:
       geyser_tag: ${{ steps.release.outputs['plugin/geyser--tag_name'] }}
       geyser_version: ${{ steps.release.outputs['plugin/geyser--version'] }}
     steps:
+      - uses: actions/checkout@v6
+
       - uses: googleapis/release-please-action@v5
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: .github/release-please-config.json
           manifest-file: .github/.release-please-manifest.json
+
+      # release-please bumps each member's own Cargo.toml and leaves the
+      # `[workspace.dependencies]` pins alone, so the workspace stops resolving
+      # the moment the Release PR merges — `^0.1.0` does not admit 0.2.0. That
+      # has broken main and failed the publish job on four separate releases,
+      # each time fixed by hand afterwards. CI catches it on the Release PR, but
+      # catching it only turns a silent break into a blocked merge; syncing it
+      # here means there is nothing to catch.
+      #
+      # Pushing to the Release PR branch does not re-trigger this workflow —
+      # Release runs on pushes to main — so this cannot loop.
+      - name: Sync workspace pins on the Release PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          branch=release-please--branches--main
+
+          if ! git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "No Release PR open; nothing to sync."
+            exit 0
+          fi
+
+          git fetch --quiet origin "$branch"
+          git checkout --quiet "$branch"
+
+          ./scripts/sync-workspace-pins.sh
+
+          if git diff --quiet -- Cargo.toml; then
+            echo "Workspace pins already match their members."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --quiet -m "chore: sync workspace dependency pins" -- Cargo.toml
+          git push --quiet origin "$branch"
+          echo "Synced workspace pins on $branch."
 
   # -----------------------------------------------------------------------
   # Stage 2: solana-verify build for each released program. Attaches the

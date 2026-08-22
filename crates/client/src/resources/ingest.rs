@@ -185,7 +185,17 @@ impl IngestStats {
         self.per_endpoint.len() > 1
     }
 
+    /// Every entry is keyed by the redacted endpoint.
+    ///
+    /// These keys are printed verbatim in the heartbeat's per-endpoint ingest
+    /// lines, so a caller passing a raw URL publishes its API key to the log.
+    /// That happened: the WebSocket `on_connect` closure captured the raw URL
+    /// and used it as both a log label and this key, which put a Helius and an
+    /// Alchemy key in a mainnet journal after the log labels had supposedly been
+    /// fixed. Redacting at the boundary means no caller can reintroduce it, and
+    /// the two spellings of one endpoint stop appearing as separate rows.
     fn entry(&self, endpoint: &str) -> dashmap::mapref::one::Ref<'_, String, EndpointIngest> {
+        let endpoint = &crate::config::redact_endpoint(endpoint);
         if !self.per_endpoint.contains_key(endpoint) {
             self.per_endpoint
                 .entry(endpoint.to_string())
@@ -297,5 +307,36 @@ mod tests {
         assert!(!stats.is_racing());
         stats.record_account("second", true);
         assert!(stats.is_racing());
+    }
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+
+    /// The heartbeat prints these keys verbatim, so a raw URL reaching the map
+    /// is a credential in the log.
+    #[test]
+    fn a_raw_url_cannot_become_a_key() {
+        let stats = IngestStats::new();
+        stats.record_account("wss://mainnet.helius-rpc.com/?api-key=secret", true);
+
+        let snap = stats.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].endpoint, "wss://mainnet.helius-rpc.com");
+        assert!(!snap[0].endpoint.contains("secret"));
+    }
+
+    /// Both spellings of one endpoint were showing up as separate rows, one
+    /// carrying the real numbers and one empty.
+    #[test]
+    fn the_same_endpoint_is_one_row_however_it_is_spelled() {
+        let stats = IngestStats::new();
+        stats.record_account("wss://rpc.example.com/?api-key=secret", true);
+        stats.record_account("wss://rpc.example.com", false);
+
+        let snap = stats.snapshot();
+        assert_eq!(snap.len(), 1, "one endpoint, one row");
+        assert_eq!(snap[0].accounts_seen, 2);
     }
 }
