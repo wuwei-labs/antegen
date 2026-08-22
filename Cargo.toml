@@ -1,5 +1,12 @@
 [package]
 name = "antegen"
+# Never released or published — the workspace root is a package only so the
+# repo builds as one unit. The field exists because release-please's
+# cargo-workspace plugin refuses to load a workspace whose root manifest has no
+# version, and that plugin is what patch-bumps `antegen-cli` when the libraries
+# it depends on move. Without it a client-only fix bumps a library nobody
+# installs and never produces a new binary.
+version = "0.0.0"
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
