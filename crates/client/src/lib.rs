@@ -82,11 +82,15 @@ pub async fn run_standalone(config: ClientConfig) -> Result<()> {
     let (resources, eviction_rx) = SharedResources::new(&config).await?;
     log::debug!("Created shared resources (RPC pool, unified cache, TPU client)");
 
+    // Raised by the supervisor when it stops because something failed rather
+    // than because it was asked to.
+    let fatal = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     // Spawn RootSupervisor (no geyser channel in standalone mode)
     let (_root_ref, root_handle) = ractor::Actor::spawn(
         Some("root-supervisor".to_string()),
         actors::RootSupervisor,
-        (config, resources, None, eviction_rx),
+        (config, resources, None, eviction_rx, fatal.clone()),
     )
     .await
     .map_err(|e| anyhow::anyhow!("Failed to spawn RootSupervisor: {}", e))?;
@@ -94,6 +98,16 @@ pub async fn run_standalone(config: ClientConfig) -> Result<()> {
     // Block until supervisor exits (via signal handler)
     match root_handle.await {
         Ok(_) => {
+            // A supervisor that stopped because a child died is not a clean
+            // exit, however tidy the teardown was. Exiting 0 told systemd the
+            // run had succeeded, so `Restart=on-failure` did not fire and a node
+            // that had shut itself down mid-execution simply stayed down.
+            if fatal.load(std::sync::atomic::Ordering::SeqCst) {
+                log::error!("Shutdown complete (after actor failure)");
+                return Err(anyhow::anyhow!(
+                    "node stopped because a supervised actor failed"
+                ));
+            }
             log::info!("Shutdown complete");
             Ok(())
         }
@@ -145,7 +159,15 @@ impl PluginHandle {
         let (_root_ref, root_handle) = ractor::Actor::spawn(
             Some("root-supervisor".to_string()),
             actors::RootSupervisor,
-            (config, resources, Some(rx), eviction_rx),
+            (
+                config,
+                resources,
+                Some(rx),
+                eviction_rx,
+                // Plugin mode runs inside the validator; there is no process
+                // exit code for us to set.
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            ),
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to spawn RootSupervisor: {}", e))?;

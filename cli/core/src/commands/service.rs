@@ -230,7 +230,17 @@ async fn install_service(config_path: &Path, version: Option<&str>) -> Result<()
             working_directory: None,
             environment: None,
             autostart: true,
-            restart_policy: service_manager::RestartPolicy::OnFailure {
+            // Always, not OnFailure. A node has no reason to exit on its own —
+            // an operator stopping it goes through the service manager, which
+            // systemd distinguishes from the process exiting — so any exit at
+            // all means something went wrong and it should come back.
+            //
+            // OnFailure keys off the exit code, which made it one bug away from
+            // useless: the node shut itself down after an actor failure, exited
+            // 0 because the teardown was tidy, and systemd read that as a
+            // successful run and left it down. That exit code is fixed too, but
+            // the restart policy should not depend on getting it right.
+            restart_policy: service_manager::RestartPolicy::Always {
                 delay_secs: Some(5),
             },
         })

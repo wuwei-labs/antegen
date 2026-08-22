@@ -18,6 +18,7 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::read_keypair_file;
 use solana_sdk::signer::Signer;
 use std::error::Error;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -41,6 +42,9 @@ pub struct RootSupervisor;
 pub struct RootState {
     #[allow(dead_code)] // Kept for future observability control
     observability_ref: Option<ActorRef<ObservabilityMessage>>,
+    /// Raised before stopping on a child failure, so the caller can exit
+    /// non-zero. A shutdown requested by a signal leaves it clear.
+    fatal: Arc<AtomicBool>,
 }
 
 impl Actor for RootSupervisor {
@@ -51,12 +55,16 @@ impl Actor for RootSupervisor {
         SharedResources,
         Option<mpsc::Receiver<AccountUpdate>>,
         mpsc::UnboundedReceiver<Pubkey>, // Cache eviction receiver for StagingActor
+        // Set when the supervisor stops because something failed rather than
+        // because it was asked to. The caller turns it into a non-zero exit,
+        // which is what a process supervisor needs to see.
+        Arc<AtomicBool>,
     );
 
     async fn pre_start(
         &self,
         myself: ActorRef<Self::Msg>,
-        (config, resources, geyser_receiver, eviction_rx): Self::Arguments,
+        (config, resources, geyser_receiver, eviction_rx, fatal): Self::Arguments,
     ) -> Result<Self::State, Box<dyn Error + Send + Sync>> {
         log::debug!("RootSupervisor starting...");
 
@@ -188,7 +196,10 @@ impl Actor for RootSupervisor {
 
         log::info!("System ready. Press Ctrl+C to shutdown.");
 
-        Ok(RootState { observability_ref })
+        Ok(RootState {
+            observability_ref,
+            fatal,
+        })
     }
 
     async fn handle(
@@ -213,7 +224,7 @@ impl Actor for RootSupervisor {
         &self,
         myself: ActorRef<Self::Msg>,
         message: SupervisionEvent,
-        _state: &mut Self::State,
+        state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
         match message {
             SupervisionEvent::ActorTerminated(who, _, reason) => {
@@ -231,6 +242,7 @@ impl Actor for RootSupervisor {
                     name,
                     reason
                 );
+                state.fatal.store(true, Ordering::SeqCst);
                 myself.stop(None);
             }
             SupervisionEvent::ActorFailed(who, error) => {
@@ -248,6 +260,7 @@ impl Actor for RootSupervisor {
                     name,
                     error
                 );
+                state.fatal.store(true, Ordering::SeqCst);
                 myself.stop(None);
             }
             _ => {}
