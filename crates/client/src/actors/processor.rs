@@ -347,13 +347,34 @@ impl ProcessorFactory {
             trace: ready_thread.trace.clone(),
         };
 
-        let (worker_ref, _handle) = Actor::spawn(
-            Some(format!("worker-{}", ready_thread.thread_pubkey)),
-            WorkerActor,
-            worker_args,
-        )
-        .await
-        .map_err(|e| format!("Failed to spawn worker: {}", e))?;
+        // Unnamed. A registered name must be globally unique until the actor's
+        // task actually winds down, and `stop()` only requests that — so a
+        // worker removed from `active_workers` can still hold its registry name
+        // for a moment afterwards. Naming workers after the thread meant
+        // re-dispatching that thread inside the same drain could collide with
+        // the worker that had just finished it, and the resulting spawn error
+        // killed the processor and with it the node. `active_workers` is the
+        // real bookkeeping; the registry name was only ever for debugging.
+        let (worker_ref, _handle) = match Actor::spawn(None, WorkerActor, worker_args).await {
+            Ok(pair) => pair,
+            Err(e) => {
+                // Not fatal. One thread failing to start a worker is a missed
+                // execution that the scheduler will retry; taking the node down
+                // loses every other thread too.
+                log::error!(
+                    "Failed to spawn worker for thread {}: {}",
+                    ready_thread.thread_pubkey,
+                    e
+                );
+                self.abandon(
+                    state,
+                    &ready_thread,
+                    "worker spawn failed",
+                    SchedOutcome::Retryable,
+                );
+                return Ok(true);
+            }
+        };
 
         // Track worker
         state
@@ -447,5 +468,64 @@ impl ProcessorFactory {
             .map_err(|e| format!("Failed to notify staging of completion: {:?}", e))?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ractor::{Actor, ActorProcessingErr, ActorRef};
+
+    /// A stand-in for WorkerActor. The real one needs SharedResources — an RPC
+    /// pool and a TPU client — so this exercises ractor's registry semantics,
+    /// which is where the collision actually came from.
+    struct Dummy;
+
+    impl Actor for Dummy {
+        type Msg = ();
+        type State = ();
+        type Arguments = ();
+
+        async fn pre_start(
+            &self,
+            _: ActorRef<Self::Msg>,
+            _: Self::Arguments,
+        ) -> Result<Self::State, ActorProcessingErr> {
+            Ok(())
+        }
+    }
+
+    /// `stop()` only requests a stop; the registry entry outlives the call.
+    ///
+    /// A mainnet node died on exactly this: the processor removed a finished
+    /// worker from `active_workers`, called `stop()`, then drained its queue and
+    /// re-dispatched the same thread within the same handler. The name was still
+    /// registered, `Actor::spawn` failed, and the error propagated out of the
+    /// handler and took the node with it.
+    #[tokio::test]
+    async fn a_stopped_actor_can_still_hold_its_name() {
+        let name = "worker-collision-probe".to_string();
+
+        let (first, _h) = Actor::spawn(Some(name.clone()), Dummy, ()).await.unwrap();
+        first.stop(None);
+
+        // No await between stop and respawn, mirroring the drain loop.
+        let second = Actor::spawn(Some(name.clone()), Dummy, ()).await;
+        assert!(
+            second.is_err(),
+            "a name freed only after the task winds down cannot be reused immediately"
+        );
+    }
+
+    /// Which is why workers are spawned unnamed: nothing looks them up by name,
+    /// `active_workers` is the real bookkeeping, and an unnamed actor cannot
+    /// collide however fast the queue turns over.
+    #[tokio::test]
+    async fn unnamed_actors_never_collide() {
+        for _ in 0..64 {
+            let (a, _h) = Actor::spawn(None, Dummy, ()).await.unwrap();
+            a.stop(None);
+            let b = Actor::spawn(None, Dummy, ()).await;
+            assert!(b.is_ok(), "unnamed spawns must always succeed");
+        }
     }
 }
