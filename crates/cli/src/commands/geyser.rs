@@ -1,14 +1,14 @@
 //! Geyser plugin commands
 
-use antegen_cli_core::download::{
-    current_version, download_geyser_plugin, get_library_filename, needs_update, save_version_info,
+use crate::download::{
+    download_geyser_plugin, get_library_filename, needs_update, save_version_info,
 };
 use antegen_client::ClientConfig;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 /// Initialize Geyser plugin for validator
-pub async fn init(output: PathBuf, config_path: PathBuf) -> Result<()> {
+pub(crate) async fn init(output: PathBuf, config_path: PathBuf) -> Result<()> {
     println!("Initializing Geyser plugin...");
 
     // Determine plugin directory
@@ -24,7 +24,7 @@ pub async fn init(output: PathBuf, config_path: PathBuf) -> Result<()> {
     let so_path = plugin_dir.join(&so_filename);
 
     // Download the plugin if needed
-    let version = current_version();
+    let version = crate::current_version();
     if needs_update(&so_path, version)? {
         download_geyser_plugin(version, &so_path).await?;
         save_version_info(&so_path, version)?;
@@ -85,10 +85,10 @@ pub async fn init(output: PathBuf, config_path: PathBuf) -> Result<()> {
 }
 
 /// Extract plugin .so to custom location
-pub async fn extract(output: PathBuf) -> Result<()> {
+pub(crate) async fn extract(output: PathBuf) -> Result<()> {
     println!("Downloading Geyser plugin...");
 
-    let version = current_version();
+    let version = crate::current_version();
     download_geyser_plugin(version, &output).await?;
     save_version_info(&output, version)?;
 

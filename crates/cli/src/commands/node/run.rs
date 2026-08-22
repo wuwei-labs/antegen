@@ -4,8 +4,8 @@
 //! `antegen-node` binary in `antegen-client`; the runtime it starts has always
 //! lived in the library, so the binary only ever duplicated startup wiring.
 
-use antegen_cli_core::commands::{ensure_keypair_exists, expand_tilde, MIN_BALANCE_LAMPORTS};
-use antegen_cli_core::LogLevel;
+use crate::commands::{ensure_keypair_exists, expand_tilde, MIN_BALANCE_LAMPORTS};
+use crate::LogLevel;
 use antegen_client::config::{EndpointRole, RpcEndpoint};
 use antegen_client::rpc::websocket::WsClient;
 use antegen_client::rpc::RpcPool;
@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Run the executor in the foreground, blocking until it exits.
-pub async fn run(
+pub(crate) async fn run(
     config_path: PathBuf,
     rpc_override: Option<String>,
     log_level: Option<LogLevel>,

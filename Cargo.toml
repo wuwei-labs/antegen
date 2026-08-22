@@ -23,14 +23,12 @@ codegen-units = 1
 resolver = "2"
 members = [
     "crates/*",
-    "cli/core",
-    "cli/antegen",
     "plugin/geyser",
     "programs/fiber",
     "programs/reentrance-test",
     "programs/thread",
 ]
-default-members = ["cli/antegen"]
+default-members = ["crates/cli"]
 
 [workspace.package]
 authors = ["Antegen Maintainers <maintainers@antegen.xyz>"]
@@ -60,7 +58,6 @@ large_enum_variant = "allow"
 
 [workspace.dependencies]
 # Internal workspace crates (each has its own version)
-antegen-cli-core = { version = "8.0.2", path = "cli/core" }
 antegen-cron = { version = "4.1.0", path = "crates/cron" }
 antegen-client = { version = "6.0.2", path = "crates/client" }
 antegen-geyser-plugin = { version = "5.1.0", path = "plugin/geyser" }

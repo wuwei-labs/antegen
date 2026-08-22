@@ -9,35 +9,8 @@ use std::path::Path;
 const GITHUB_REPO: &str = "wuwei-labs/antegen";
 
 /// Get the current CLI version (used to match plugin version)
-pub fn current_version() -> &'static str {
-    concat!("v", env!("CARGO_PKG_VERSION"))
-}
-
-/// Get the platform target string for the current system
-fn get_platform_target() -> &'static str {
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    return "x86_64-unknown-linux-gnu";
-
-    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-    return "aarch64-unknown-linux-gnu";
-
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    return "x86_64-apple-darwin";
-
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    return "aarch64-apple-darwin";
-
-    #[cfg(not(any(
-        all(target_os = "linux", target_arch = "x86_64"),
-        all(target_os = "linux", target_arch = "aarch64"),
-        all(target_os = "macos", target_arch = "x86_64"),
-        all(target_os = "macos", target_arch = "aarch64"),
-    )))]
-    compile_error!("Unsupported platform for geyser plugin download");
-}
-
 /// Get the platform-specific library extension
-pub fn get_library_extension() -> &'static str {
+pub(crate) fn get_library_extension() -> &'static str {
     #[cfg(target_os = "linux")]
     return "so";
 
@@ -52,14 +25,14 @@ pub fn get_library_extension() -> &'static str {
 }
 
 /// Get the platform-specific library filename
-pub fn get_library_filename() -> String {
+pub(crate) fn get_library_filename() -> String {
     let ext = get_library_extension();
     format!("libantegen_geyser_plugin.{}", ext)
 }
 
 /// Build the download URL for the geyser plugin
 fn build_download_url(version: &str) -> String {
-    let target = get_platform_target();
+    let target = crate::get_platform_target();
     // Note: Release artifacts use .so extension even for macOS dylib
     format!(
         "https://github.com/{}/releases/download/{}/antegen-geyser-{}-{}.so",
@@ -68,7 +41,7 @@ fn build_download_url(version: &str) -> String {
 }
 
 /// Download the geyser plugin from GitHub releases
-pub async fn download_geyser_plugin(version: &str, dest: &Path) -> Result<()> {
+pub(crate) async fn download_geyser_plugin(version: &str, dest: &Path) -> Result<()> {
     let url = build_download_url(version);
 
     log::info!("Downloading geyser plugin from: {}", url);
@@ -95,7 +68,7 @@ pub async fn download_geyser_plugin(version: &str, dest: &Path) -> Result<()> {
                  \n\
                  You can download manually from: https://github.com/{}/releases",
                 version,
-                get_platform_target(),
+                crate::get_platform_target(),
                 GITHUB_REPO
             ));
         }
@@ -130,7 +103,7 @@ pub async fn download_geyser_plugin(version: &str, dest: &Path) -> Result<()> {
 }
 
 /// Check if the plugin needs to be updated (version mismatch)
-pub fn needs_update(plugin_path: &Path, expected_version: &str) -> Result<bool> {
+pub(crate) fn needs_update(plugin_path: &Path, expected_version: &str) -> Result<bool> {
     // For now, just check if the file exists
     // In the future, we could embed version info in the plugin or use a manifest
     if !plugin_path.exists() {
@@ -158,7 +131,7 @@ pub fn needs_update(plugin_path: &Path, expected_version: &str) -> Result<bool> 
 }
 
 /// Save the version information alongside the plugin
-pub fn save_version_info(plugin_path: &Path, version: &str) -> Result<()> {
+pub(crate) fn save_version_info(plugin_path: &Path, version: &str) -> Result<()> {
     let version_file = plugin_path.with_extension("version");
     fs::write(&version_file, version)?;
     Ok(())
@@ -170,7 +143,7 @@ mod tests {
 
     #[test]
     fn test_current_version() {
-        let version = current_version();
+        let version = crate::current_version();
         assert!(version.starts_with('v'));
     }
 

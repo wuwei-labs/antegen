@@ -1,4 +1,4 @@
-//! CLI commands
+//! Command implementations, plus the helpers shared across them.
 
 use anyhow::{anyhow, Context, Result};
 use solana_sdk::pubkey::Pubkey;
@@ -7,16 +7,18 @@ use std::path::{Path, PathBuf};
 
 /// Minimum lamports required for executor operation (0.001 SOL)
 /// Must exceed rent-exempt minimum for a system account (~890,880 lamports)
-pub const MIN_BALANCE_LAMPORTS: u64 = 1_000_000;
+pub(crate) const MIN_BALANCE_LAMPORTS: u64 = 1_000_000;
 
-pub mod client;
-pub mod config;
-pub mod info;
-pub mod service;
-pub mod update;
+pub(crate) mod config;
+pub(crate) mod geyser;
+pub(crate) mod info;
+pub(crate) mod node;
+pub(crate) mod program;
+pub(crate) mod thread;
+pub(crate) mod wallet;
 
 /// Get RPC URL from arg or Solana CLI config
-pub fn get_rpc_url(rpc: Option<String>) -> Result<String> {
+pub(crate) fn get_rpc_url(rpc: Option<String>) -> Result<String> {
     if let Some(url) = rpc {
         return Ok(url);
     }
@@ -29,7 +31,7 @@ pub fn get_rpc_url(rpc: Option<String>) -> Result<String> {
 }
 
 /// Get keypair from arg or Solana CLI config
-pub fn get_keypair(keypair_path: Option<PathBuf>) -> Result<Keypair> {
+pub(crate) fn get_keypair(keypair_path: Option<PathBuf>) -> Result<Keypair> {
     let path = if let Some(p) = keypair_path {
         p
     } else {
@@ -47,14 +49,14 @@ pub fn get_keypair(keypair_path: Option<PathBuf>) -> Result<Keypair> {
 ///
 /// On macOS this is `~/Library/Application Support/antegen/antegen.toml`.
 /// On Linux this is `~/.config/antegen/antegen.toml`.
-pub fn default_config_path() -> Result<PathBuf> {
+pub(crate) fn default_config_path() -> Result<PathBuf> {
     dirs::config_dir()
         .map(|p| p.join("antegen").join("antegen.toml"))
         .ok_or_else(|| anyhow!("Could not determine config directory"))
 }
 
 /// Expand ~ in path to home directory
-pub fn expand_tilde(path: &str) -> Result<PathBuf> {
+pub(crate) fn expand_tilde(path: &str) -> Result<PathBuf> {
     if let Some(stripped) = path.strip_prefix("~/") {
         let home = dirs::home_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
@@ -65,7 +67,7 @@ pub fn expand_tilde(path: &str) -> Result<PathBuf> {
 }
 
 /// Ensure keypair exists at path, generating if needed. Returns the pubkey.
-pub fn ensure_keypair_exists(keypair_path: &Path) -> Result<Pubkey> {
+pub(crate) fn ensure_keypair_exists(keypair_path: &Path) -> Result<Pubkey> {
     if keypair_path.exists() {
         let keypair = read_keypair_file(keypair_path)
             .map_err(|e| anyhow::anyhow!("Failed to read keypair: {}", e))?;

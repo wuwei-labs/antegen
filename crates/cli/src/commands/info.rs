@@ -16,7 +16,7 @@ const LOA_STATUS_BASE_URL: &str = "https://status.loa.sh";
 
 /// Info output structure for JSON serialization
 #[derive(Serialize)]
-pub struct InfoOutput {
+pub(crate) struct InfoOutput {
     pub version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_version: Option<String>,
@@ -37,7 +37,7 @@ pub struct InfoOutput {
 
 /// Observability info
 #[derive(Serialize)]
-pub struct ObservabilityInfo {
+pub(crate) struct ObservabilityInfo {
     pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -75,7 +75,7 @@ fn shorten_path(path: &std::path::Path) -> String {
 /// CLI you just typed — the service holds an absolute path to whichever
 /// versioned binary it was installed against, so the two can differ.
 fn get_installed_binary_version() -> Option<String> {
-    super::update::read_node_version()
+    super::node::version::read_node_version()
 }
 
 /// Gather all info
@@ -85,7 +85,7 @@ async fn gather_info() -> Result<InfoOutput> {
     let config_path = default_config_path()?;
 
     // Service status and version (only get version if running)
-    let (service, service_version) = if super::service::is_installed() {
+    let (service, service_version) = if super::node::service::is_installed() {
         use service_manager::{ServiceManager, ServiceStatus, ServiceStatusCtx};
         let manager = <dyn ServiceManager>::native()?;
         let label = "antegen".parse()?;
@@ -228,7 +228,7 @@ fn get_observability_info(config: &ClientConfig) -> ObservabilityInfo {
 /// Check if CLI and/or node updates are available
 async fn check_updates_available() -> (Option<String>, Option<String>) {
     #[cfg(not(feature = "prod"))]
-    if super::update::is_dev_build() {
+    if super::node::version::is_dev_build() {
         return (None, None);
     }
 
@@ -237,9 +237,11 @@ async fn check_updates_available() -> (Option<String>, Option<String>) {
 }
 
 async fn check_cli_update() -> Option<String> {
-    let installed = super::update::current_version();
-    let latest = super::update::fetch_latest_version_cached().await.ok()?;
-    if super::update::version_less_than(installed, &latest) {
+    let installed = crate::current_version();
+    let latest = super::node::version::fetch_latest_version_cached()
+        .await
+        .ok()?;
+    if super::node::version::version_less_than(installed, &latest) {
         Some(latest)
     } else {
         None
@@ -247,9 +249,11 @@ async fn check_cli_update() -> Option<String> {
 }
 
 async fn check_node_update() -> Option<String> {
-    let installed = super::update::read_node_version()?;
-    let latest = super::update::fetch_latest_version_cached().await.ok()?;
-    if super::update::version_less_than(&installed, &latest) {
+    let installed = super::node::version::read_node_version()?;
+    let latest = super::node::version::fetch_latest_version_cached()
+        .await
+        .ok()?;
+    if super::node::version::version_less_than(&installed, &latest) {
         Some(latest)
     } else {
         None
@@ -303,7 +307,7 @@ fn print_info(info: &InfoOutput) {
         println!(
             "CLI update available: {} -> {}",
             version,
-            super::service::INSTALL_HINT
+            super::node::service::INSTALL_HINT
         );
     }
     if let Some(version) = &info.node_update_available {
@@ -315,7 +319,7 @@ fn print_info(info: &InfoOutput) {
 }
 
 /// Execute the info command
-pub async fn info(json: bool) -> Result<()> {
+pub(crate) async fn info(json: bool) -> Result<()> {
     let info = gather_info().await?;
 
     if json {

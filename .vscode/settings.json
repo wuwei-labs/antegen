@@ -1,0 +1,18 @@
+{
+  // Use the rust-analyzer from the pinned toolchain, not the one bundled with
+  // the VS Code extension.
+  //
+  // rust-toolchain.toml pins 1.94.1 and lists rust-analyzer as a component, so
+  // `cargo` builds proc-macro dylibs with 1.94.1 — but the extension ships its
+  // own rust-analyzer built against an older rustc, and it cannot load them:
+  //
+  //   Cannot create expander for target/debug/deps/libserde_derive-*.dylib:
+  //   mismatched ABI expected: `rustc 1.89.0`, got `rustc 1.94.1`
+  //
+  // The symptom is every `#[derive(Serialize)]` and friends going red, and
+  // std methods resolving wrongly, while `cargo check` is perfectly clean.
+  //
+  // This path is the rustup shim rather than a versioned toolchain directory,
+  // so it follows rust-toolchain.toml and keeps working when the pin moves.
+  "rust-analyzer.server.path": "rust-analyzer"
+}

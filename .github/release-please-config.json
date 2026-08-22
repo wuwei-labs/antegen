@@ -36,13 +36,7 @@
       "package-name": "antegen-fiber-program",
       "changelog-path": "CHANGELOG.md"
     },
-    "cli/core": {
-      "release-type": "rust",
-      "component": "antegen-cli-core",
-      "package-name": "antegen-cli-core",
-      "changelog-path": "CHANGELOG.md"
-    },
-    "cli/antegen": {
+    "crates/cli": {
       "release-type": "rust",
       "component": "antegen-cli",
       "package-name": "antegen-cli",

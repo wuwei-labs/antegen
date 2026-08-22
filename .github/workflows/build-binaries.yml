@@ -77,7 +77,7 @@ jobs:
 
       - name: Package
         run: |
-          version="$(sed -n 's/^version = "\(.*\)"/\1/p' cli/antegen/Cargo.toml | head -1)"
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/cli/Cargo.toml | head -1)"
           mkdir -p artifacts
           cp "target/${{ matrix.target }}/release/antegen" \
             "artifacts/antegen-v${version}-${{ matrix.target }}"
