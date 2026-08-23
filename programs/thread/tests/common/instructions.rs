@@ -110,7 +110,7 @@ pub fn build_create_thread_with_alts(
             paused: None,
             instruction,
             priority_fee,
-            lookup_tables,
+            lookup_tables: antegen_fiber_program::state::Trailing(lookup_tables),
         }
         .data(),
     }
@@ -241,7 +241,7 @@ pub fn build_create_fiber_with_alts(
             fiber_index,
             instruction,
             priority_fee,
-            lookup_tables,
+            lookup_tables: antegen_fiber_program::state::Trailing(lookup_tables),
         }
         .data(),
     }
@@ -312,7 +312,7 @@ pub fn build_update_fiber_full(
             instruction,
             priority_fee,
             track,
-            lookup_tables,
+            lookup_tables: antegen_fiber_program::state::Trailing(lookup_tables),
         }
         .data(),
     }
