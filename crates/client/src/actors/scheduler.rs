@@ -459,14 +459,27 @@ impl Scheduler {
                 }
             }
 
-            // Nothing executed on-chain, so no update is coming. Park on a
-            // watchdog rather than retrying a fiber that has nothing to run.
+            // Nothing executed on-chain, so no update is coming for what we
+            // just did. Park rather than retrying a fiber that has nothing to
+            // run — but mark for a refresh, because the most likely reason we
+            // are here is that our view of the thread is already stale.
+            //
+            // A mainnet thread proved this: a rental it was due to activate had
+            // already been activated, the account update carrying the thread's
+            // new state was missed, and the node kept building the old
+            // instruction from its cached copy. Parking without a refresh only
+            // changes how often that repeats — the cached thread is still
+            // stale on the next attempt, and moka's eviction is lazy enough to
+            // leave it that way for hours.
+            //
+            // The refresh invalidates the cache and refetches, so the next
+            // attempt is made against what the chain actually says.
             Outcome::EmptyFiber | Outcome::Fatal => {
                 self.reschedule(
                     pk,
                     current.saturating_add(kind.parked_watchdog()),
                     Phase::Parked,
-                    None,
+                    Some(now + REFRESH_AFTER),
                 );
             }
 
@@ -720,6 +733,43 @@ mod tests {
         assert_eq!(e.phase, Phase::Parked);
         // Still scheduled, on a watchdog.
         assert_eq!(e.due, 200 + Kind::Time.parked_watchdog());
+    }
+
+    /// A rejection usually means our copy of the thread is stale, not that the
+    /// thread is broken — so parking must also ask for a refetch.
+    ///
+    /// From a mainnet node: a rental the thread was due to activate had already
+    /// been activated, the account update carrying the new thread state was
+    /// missed, and the node rebuilt the stale instruction for over eight hours.
+    /// Without the refresh marker `take_stale_parked` never picks the entry up,
+    /// so every retry re-reads the same stale cache entry.
+    #[test]
+    fn a_fatally_parked_thread_is_refreshed() {
+        let mut s = Scheduler::new();
+        let now = Instant::now();
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
+        s.take_due(Kind::Time, 200, now);
+        s.complete(&pk(1), Outcome::Fatal, 0, 200, now);
+
+        assert_eq!(s.get(&pk(1)).unwrap().phase, Phase::Parked);
+        assert!(
+            s.take_stale_parked(now + REFRESH_AFTER + Duration::from_millis(1))
+                .contains(&pk(1)),
+            "a fatally parked thread must be refetched, or it retries stale state forever"
+        );
+    }
+
+    #[test]
+    fn an_empty_fiber_is_refreshed_too() {
+        let mut s = Scheduler::new();
+        let now = Instant::now();
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
+        s.take_due(Kind::Time, 200, now);
+        s.complete(&pk(1), Outcome::EmptyFiber, 0, 200, now);
+
+        assert!(s
+            .take_stale_parked(now + REFRESH_AFTER + Duration::from_millis(1))
+            .contains(&pk(1)));
     }
 
     #[test]
