@@ -1,5 +1,14 @@
 # Changelog
 
+## [6.0.3](https://github.com/wuwei-labs/antegen/compare/antegen-client-v6.0.2...antegen-client-v6.0.3) (2026-08-23)
+
+
+### Bug Fixes
+
+* **client:** park threads a program has rejected instead of retrying them ([eecfbae](https://github.com/wuwei-labs/antegen/commit/eecfbaefb4ded031864d52c64613101b64b144ba))
+* **client:** refetch a thread after a program rejects it ([55823af](https://github.com/wuwei-labs/antegen/commit/55823af33c1168725ac8b55361c8dc0a4db5d622))
+* **client:** refetch a thread after a program rejects it ([2b7bf9e](https://github.com/wuwei-labs/antegen/commit/2b7bf9e4c047e405fa3cfbadb1747df34da40131))
+
 ## [6.0.2](https://github.com/wuwei-labs/antegen/compare/antegen-client-v6.0.1...antegen-client-v6.0.2) (2026-08-22)
 
 
