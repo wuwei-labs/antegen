@@ -11,7 +11,14 @@ pub mod fiber {
     pub use antegen_fiber_program::cpi;
     pub use antegen_fiber_program::program::AntegenFiber;
     pub use antegen_fiber_program::state::{
-        decompile_instruction, CompiledInstructionV0, Fiber, FiberState, FiberVersionedState,
+        decompile_instruction,
+        CompiledInstructionV0,
+        Fiber,
+        FiberState,
+        FiberVersionedState,
+        // Re-exported because it appears in this program's instruction
+        // signatures: anything constructing `CreateFiber`/`UpdateFiber` needs it.
+        Trailing,
     };
     pub use antegen_fiber_program::ID;
 }
@@ -112,9 +119,15 @@ pub mod antegen_thread {
         fiber_index: u8,
         instruction: SerializableInstruction,
         priority_fee: u64,
-        lookup_tables: Vec<Pubkey>,
+        lookup_tables: antegen_fiber_program::state::Trailing<Vec<Pubkey>>,
     ) -> Result<()> {
-        fiber_create(ctx, fiber_index, instruction, priority_fee, lookup_tables)
+        fiber_create(
+            ctx,
+            fiber_index,
+            instruction,
+            priority_fee,
+            lookup_tables.into_inner(),
+        )
     }
 
     /// Closes a fiber from a thread via CPI to Fiber Program.
@@ -134,7 +147,7 @@ pub mod antegen_thread {
         instruction: Option<SerializableInstruction>,
         priority_fee: Option<u64>,
         track: bool,
-        lookup_tables: Option<Vec<Pubkey>>,
+        lookup_tables: antegen_fiber_program::state::Trailing<Option<Vec<Pubkey>>>,
     ) -> Result<()> {
         fiber_update(
             ctx,
@@ -142,7 +155,7 @@ pub mod antegen_thread {
             instruction,
             priority_fee,
             track,
-            lookup_tables,
+            lookup_tables.into_inner(),
         )
     }
 
@@ -164,7 +177,7 @@ pub mod antegen_thread {
         paused: Option<bool>,
         instruction: Option<SerializableInstruction>,
         priority_fee: Option<u64>,
-        lookup_tables: Vec<Pubkey>,
+        lookup_tables: antegen_fiber_program::state::Trailing<Vec<Pubkey>>,
     ) -> Result<()> {
         thread_create(
             ctx,
@@ -174,7 +187,7 @@ pub mod antegen_thread {
             paused,
             instruction,
             priority_fee,
-            lookup_tables,
+            lookup_tables.into_inner(),
         )
     }
 
@@ -220,5 +233,84 @@ pub mod antegen_thread {
     /// Used for cleaning up stuck/broken threads.
     pub fn delete_thread(ctx: Context<ThreadDelete>) -> Result<()> {
         thread_delete(ctx)
+    }
+}
+
+#[cfg(test)]
+mod wire_compat_tests {
+    use super::*;
+    use anchor_lang::AnchorDeserialize;
+
+    /// Instruction data exactly as a caller built against the 5.0.12 IDL sends
+    /// it: everything through `track`, and then nothing.
+    ///
+    /// The mainnet contract program CPIs into `update_fiber` and was compiled
+    /// against that surface. Deploying a program that cannot decode this would
+    /// fail every one of its fiber operations until it was rebuilt and
+    /// redeployed in lockstep.
+    #[test]
+    fn update_fiber_decodes_data_without_the_appended_argument() {
+        let mut old_format = Vec::new();
+        7u8.serialize(&mut old_format).unwrap(); // fiber_index
+        None::<SerializableInstruction>
+            .serialize(&mut old_format)
+            .unwrap(); // instruction
+        Some(42u64).serialize(&mut old_format).unwrap(); // priority_fee
+        true.serialize(&mut old_format).unwrap(); // track
+                                                  // no lookup_tables — the caller does not know the argument exists
+
+        let ix = instruction::UpdateFiber::deserialize(&mut &old_format[..])
+            .expect("data from a pre-lookup_tables caller must still decode");
+
+        assert_eq!(ix.fiber_index, 7);
+        assert_eq!(ix.priority_fee, Some(42));
+        assert!(ix.track);
+        assert_eq!(
+            ix.lookup_tables.into_inner(),
+            None,
+            "an absent argument means no lookup tables, as it did before it existed"
+        );
+    }
+
+    /// The new format must still decode, or the program cannot read its own
+    /// clients.
+    #[test]
+    fn update_fiber_decodes_data_with_the_appended_argument() {
+        let tables = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+        let mut new_format = Vec::new();
+        7u8.serialize(&mut new_format).unwrap();
+        None::<SerializableInstruction>
+            .serialize(&mut new_format)
+            .unwrap();
+        Some(42u64).serialize(&mut new_format).unwrap();
+        true.serialize(&mut new_format).unwrap();
+        Some(tables.clone()).serialize(&mut new_format).unwrap();
+
+        let ix = instruction::UpdateFiber::deserialize(&mut &new_format[..]).unwrap();
+        assert_eq!(ix.lookup_tables.into_inner(), Some(tables));
+    }
+
+    #[test]
+    fn create_fiber_decodes_both_wire_formats() {
+        let ix_data = SerializableInstruction {
+            program_id: Pubkey::new_unique(),
+            accounts: vec![],
+            data: vec![],
+        };
+
+        let mut old_format = Vec::new();
+        3u8.serialize(&mut old_format).unwrap();
+        ix_data.serialize(&mut old_format).unwrap();
+        0u64.serialize(&mut old_format).unwrap();
+
+        let old = instruction::CreateFiber::deserialize(&mut &old_format[..]).unwrap();
+        assert!(old.lookup_tables.into_inner().is_empty());
+
+        let tables = vec![Pubkey::new_unique()];
+        let mut new_format = old_format.clone();
+        tables.serialize(&mut new_format).unwrap();
+
+        let new = instruction::CreateFiber::deserialize(&mut &new_format[..]).unwrap();
+        assert_eq!(new.lookup_tables.into_inner(), tables);
     }
 }
