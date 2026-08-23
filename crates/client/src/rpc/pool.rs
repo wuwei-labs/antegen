@@ -523,12 +523,27 @@ impl RpcPool {
             let rendered = format!("{:?}", err);
             let expected = rendered.contains("6004") || rendered.contains("6006");
             if let Some(logs) = &response.result.value.logs {
-                for log in logs {
+                // Program logs carry the actual reason — the AnchorError line
+                // naming the failing account and error code is usually the only
+                // thing that identifies the problem — so they stay at warn. But
+                // a chatty program can emit hundreds of lines per failure, so
+                // the tail is capped rather than letting one failure flood the
+                // journal.
+                const MAX_WARN_LOGS: usize = 25;
+                for (i, log) in logs.iter().enumerate() {
                     if expected {
                         log::debug!("  SIM LOG: {}", log);
-                    } else {
+                    } else if i < MAX_WARN_LOGS {
                         log::warn!("  SIM LOG: {}", log);
+                    } else {
+                        log::debug!("  SIM LOG: {}", log);
                     }
+                }
+                if !expected && logs.len() > MAX_WARN_LOGS {
+                    log::warn!(
+                        "  SIM LOG: ... {} more line(s) at debug",
+                        logs.len() - MAX_WARN_LOGS
+                    );
                 }
             }
             return Err(anyhow!("Simulation error: {}", rendered));

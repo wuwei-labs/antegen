@@ -792,21 +792,33 @@ impl ExecutorLogic {
         {
             Ok(r) => r,
             Err(e) => {
-                // Dump the account list for diagnosis — but only for genuine
-                // failures. Trigger-not-ready and paused are expected outcomes
-                // of firing on a projected clock, and the caller retries them;
-                // logging a full account dump each time buries real problems.
+                // One line at warn so the failure is visible, with the account
+                // dump behind debug.
+                //
+                // Trigger-not-ready and paused stay silent entirely: they are
+                // expected outcomes of firing on a projected clock and the
+                // caller retries them. Everything else used to dump every
+                // account of every instruction at warn on every attempt — for a
+                // thread whose fiber had gone stale, that was around fifty lines
+                // every few seconds for eight hours, which buries the very
+                // problems the dump exists to surface.
                 let rendered = e.to_string();
                 if !rendered.contains("6004") && !rendered.contains("6006") {
+                    warn!(
+                        "Simulation failed for thread {} ({} instruction(s)): {}",
+                        thread_pubkey,
+                        instructions.len(),
+                        rendered
+                    );
                     for (i, ix) in instructions.iter().enumerate() {
-                        warn!(
+                        debug!(
                             "  IX[{}] program={}, {} accounts:",
                             i,
                             ix.program_id,
                             ix.accounts.len()
                         );
                         for (j, acc) in ix.accounts.iter().enumerate() {
-                            warn!(
+                            debug!(
                                 "    [{}]: {} signer={} writable={}",
                                 j, acc.pubkey, acc.is_signer, acc.is_writable
                             );

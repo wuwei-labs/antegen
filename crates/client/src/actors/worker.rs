@@ -57,6 +57,21 @@ fn is_thread_paused_error(error: &str) -> bool {
     error.contains("Custom(6006)") || error.contains("6006")
 }
 
+/// Whether the failure came from a program rejecting the instruction, rather
+/// than from the cluster.
+///
+/// A `Custom(n)` or an `InstructionError` is the target program saying no to
+/// this transaction against this state. Rebuilding it produces the same bytes
+/// and simulating again reaches the same verdict, so retrying is pure cost. The
+/// only thing that changes the answer is on-chain state moving — which is
+/// exactly what parking waits for.
+///
+/// Checked after the cluster-level conditions, which can also surface as an
+/// InstructionError-shaped payload but genuinely are worth retrying.
+fn is_program_rejection(error: &str) -> bool {
+    error.contains("InstructionError") || error.contains("Custom")
+}
+
 /// Errors that mean "try again", not "this execution is doomed".
 ///
 /// These are cluster-level conditions, not program failures. Treating them as
@@ -457,6 +472,29 @@ async fn execute_thread(
                                 return ExecutionResult::fatal(
                                     thread_pubkey,
                                     "Thread is paused".to_string(),
+                                    0,
+                                    trace,
+                                );
+                            } else if !is_retryable_chain_error(&error_str)
+                                && is_program_rejection(&error_str)
+                            {
+                                // A program rejected the instruction. Retrying
+                                // rebuilds the same transaction and simulates it
+                                // against the same state, so it fails the same
+                                // way — a thread whose fiber had gone stale sat
+                                // eight hours overdue doing exactly that, one
+                                // simulation every few seconds. Park instead:
+                                // the watchdog still re-examines it, and an
+                                // account update re-arms it immediately if the
+                                // state it needs comes back.
+                                log::warn!(
+                                "Thread {} rejected by program, parking until state changes: {}",
+                                thread_pubkey,
+                                error_str
+                            );
+                                return ExecutionResult::fatal(
+                                    thread_pubkey,
+                                    format!("Program rejected the instruction: {}", e),
                                     0,
                                     trace,
                                 );
@@ -862,6 +900,35 @@ mod tests {
 
     /// The RPC reports program errors as raw JSON. These are the shapes the
     /// confirmation path actually receives.
+    /// The exact payload from a mainnet node: a thread whose fiber called into
+    /// SRSLY, which rejected it with RentalNotQueued. The thread retried that
+    /// simulation for eight hours because every non-6004/6006 build failure was
+    /// classified retryable.
+    const PROGRAM_REJECTION: &str = r#"Simulation error: Object {"InstructionError": Array [Number(1), Object {"Custom": Number(6078)}]}"#;
+
+    #[test]
+    fn a_program_rejection_is_not_retried() {
+        assert!(is_program_rejection(PROGRAM_REJECTION));
+        assert!(!is_retryable_chain_error(PROGRAM_REJECTION));
+    }
+
+    /// Cluster conditions can carry an InstructionError-shaped payload but are
+    /// genuinely worth retrying, so they are checked first.
+    #[test]
+    fn cluster_conditions_still_retry() {
+        for e in ["BlockhashNotFound", "AlreadyProcessed", "AccountInUse"] {
+            assert!(is_retryable_chain_error(e), "{e} should retry");
+        }
+    }
+
+    /// Trigger-not-ready is a program rejection by shape, so ordering matters:
+    /// it is handled by its own branch before this one is reached.
+    #[test]
+    fn trigger_not_ready_is_recognised_before_the_generic_check() {
+        assert!(is_trigger_not_ready_error(CUSTOM_6004));
+        assert!(is_program_rejection(CUSTOM_6004));
+    }
+
     const CUSTOM_6004: &str = r#"{"InstructionError":[0,{"Custom":6004}]}"#;
     const CUSTOM_6006: &str = r#"{"InstructionError":[0,{"Custom":6006}]}"#;
     const CUSTOM_OTHER: &str = r#"{"InstructionError":[2,{"Custom":1770}]}"#;
