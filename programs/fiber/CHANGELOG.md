@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.2.2](https://github.com/wuwei-labs/antegen/compare/antegen-fiber-program-v5.2.1...antegen-fiber-program-v5.2.2) (2026-08-25)
+
+
+### Bug Fixes
+
+* **fiber:** accept instruction data from callers built before lookup_tables ([891003d](https://github.com/wuwei-labs/antegen/commit/891003dc8ce79c46e4777143205ccc45666f12a2))
+* **fiber:** accept instruction data from callers built before lookup_tables ([edb25ec](https://github.com/wuwei-labs/antegen/commit/edb25ecd006984cf903d555c60cde539681585af))
+
 ## [5.2.1](https://github.com/wuwei-labs/antegen/compare/antegen-fiber-program-v5.2.0...antegen-fiber-program-v5.2.1) (2026-08-23)
 
 

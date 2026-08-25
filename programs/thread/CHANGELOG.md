@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.2.2](https://github.com/wuwei-labs/antegen/compare/antegen-thread-program-v5.2.1...antegen-thread-program-v5.2.2) (2026-08-25)
+
+
+### Bug Fixes
+
+* **fiber:** accept instruction data from callers built before lookup_tables ([891003d](https://github.com/wuwei-labs/antegen/commit/891003dc8ce79c46e4777143205ccc45666f12a2))
+* **thread:** pass lookup_tables through the fiber compat wrapper ([3cc1057](https://github.com/wuwei-labs/antegen/commit/3cc105710309153e1d81c06f2d356188ded297ea))
+
 ## [5.2.1](https://github.com/wuwei-labs/antegen/compare/antegen-thread-program-v5.2.0...antegen-thread-program-v5.2.1) (2026-08-23)
 
 
