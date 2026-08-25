@@ -1,5 +1,13 @@
 # Changelog
 
+## [8.1.0](https://github.com/wuwei-labs/antegen/compare/antegen-cli-v8.0.0...antegen-cli-v8.1.0) (2026-08-25)
+
+
+### Features
+
+* **cli:** add `thread exec` for manually triggering a thread ([eed2a84](https://github.com/wuwei-labs/antegen/commit/eed2a842e1ee754b8d28b6cd1cb5c352a29d78c5))
+* **cli:** add `thread exec` for manually triggering a thread ([bd16bea](https://github.com/wuwei-labs/antegen/commit/bd16beaa69947171a7ac1d547f47bd888b1bad7c))
+
 ## [8.0.0](https://github.com/wuwei-labs/antegen/compare/antegen-cli-v7.0.1...antegen-cli-v8.0.0) (2026-08-22)
 
 
