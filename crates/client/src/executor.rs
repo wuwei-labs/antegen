@@ -8,13 +8,13 @@
 //! - Signal::Close → batch a delete instruction
 //! - Other signals → no batching needed
 
+use crate::exec_ix::{build_thread_exec_instruction, thread_exec_base_accounts, ThreadExecParams};
 use crate::resources::SharedResources;
 use crate::rpc::response::decode_account_data;
-use anchor_lang::{AccountDeserialize, AnchorDeserialize, InstructionData, ToAccountMetas};
+use anchor_lang::{AccountDeserialize, AnchorDeserialize, InstructionData};
 use antegen_thread_program::fiber::{decompile_instruction, CompiledInstructionV0, Fiber};
 use antegen_thread_program::state::PAYER_PUBKEY;
 use antegen_thread_program::{
-    accounts::ThreadExec,
     instruction::ExecThread,
     state::{Signal, Thread, ThreadConfig},
 };
@@ -27,7 +27,6 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    sysvar,
     transaction::Transaction,
 };
 use std::collections::HashSet;
@@ -454,82 +453,17 @@ impl ExecutorLogic {
     ) -> Result<(Vec<AccountMeta>, ThreadConfig)> {
         let config_pubkey = ThreadConfig::pubkey();
         let config = self.fetch_thread_config(&config_pubkey).await?;
-        let has_nonce = thread.has_nonce_account();
 
-        debug!(
-            "Building ThreadExec accounts: executor={}, thread={}, fiber={}, has_nonce={}",
+        let accounts = thread_exec_base_accounts(
             self.keypair.pubkey(),
-            thread_pubkey,
+            *thread_pubkey,
+            thread,
             fiber_pubkey,
-            has_nonce
+            config_pubkey,
+            config.admin,
         );
-
-        let accounts = ThreadExec {
-            executor: self.keypair.pubkey(),
-            thread: *thread_pubkey,
-            fiber: fiber_pubkey,
-            config: config_pubkey,
-            admin: config.admin,
-            nonce_account: if has_nonce {
-                Some(thread.nonce_account)
-            } else {
-                None
-            },
-            recent_blockhashes: if has_nonce {
-                Some(sysvar::recent_blockhashes::ID)
-            } else {
-                None
-            },
-            system_program: solana_system_interface::program::ID,
-        }
-        .to_account_metas(Some(false));
 
         Ok((accounts, config))
-    }
-
-    /// Add compiled instruction accounts to the account list
-    fn add_compiled_accounts(
-        &self,
-        accounts: &mut Vec<AccountMeta>,
-        compiled: &CompiledInstructionV0,
-    ) {
-        debug!(
-            "Adding remaining accounts: {} accounts from compiled.accounts",
-            compiled.accounts.len()
-        );
-
-        for (account_index, pubkey) in compiled.accounts.iter().enumerate() {
-            // Replace PAYER_PUBKEY with executor
-            let actual_pubkey = if pubkey.eq(&PAYER_PUBKEY) {
-                self.keypair.pubkey()
-            } else {
-                *pubkey
-            };
-
-            // Determine writability based on position in sorted accounts
-            let account_idx = account_index as u8;
-            let is_writable = if account_idx < compiled.num_rw_signers {
-                true // Read-write signer
-            } else if account_idx < compiled.num_rw_signers + compiled.num_ro_signers {
-                false // Read-only signer
-            } else if account_idx
-                < compiled.num_rw_signers + compiled.num_ro_signers + compiled.num_rw
-            {
-                true // Read-write non-signer
-            } else {
-                false // Read-only non-signer
-            };
-
-            debug!(
-                "  remaining[{}]: {} (is_writable={})",
-                account_index, actual_pubkey, is_writable
-            );
-            accounts.push(AccountMeta {
-                pubkey: actual_pubkey,
-                is_signer: false, // CPI accounts don't need to be signers at transaction level
-                is_writable,
-            });
-        }
     }
 
     /// Build exec_thread instruction
@@ -611,36 +545,34 @@ impl ExecutorLogic {
             }
         }
 
-        // Build base accounts
-        let (mut accounts, _config) = self
-            .build_thread_exec_base_accounts(thread_pubkey, thread, fiber_pubkey)
-            .await?;
+        // Assembly is shared with the CLI's `thread exec` — see
+        // antegen_client::exec_ix. Only the fetching differs between callers.
+        let config_pubkey = ThreadConfig::pubkey();
+        let config = self.fetch_thread_config(&config_pubkey).await?;
 
-        // Add compiled instruction accounts as remaining accounts
-        self.add_compiled_accounts(&mut accounts, &compiled);
-
-        // Build instruction data using Anchor-generated type
-        let data = ExecThread {
-            forgo_commission: self.forgo_executor_commission,
+        let ix = build_thread_exec_instruction(&ThreadExecParams {
+            program_id: self.program_id,
+            executor: self.keypair.pubkey(),
+            thread_pubkey: *thread_pubkey,
+            thread,
+            fiber_pubkey,
+            compiled: &compiled,
+            config_pubkey,
+            admin: config.admin,
             fiber_cursor,
-        }
-        .data();
+            forgo_commission: self.forgo_executor_commission,
+        });
 
         debug!(
-            "fiber_{} instruction: program={}, base_accounts={}, remaining={}, total={}, data_len={}",
+            "fiber_{} instruction: program={}, remaining={}, total={}, data_len={}",
             fiber_cursor,
             self.program_id,
-            accounts.len() - compiled.accounts.len(),
             compiled.accounts.len(),
-            accounts.len(),
-            data.len()
+            ix.accounts.len(),
+            ix.data.len()
         );
 
-        Ok(Instruction {
-            program_id: self.program_id,
-            accounts,
-            data,
-        })
+        Ok(ix)
     }
 
     /// Build thread_exec instruction that executes close_fiber to delete the thread
