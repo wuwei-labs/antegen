@@ -30,7 +30,7 @@ pub mod reentrance_test {
             fiber_index,
             Some(simple_ix),
             Some(42),
-            None,
+            None.into(),
         )?;
 
         // Return Signal::None so thread_exec continues normally

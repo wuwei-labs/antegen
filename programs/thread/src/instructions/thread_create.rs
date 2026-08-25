@@ -252,7 +252,7 @@ pub fn thread_create(
                 0, // fiber_index = 0
                 instruction.clone(),
                 priority_fee,
-                lookup_tables.clone(),
+                lookup_tables.clone().into(),
             )
         })?;
 

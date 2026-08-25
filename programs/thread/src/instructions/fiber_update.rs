@@ -85,7 +85,7 @@ pub fn fiber_update(
             fiber_index,
             instruction,
             priority_fee,
-            lookup_tables.clone(),
+            lookup_tables.clone().into(),
         )
     })?;
 

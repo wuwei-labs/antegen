@@ -80,7 +80,7 @@ pub fn fiber_create(
             fiber_index,
             instruction,
             priority_fee,
-            lookup_tables.clone(),
+            lookup_tables.clone().into(),
         )
     })?;
 
