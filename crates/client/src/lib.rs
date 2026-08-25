@@ -23,6 +23,7 @@ pub mod clockref;
 pub mod config;
 pub mod confirm;
 pub mod datasources;
+pub mod exec_ix;
 pub mod executor;
 pub mod load_balancer;
 pub mod resources;

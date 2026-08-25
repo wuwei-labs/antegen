@@ -278,6 +278,28 @@ enum ThreadCommands {
         address: String,
     },
 
+    /// Execute a thread's current fiber now (simulates unless --send)
+    #[command(after_long_help = "\
+Retries a thread that is already due. thread_exec validates the trigger on
+chain, so a thread that is not yet ready is rejected by the program — this
+cannot make one run early.
+
+Simulating is the default. A successful execution settles payments, may close
+or activate rentals, and advances the thread's cursor and schedule, so --send
+is required to submit.
+
+EXAMPLES:
+    antegen thread exec 2iC6fbLkjR31iMS4gfGQXrzXp8my5Be2TEX8GmnN7Aip
+    antegen thread exec 2iC6fbLkjR31iMS4gfGQXrzXp8my5Be2TEX8GmnN7Aip --send")]
+    Exec {
+        /// Thread public key
+        address: String,
+
+        /// Submit the transaction instead of only simulating
+        #[arg(long)]
+        send: bool,
+    },
+
     /// Admin: force delete a thread (skips all checks)
     #[cfg(feature = "dev")]
     Delete {
@@ -504,6 +526,9 @@ async fn run_antegen() -> Result<()> {
         // =================================================================
         Commands::Thread(thread_cmd) => match thread_cmd {
             ThreadCommands::Get { address } => commands::thread::get(address, cli.rpc).await,
+            ThreadCommands::Exec { address, send } => {
+                commands::thread::exec(address, send, cli.rpc, cli.keypair).await
+            }
             #[cfg(feature = "dev")]
             ThreadCommands::Delete { address } => {
                 commands::thread::admin_delete(address, cli.rpc, cli.keypair).await
