@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.1.0](https://github.com/wuwei-labs/antegen/compare/antegen-client-v6.0.3...antegen-client-v6.1.0) (2026-08-25)
+
+
+### Features
+
+* **cli:** add `thread exec` for manually triggering a thread ([eed2a84](https://github.com/wuwei-labs/antegen/commit/eed2a842e1ee754b8d28b6cd1cb5c352a29d78c5))
+* **client:** expose a shared thread_exec instruction builder ([031d408](https://github.com/wuwei-labs/antegen/commit/031d40806271068d2965f53e3c48ff169be77953))
+
 ## [6.0.3](https://github.com/wuwei-labs/antegen/compare/antegen-client-v6.0.2...antegen-client-v6.0.3) (2026-08-23)
 
 
