@@ -1,23 +1,214 @@
 //! Thread inspection and test commands
 
-use anchor_lang::AccountDeserialize;
+use anchor_lang::{AccountDeserialize, AnchorDeserialize};
+use antegen_client::exec_ix::{build_thread_exec_instruction, ThreadExecParams};
 use antegen_client::rpc::RpcPool;
-use antegen_thread_program::state::Thread;
+use antegen_thread_program::fiber::{CompiledInstructionV0, Fiber};
+use antegen_thread_program::state::{Thread, ThreadConfig};
 use anyhow::{anyhow, Result};
 use solana_sdk::pubkey::Pubkey;
+use solana_sdk::signature::Signer;
 #[cfg(feature = "dev")]
 use solana_sdk::signature::{read_keypair_file, Keypair};
-#[cfg(feature = "dev")]
+use solana_sdk::transaction::Transaction;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-#[cfg(feature = "dev")]
-use crate::commands::get_keypair;
-use crate::commands::get_rpc_url;
+use crate::commands::{get_keypair, get_rpc_url};
 
 // =============================================================================
 // Thread inspection commands (always available)
 // =============================================================================
+
+/// Name a thread-program error code seen in a simulation failure.
+///
+/// Only the codes worth acting on differently — the rest are better read from
+/// the program logs than guessed at from a number.
+fn explain_thread_error(rendered: &str) -> Option<&'static str> {
+    if rendered.contains("6004") {
+        Some(
+            "TriggerConditionFailed — the thread is not due yet. thread_exec \
+             validates the trigger on chain, so this cannot be forced; wait for \
+             the trigger or check `antegen thread get <ADDRESS>`.",
+        )
+    } else if rendered.contains("6005") {
+        Some("ThreadBusy — another execution is already in flight.")
+    } else if rendered.contains("6006") {
+        Some("ThreadPaused — the thread is paused.")
+    } else if rendered.contains("102") {
+        Some(
+            "InstructionDidNotDeserialize — a program rejected the instruction \
+             data it was handed. Usually an ABI mismatch: the caller was built \
+             against a different version than the one deployed.",
+        )
+    } else {
+        None
+    }
+}
+
+/// Execute a thread's current fiber now.
+///
+/// The point is retrying a thread that is already due but failing. `thread_exec`
+/// validates the trigger on chain, so this cannot run a thread early — an
+/// unready thread is rejected by the program, not by this command.
+///
+/// Simulates by default. A successful execution is not a read-only probe: it
+/// settles payments, may close or activate rentals, and advances the thread's
+/// cursor and schedule. `--send` is required to actually submit.
+///
+/// The instruction is assembled by `antegen_client::exec_ix`, the same builder
+/// the node's executor uses, so a manual retry is byte-identical to what the
+/// crank would have sent.
+pub(crate) async fn exec(
+    address: String,
+    send: bool,
+    rpc_url: Option<String>,
+    keypair_path: Option<PathBuf>,
+) -> Result<()> {
+    let thread_pubkey =
+        Pubkey::from_str(&address).map_err(|e| anyhow!("Invalid pubkey '{}': {}", address, e))?;
+    let rpc_url = get_rpc_url(rpc_url)?;
+    let executor = get_keypair(keypair_path)?;
+
+    let client =
+        RpcPool::with_url(&rpc_url).map_err(|e| anyhow!("Failed to create RPC client: {}", e))?;
+
+    // Thread
+    let thread_account = client
+        .get_account(&thread_pubkey)
+        .await
+        .map_err(|e| anyhow!("Failed to fetch thread: {}", e))?
+        .ok_or_else(|| anyhow!("Thread not found: {}", thread_pubkey))?;
+    let thread_data = thread_account
+        .decode_data()
+        .map_err(|e| anyhow!("Failed to decode thread data: {}", e))?;
+    let thread = Thread::try_deserialize(&mut thread_data.as_slice())
+        .map_err(|e| anyhow!("Not a thread account ({}): {:?}", thread_pubkey, e))?;
+
+    if thread.paused {
+        return Err(anyhow!(
+            "Thread is paused; thread_exec rejects paused threads"
+        ));
+    }
+    if thread.fiber_ids.is_empty() {
+        return Err(anyhow!("Thread has no fibers to execute"));
+    }
+
+    // Fiber at the current cursor
+    let fiber_cursor = thread.fiber_cursor;
+    let fiber_pubkey = thread.fiber_at_index(&thread_pubkey, fiber_cursor);
+    let fiber_account = client
+        .get_account(&fiber_pubkey)
+        .await
+        .map_err(|e| anyhow!("Failed to fetch fiber: {}", e))?
+        .ok_or_else(|| anyhow!("Fiber {} not found (cursor {})", fiber_pubkey, fiber_cursor))?;
+    let fiber_data = fiber_account
+        .decode_data()
+        .map_err(|e| anyhow!("Failed to decode fiber data: {}", e))?;
+    let fiber = Fiber::try_deserialize(&mut fiber_data.as_slice())
+        .map_err(|e| anyhow!("Failed to deserialize fiber {}: {:?}", fiber_pubkey, e))?;
+
+    if fiber.compiled_instruction().is_empty() {
+        return Err(anyhow!(
+            "Fiber {} (cursor {}) is idle — no compiled instruction to run",
+            fiber_pubkey,
+            fiber_cursor
+        ));
+    }
+    let compiled = CompiledInstructionV0::deserialize(&mut fiber.compiled_instruction())
+        .map_err(|e| anyhow!("Failed to decode compiled instruction: {}", e))?;
+
+    // Config, for the admin fee destination
+    let config_pubkey = ThreadConfig::pubkey();
+    let config_account = client
+        .get_account(&config_pubkey)
+        .await
+        .map_err(|e| anyhow!("Failed to fetch thread config: {}", e))?
+        .ok_or_else(|| anyhow!("Thread config not found: {}", config_pubkey))?;
+    let config_data = config_account
+        .decode_data()
+        .map_err(|e| anyhow!("Failed to decode config data: {}", e))?;
+    let config = ThreadConfig::try_deserialize(&mut config_data.as_slice())
+        .map_err(|e| anyhow!("Failed to deserialize thread config: {:?}", e))?;
+
+    println!("Thread    : {}", thread_pubkey);
+    println!("Executor  : {}", executor.pubkey());
+    println!("Fiber     : {} (cursor {})", fiber_pubkey, fiber_cursor);
+    println!("Legacy    : {}", fiber.is_legacy());
+    println!("RPC       : {}", rpc_url);
+
+    let ix = build_thread_exec_instruction(&ThreadExecParams {
+        program_id: antegen_thread_program::ID,
+        executor: executor.pubkey(),
+        thread_pubkey,
+        thread: &thread,
+        fiber_pubkey,
+        compiled: &compiled,
+        config_pubkey,
+        admin: config.admin,
+        fiber_cursor,
+        forgo_commission: false,
+    });
+
+    let (blockhash, _) = client
+        .get_latest_blockhash()
+        .await
+        .map_err(|e| anyhow!("Failed to fetch blockhash: {}", e))?;
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&executor.pubkey()),
+        &[&executor],
+        blockhash,
+    );
+
+    if !send {
+        println!("\n=== Simulation (use --send to submit) ===");
+        let sim = match client.simulate_transaction(&tx, &[]).await {
+            Ok(sim) => sim,
+            Err(e) => {
+                // The pool surfaces program logs through `log`, not the error
+                // value, so name the failure and point at the flag that shows
+                // the rest rather than reprinting an opaque code.
+                let rendered = format!("{}", e);
+                println!("Simulation failed: {}", rendered);
+                if let Some(explained) = explain_thread_error(&rendered) {
+                    println!("\n  {}", explained);
+                }
+                println!(
+                    "\nRe-run with `--log-level debug` to see the full program logs — \n\
+                     whichever program logged last is where execution stopped."
+                );
+                return Ok(());
+            }
+        };
+
+        for line in sim.value.logs.iter().flatten() {
+            println!("  {}", line);
+        }
+        if let Some(units) = sim.value.units_consumed {
+            println!("\nCompute units: {}", units);
+        }
+        match &sim.value.err {
+            Some(err) => {
+                println!("\nResult: FAILED — {:?}", err);
+                println!(
+                    "\nThe logs above are the whole story: whichever program logged last is \n                     where execution stopped."
+                );
+            }
+            None => println!("\nResult: OK — re-run with --send to submit"),
+        }
+        return Ok(());
+    }
+
+    println!("\n=== Sending ===");
+    let sig = client
+        .send_and_confirm_transaction(&tx)
+        .await
+        .map_err(|e| anyhow!("Transaction failed: {}", e))?;
+    println!("Signature: {}", sig);
+
+    Ok(())
+}
 
 /// Fetch and display a thread account
 pub(crate) async fn get(address: String, rpc_url: Option<String>) -> Result<()> {
