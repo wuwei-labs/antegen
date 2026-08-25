@@ -19,15 +19,26 @@ pub mod antegen_fiber {
     /// Creates a fiber (instruction account) for a thread.
     /// Thread PDA must be signer and payer.
     /// `lookup_tables` is capped at 4 (Solana v0 transaction limit).
+    ///
+    /// `lookup_tables` is `Trailing` because it was appended after callers
+    /// already existed — see the type's docs. Programs that CPI straight into
+    /// this program, rather than through the thread program's `create_fiber`,
+    /// send instruction data that ends before this argument.
     pub fn create(
         ctx: Context<Create>,
         fiber_index: u8,
         instruction: SerializableInstruction,
         priority_fee: u64,
-        lookup_tables: Vec<Pubkey>,
+        lookup_tables: Trailing<Vec<Pubkey>>,
     ) -> Result<()> {
         let instruction: Instruction = instruction.into();
-        instructions::create::create(ctx, fiber_index, instruction, priority_fee, lookup_tables)
+        instructions::create::create(
+            ctx,
+            fiber_index,
+            instruction,
+            priority_fee,
+            lookup_tables.into_inner(),
+        )
     }
 
     /// Updates a fiber's instruction content (or initializes if it doesn't exist).
@@ -35,15 +46,30 @@ pub mod antegen_fiber {
     /// Pass `None` for `instruction` to wipe the compiled instruction (idle fiber).
     /// Pass `None` for `lookup_tables` to leave them unchanged; `Some(vec)`
     /// atomically replaces. Legacy fibers reject non-empty lookup_tables.
+    ///
+    /// `lookup_tables` is `Trailing` for the same reason as `create`. 5.2.1
+    /// wrapped the thread program's `create_fiber`/`update_fiber`, but this
+    /// program's own entrypoints were left bare — and an on-chain program
+    /// whose crank path CPIs directly here (`fiber::cpi::update`, as SRSLY's
+    /// `stage_close_fiber` and `wipe_fiber` do when the thread is the signer)
+    /// bypasses the thread program entirely. Those callers hit
+    /// `InstructionDidNotDeserialize` on every execution until this was
+    /// wrapped too.
     pub fn update(
         ctx: Context<Update>,
         fiber_index: u8,
         instruction: Option<SerializableInstruction>,
         priority_fee: Option<u64>,
-        lookup_tables: Option<Vec<Pubkey>>,
+        lookup_tables: Trailing<Option<Vec<Pubkey>>>,
     ) -> Result<()> {
         let instruction = instruction.map(|i| i.into());
-        instructions::update::update(ctx, fiber_index, instruction, priority_fee, lookup_tables)
+        instructions::update::update(
+            ctx,
+            fiber_index,
+            instruction,
+            priority_fee,
+            lookup_tables.into_inner(),
+        )
     }
 
     /// Closes a fiber account, returns rent to thread PDA.
@@ -55,5 +81,81 @@ pub mod antegen_fiber {
     /// Target keeps its PDA/index, source is deleted.
     pub fn swap(ctx: Context<Swap>) -> Result<()> {
         instructions::swap::swap(ctx)
+    }
+}
+
+#[cfg(test)]
+mod wire_compat_tests {
+    use super::*;
+    use anchor_lang::AnchorDeserialize;
+
+    /// Instruction data exactly as a caller built against the pre-`lookup_tables`
+    /// IDL sends it: everything through `priority_fee`, and then nothing.
+    ///
+    /// 5.2.1 wrapped the thread program's `create_fiber`/`update_fiber` but left
+    /// this program's own entrypoints bare, so a program CPI'ing directly into
+    /// `fiber::cpi::update` — which is what a thread-signed crank path does —
+    /// still failed to decode. That took down every fiber operation for those
+    /// callers until they were rebuilt and redeployed.
+    #[test]
+    fn update_decodes_data_without_the_appended_argument() {
+        let mut old_format = Vec::new();
+        1u8.serialize(&mut old_format).unwrap(); // fiber_index
+        None::<SerializableInstruction>
+            .serialize(&mut old_format)
+            .unwrap(); // instruction
+        None::<u64>.serialize(&mut old_format).unwrap(); // priority_fee
+                                                         // no lookup_tables — the caller does not know the argument exists
+
+        let ix = instruction::Update::deserialize(&mut &old_format[..])
+            .expect("data from a pre-lookup_tables caller must still decode");
+
+        assert_eq!(ix.fiber_index, 1);
+        assert_eq!(
+            ix.lookup_tables.into_inner(),
+            None,
+            "an absent argument means leave lookup tables unchanged, as before it existed"
+        );
+    }
+
+    /// The new format must still decode, or the program cannot read its own
+    /// clients.
+    #[test]
+    fn update_decodes_data_with_the_appended_argument() {
+        let tables = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+        let mut new_format = Vec::new();
+        1u8.serialize(&mut new_format).unwrap();
+        None::<SerializableInstruction>
+            .serialize(&mut new_format)
+            .unwrap();
+        None::<u64>.serialize(&mut new_format).unwrap();
+        Some(tables.clone()).serialize(&mut new_format).unwrap();
+
+        let ix = instruction::Update::deserialize(&mut &new_format[..]).unwrap();
+        assert_eq!(ix.lookup_tables.into_inner(), Some(tables));
+    }
+
+    #[test]
+    fn create_decodes_both_wire_formats() {
+        let ix_data = SerializableInstruction {
+            program_id: Pubkey::new_unique(),
+            accounts: vec![],
+            data: vec![],
+        };
+
+        let mut old_format = Vec::new();
+        2u8.serialize(&mut old_format).unwrap();
+        ix_data.serialize(&mut old_format).unwrap();
+        0u64.serialize(&mut old_format).unwrap();
+
+        let old = instruction::Create::deserialize(&mut &old_format[..]).unwrap();
+        assert!(old.lookup_tables.into_inner().is_empty());
+
+        let tables = vec![Pubkey::new_unique()];
+        let mut new_format = old_format.clone();
+        tables.serialize(&mut new_format).unwrap();
+
+        let new = instruction::Create::deserialize(&mut &new_format[..]).unwrap();
+        assert_eq!(new.lookup_tables.into_inner(), tables);
     }
 }
