@@ -363,3 +363,127 @@ fn test_fiber_create_compiled_roundtrip() {
     );
     assert!(compiled.is_ok());
 }
+
+/// A wallet that is not the owning thread must not be able to claim an existing
+/// fiber by calling the fiber program directly.
+///
+/// Reproduces a live mainnet drain: the attacker sent `fiber::create` with their
+/// own wallet as `thread` and a victim thread's fiber PDA as `fiber`. The
+/// already-initialized branch rewrote `state.thread` to the signer without
+/// checking that the account derives from them, after which `fiber::close`
+/// passed its `read.thread() == signer` check and swept the rent. The victim
+/// thread was left listing fiber ids whose accounts no longer exist, so every
+/// executor failed to build a transaction for it from then on.
+#[test]
+fn test_fiber_create_rejects_foreign_fiber_account() {
+    use anchor_lang::{InstructionData, ToAccountMetas};
+    use solana_sdk::instruction::Instruction;
+
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let thread_pubkey = setup_thread(&mut svm, &authority, &payer, "fc-steal");
+    let fiber_pubkey =
+        send_create_fiber(&mut svm, &authority, &payer, &thread_pubkey, 0, 100).unwrap();
+    let rent_before = svm.get_account(&fiber_pubkey).unwrap().lamports;
+    assert!(rent_before > 0);
+
+    let attacker = Keypair::new();
+    svm.airdrop(&attacker.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let memo_ix = make_memo_instruction("stolen", None);
+    let hijack = Instruction {
+        program_id: FIBER_PROGRAM_ID,
+        accounts: antegen_fiber_program::accounts::Create {
+            thread: attacker.pubkey(),
+            fiber: fiber_pubkey,
+            system_program: solana_system_interface::program::ID,
+        }
+        .to_account_metas(None),
+        data: antegen_fiber_program::instruction::Create {
+            fiber_index: 0,
+            instruction: make_serializable_instruction(&memo_ix),
+            priority_fee: 0,
+            lookup_tables: antegen_fiber_program::state::Trailing(Vec::new()),
+        }
+        .data(),
+    };
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[hijack],
+        Some(&attacker.pubkey()),
+        &[&attacker],
+        blockhash,
+    );
+    assert!(
+        svm.send_transaction(tx).is_err(),
+        "a wallet that does not derive the fiber PDA must not be able to claim it"
+    );
+
+    // The fiber still belongs to its thread, so the follow-up close cannot pass
+    // the fiber program's ownership check either.
+    let read = deserialize_fiber_any(&svm, &fiber_pubkey);
+    assert_eq!(read.thread(), thread_pubkey);
+
+    let steal_rent = Instruction {
+        program_id: FIBER_PROGRAM_ID,
+        accounts: antegen_fiber_program::accounts::Close {
+            thread: attacker.pubkey(),
+            fiber: fiber_pubkey,
+        }
+        .to_account_metas(None),
+        data: antegen_fiber_program::instruction::Close { fiber_index: 0 }.data(),
+    };
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[steal_rent],
+        Some(&attacker.pubkey()),
+        &[&attacker],
+        blockhash,
+    );
+    assert!(
+        svm.send_transaction(tx).is_err(),
+        "rent must not be sweepable by a stranger"
+    );
+    assert_eq!(
+        svm.get_account(&fiber_pubkey).unwrap().lamports,
+        rent_before
+    );
+}
+
+/// Re-creating an existing fiber must still work through the legitimate path.
+///
+/// `create` is idempotent by design: the already-initialized branch overwrites
+/// the instruction in place rather than failing, and both `fiber_create` and
+/// `thread_create` rely on that (they skip pre-funding when the account already
+/// has data). The PDA check that closes the hijack sits in front of that
+/// branch, so this is the case that proves it did not close the front door too.
+#[test]
+fn test_fiber_create_overwrites_existing_fiber_in_place() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let thread_pubkey = setup_thread(&mut svm, &authority, &payer, "fc-again");
+    let fiber_pubkey =
+        send_create_fiber(&mut svm, &authority, &payer, &thread_pubkey, 0, 100).unwrap();
+    let rent_after_first = svm.get_account(&fiber_pubkey).unwrap().lamports;
+
+    let again = send_create_fiber(&mut svm, &authority, &payer, &thread_pubkey, 0, 777)
+        .expect("re-creating an owned fiber must succeed");
+    assert_eq!(again, fiber_pubkey);
+
+    let read = deserialize_fiber_any(&svm, &fiber_pubkey);
+    assert_eq!(read.thread(), thread_pubkey);
+    assert_eq!(read.priority_fee(), 777, "in-place overwrite should apply");
+    assert_eq!(
+        svm.get_account(&fiber_pubkey).unwrap().lamports,
+        rent_after_first,
+        "an initialized fiber must not be pre-funded a second time"
+    );
+
+    // The thread still tracks the index exactly once.
+    let thread = deserialize_thread(&svm, &thread_pubkey);
+    assert_eq!(thread.fiber_ids.iter().filter(|&&i| i == 0).count(), 1);
+}

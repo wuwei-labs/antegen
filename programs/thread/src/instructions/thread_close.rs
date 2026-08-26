@@ -60,7 +60,7 @@ pub fn thread_close<'info>(ctx: Context<'info, ThreadClose<'info>>) -> Result<()
             .iter()
             .position(|&idx| FiberState::pubkey(thread_key, idx) == account_key)
             .ok_or(AntegenThreadError::InvalidFiberAccount)?;
-        thread.fiber_ids.remove(pos);
+        let fiber_index = thread.fiber_ids.remove(pos);
 
         // CPI to Fiber Program's close_fiber (rent returns to thread PDA)
         let fiber_program = ctx
@@ -70,14 +70,17 @@ pub fn thread_close<'info>(ctx: Context<'info, ThreadClose<'info>>) -> Result<()
             .ok_or(AntegenThreadError::MissingFiberAccounts)?;
 
         thread.sign(|seeds| {
-            close(CpiContext::new_with_signer(
-                fiber_program.key(),
-                antegen_fiber_program::cpi::accounts::Close {
-                    thread: thread.to_account_info(),
-                    fiber: account.to_account_info(),
-                },
-                &[seeds],
-            ))
+            close(
+                CpiContext::new_with_signer(
+                    fiber_program.key(),
+                    antegen_fiber_program::cpi::accounts::Close {
+                        thread: thread.to_account_info(),
+                        fiber: account.to_account_info(),
+                    },
+                    &[seeds],
+                ),
+                fiber_index,
+            )
         })?;
     }
 

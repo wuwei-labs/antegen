@@ -36,6 +36,21 @@ pub fn create(
     let thread_key = ctx.accounts.thread.key();
     let fiber_info = ctx.accounts.fiber.to_account_info();
 
+    // Bind the fiber account to the signing thread before touching it. The
+    // update-in-place branch below rewrites `state.thread` to the signer, so
+    // without this any wallet could sign as `thread`, claim someone else's
+    // fiber, and then `close` it to sweep the rent — which is exactly what was
+    // done on mainnet against live threads.
+    require!(
+        Pubkey::find_program_address(
+            &[SEED_THREAD_FIBER, thread_key.as_ref(), &[fiber_index]],
+            &crate::ID,
+        )
+        .0
+        .eq(&fiber_info.key()),
+        AntegenFiberError::InvalidFiberPDA
+    );
+
     if fiber_info.data_len() == 0 {
         initialize_fiber(
             &ctx.accounts.fiber,

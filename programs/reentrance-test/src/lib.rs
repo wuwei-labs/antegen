@@ -42,14 +42,17 @@ pub mod reentrance_test {
 
     /// Called during thread_exec via invoke_signed.
     /// CPIs to fiber_program::close_fiber to prove reentrancy works.
-    pub fn cpi_close_fiber(ctx: Context<CpiCloseFiber>) -> Result<()> {
-        fiber::cpi::close(CpiContext::new(
-            ctx.accounts.fiber_program.key(),
-            fiber::cpi::accounts::Close {
-                thread: ctx.accounts.thread.to_account_info(),
-                fiber: ctx.accounts.fiber.to_account_info(),
-            },
-        ))?;
+    pub fn cpi_close_fiber(ctx: Context<CpiCloseFiber>, fiber_index: u8) -> Result<()> {
+        fiber::cpi::close(
+            CpiContext::new(
+                ctx.accounts.fiber_program.key(),
+                fiber::cpi::accounts::Close {
+                    thread: ctx.accounts.thread.to_account_info(),
+                    fiber: ctx.accounts.fiber.to_account_info(),
+                },
+            ),
+            fiber_index,
+        )?;
 
         // Return Signal::None
         anchor_lang::solana_program::program::set_return_data(&[0]);
