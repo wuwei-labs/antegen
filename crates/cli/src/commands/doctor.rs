@@ -325,7 +325,7 @@ pub(crate) fn fiber_pda(thread: &Pubkey, index: u8) -> Pubkey {
 ///
 /// Reading only the top level misses most fiber writes: they usually arrive as
 /// inner instructions when an integrator's program CPIs in.
-fn instructions_of(tx: &serde_json::Value) -> Vec<(Pubkey, Vec<u8>)> {
+fn instructions_of(tx: &serde_json::Value) -> Vec<(Pubkey, Vec<u8>, Vec<Pubkey>)> {
     let msg = &tx["transaction"]["message"];
     let mut keys: Vec<String> = msg["accountKeys"]
         .as_array()
@@ -356,8 +356,18 @@ fn instructions_of(tx: &serde_json::Value) -> Vec<(Pubkey, Vec<u8>)> {
         let (Some(program), Some(data)) = (program, ix["data"].as_str()) else {
             return;
         };
+        let accounts: Vec<Pubkey> = ix["accounts"]
+            .as_array()
+            .map(|idxs| {
+                idxs.iter()
+                    .filter_map(|i| i.as_u64())
+                    .filter_map(|i| keys.get(i as usize))
+                    .filter_map(|k| Pubkey::from_str(k).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
         if let Ok(bytes) = bs58::decode(data).into_vec() {
-            out.push((program, bytes));
+            out.push((program, bytes, accounts));
         }
     };
 
@@ -412,11 +422,33 @@ async fn history(
             ));
             continue;
         };
-        for (program, data) in instructions_of(&tx) {
-            if let Some(delta) = decode_write(&program, &data) {
-                if let Some(slot) = per_index.get_mut(&delta.index) {
-                    slot.push(delta);
-                }
+        for (program, data, accounts) in instructions_of(&tx) {
+            let Some(delta) = decode_write(&program, &data) else {
+                continue;
+            };
+            let Some(slot) = per_index.get_mut(&delta.index) else {
+                continue;
+            };
+            // Two things have to hold for a write to belong to this fiber's
+            // history, and neither is implied by the instruction's index.
+            //
+            // It must name the account being rebuilt: a transaction reaches
+            // this loop because it mentioned our thread, but it may also write
+            // a different thread's fiber at the same index.
+            //
+            // It must also name the owning thread. Before `fiber::create`
+            // checked the PDA it derived, anyone could call it against another
+            // thread's fiber with their own wallet in the `thread` position and
+            // overwrite the payload — which is exactly what happened on
+            // 2026-08-26, and those writes are in this history. They pass the
+            // first check, because they do name the fiber. They fail this one,
+            // because the real thread is nowhere in their accounts.
+            //
+            // Folding one in would rebuild the fiber from what the attacker
+            // supplied rather than from what the thread last legitimately ran.
+            let target = fiber_pda(thread, delta.index);
+            if accounts.contains(&target) && accounts.contains(thread) {
+                slot.push(delta);
             }
         }
     }
@@ -669,9 +701,13 @@ fn decode_account(account: &antegen_client::rpc::SafeUiAccount) -> Result<Vec<u8
 
 /// Replay history for fibers that still exist and diff against the chain.
 ///
-/// This is the only available evidence that a reconstruction is faithful, and
-/// it is worth running before replaying anything. Fibers the sweep missed were
-/// written by the same code paths as the ones destroyed.
+/// Worth running before replaying anything, but note what it cannot show. A
+/// surviving fiber is one nobody hijacked, so its history contains no forged
+/// write — this pass stayed green through a bug that was rebuilding destroyed
+/// fibers from the attacker's payload. It demonstrates the fold and the decode
+/// are right; it cannot demonstrate that the writes selected for a *destroyed*
+/// fiber were the legitimate ones, because there is no ground truth left for
+/// those. That part is carried by the filtering in `history`.
 async fn verify(rpc: &RpcPool) -> Result<()> {
     let (_, live) = rpc
         .get_program_accounts(&antegen_fiber_program::ID, None)

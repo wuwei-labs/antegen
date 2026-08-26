@@ -206,8 +206,18 @@ contribution is the reconstruction plus two independent proofs of it:
 
 - `--verify` replays history for fibers the attacker did not reach and diffs
   the result against their live on-chain state. Every survivor reproduces
-  byte-identically, including one folded from 15 successive writes. This is the
-  evidence that a reconstruction is trustworthy *before* anything is replayed.
+  byte-identically, including one folded from 15 successive writes.
+
+  It is worth being exact about what that does not cover. A surviving fiber is
+  one nobody hijacked, so its history contains no forged write, and this pass
+  stayed green through a bug that was rebuilding *destroyed* fibers from the
+  attacker's payload. The hijack was itself a `fiber::create`, so it sits in
+  the history like any other write and folds in as the latest state unless it
+  is excluded. Reconstruction therefore takes only writes that name both the
+  fiber and its owning thread — the forged ones name the fiber and the
+  attacker's wallet, never the thread. `--verify` shows the fold and the
+  decode are right; it cannot show the right writes were chosen for an account
+  whose ground truth is gone.
 - `--confirm` diffs what landed on chain against the manifest that was
   replayed. It deliberately does not re-derive from history, because by then
   the replay transaction is itself part of that fiber's history and a
