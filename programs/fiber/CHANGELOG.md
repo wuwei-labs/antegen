@@ -1,5 +1,22 @@
 # Changelog
 
+## [6.0.0](https://github.com/wuwei-labs/antegen/compare/antegen-fiber-program-v5.2.2...antegen-fiber-program-v6.0.0) (2026-08-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **fiber:** programs that CPI directly into `fiber::close` must be rebuilt against the new IDL; instruction data without a trailing index no longer deserializes. The thread program's `close_fiber` and `thread_close` pass the index they already had, so deploying the thread program first is safe — Anchor ignores the trailing byte on the old fiber program.
+
+### Features
+
+* **fiber:** require fiber_index when closing a fiber ([92c8a87](https://github.com/wuwei-labs/antegen/commit/92c8a87a299f71bf061c326a513808a349c8cc7d))
+
+
+### Bug Fixes
+
+* **fiber:** close rent-sweep hole in create's update-in-place branch ([1aed242](https://github.com/wuwei-labs/antegen/commit/1aed2427c2a11b032cae082f1b73604da2c01c48))
+* **fiber:** validate fiber PDA before update-in-place ([163d906](https://github.com/wuwei-labs/antegen/commit/163d9063a90a1b481f0eec2029fdbfc6f78c597a))
+
 ## [5.2.2](https://github.com/wuwei-labs/antegen/compare/antegen-fiber-program-v5.2.1...antegen-fiber-program-v5.2.2) (2026-08-25)
 
 
