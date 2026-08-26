@@ -89,6 +89,26 @@ pub(crate) struct RecoveredFiber {
     pub(crate) fiber_pda: String,
     pub(crate) writes_replayed: usize,
     pub(crate) recovered: Option<FiberState>,
+    /// Every write folded into `recovered`, oldest first, with the transaction
+    /// it came from.
+    ///
+    /// Without this the plan asserts a result and offers no way to check it —
+    /// a reviewer either trusts the tool or re-runs it, which only reproduces
+    /// the same trust. With it, anyone can fetch these signatures from any RPC
+    /// and confirm the payload follows from them, against raw chain data
+    /// rather than against this program's output.
+    pub(crate) sources: Vec<WriteSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct WriteSource {
+    pub(crate) signature: String,
+    pub(crate) slot: u64,
+    /// `create`, `update` or `close`.
+    pub(crate) op: String,
+    /// Which fields this write set. An `update` leaves out what it does not
+    /// mention, so the last write is rarely the whole answer.
+    pub(crate) sets: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +146,10 @@ pub(crate) struct Manifest {
 struct Delta {
     index: u8,
     op: Op,
+    /// The transaction this write came from, so the plan can say where each
+    /// field originated rather than only what it ended up being.
+    signature: String,
+    slot: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -149,7 +173,7 @@ enum Op {
 /// Dispatches on the Anchor discriminator and then deserialises with the
 /// program's own generated argument struct, so this cannot drift from the
 /// programs the way a hand-written layout would.
-fn decode_write(program: &Pubkey, data: &[u8]) -> Option<Delta> {
+fn decode_write(program: &Pubkey, data: &[u8], signature: &str, slot: u64) -> Option<Delta> {
     use antegen_fiber_program::instruction as fx;
     use antegen_thread_program::instruction as tx;
 
@@ -173,6 +197,8 @@ fn decode_write(program: &Pubkey, data: &[u8]) -> Option<Delta> {
                     priority_fee: ix.priority_fee.unwrap_or(0),
                     lookup_tables: ix.lookup_tables.into_inner(),
                 },
+                signature: signature.to_string(),
+                slot,
             });
         }
         if disc == tx::CreateFiber::DISCRIMINATOR {
@@ -184,6 +210,8 @@ fn decode_write(program: &Pubkey, data: &[u8]) -> Option<Delta> {
                     priority_fee: ix.priority_fee,
                     lookup_tables: ix.lookup_tables.into_inner(),
                 },
+                signature: signature.to_string(),
+                slot,
             });
         }
         if disc == tx::UpdateFiber::DISCRIMINATOR {
@@ -195,6 +223,8 @@ fn decode_write(program: &Pubkey, data: &[u8]) -> Option<Delta> {
                     priority_fee: ix.priority_fee,
                     lookup_tables: ix.lookup_tables.into_inner(),
                 },
+                signature: signature.to_string(),
+                slot,
             });
         }
         if disc == tx::CloseFiber::DISCRIMINATOR {
@@ -202,6 +232,8 @@ fn decode_write(program: &Pubkey, data: &[u8]) -> Option<Delta> {
             return Some(Delta {
                 index: ix.fiber_index,
                 op: Op::Close,
+                signature: signature.to_string(),
+                slot,
             });
         }
         return None;
@@ -217,6 +249,8 @@ fn decode_write(program: &Pubkey, data: &[u8]) -> Option<Delta> {
                     priority_fee: ix.priority_fee,
                     lookup_tables: ix.lookup_tables.into_inner(),
                 },
+                signature: signature.to_string(),
+                slot,
             });
         }
         if disc == fx::Update::DISCRIMINATOR {
@@ -228,6 +262,8 @@ fn decode_write(program: &Pubkey, data: &[u8]) -> Option<Delta> {
                     priority_fee: ix.priority_fee,
                     lookup_tables: ix.lookup_tables.into_inner(),
                 },
+                signature: signature.to_string(),
+                slot,
             });
         }
         if disc == fx::Close::DISCRIMINATOR {
@@ -235,6 +271,8 @@ fn decode_write(program: &Pubkey, data: &[u8]) -> Option<Delta> {
             return Some(Delta {
                 index: ix.fiber_index,
                 op: Op::Close,
+                signature: signature.to_string(),
+                slot,
             });
         }
     }
@@ -246,10 +284,12 @@ fn decode_write(program: &Pubkey, data: &[u8]) -> Option<Delta> {
 ///
 /// Order is what makes this correct. Fibers are routinely rewritten long after
 /// creation, so the creation transaction alone reconstructs stale content.
-fn fold(deltas: &[Delta]) -> Option<FiberState> {
+fn fold(deltas: &[Delta]) -> (Option<FiberState>, Vec<WriteSource>) {
     let mut state: Option<FiberState> = None;
+    let mut sources: Vec<WriteSource> = Vec::new();
 
     for d in deltas {
+        let mut sets: Vec<String> = Vec::new();
         match &d.op {
             Op::Close => state = None,
             Op::Create {
@@ -262,6 +302,8 @@ fn fold(deltas: &[Delta]) -> Option<FiberState> {
                     priority_fee: *priority_fee,
                     lookup_tables: lookup_tables.iter().map(|k| k.to_string()).collect(),
                 });
+                // A create is unconditional, so it settles all three fields.
+                sets.extend(["instruction", "priority_fee", "lookup_tables"].map(String::from));
             }
             Op::Update {
                 instruction,
@@ -277,18 +319,33 @@ fn fold(deltas: &[Delta]) -> Option<FiberState> {
                 });
                 if let Some(ix) = instruction {
                     cur.instruction = ix.as_ref().map(to_json);
+                    sets.push("instruction".to_string());
                 }
                 if let Some(fee) = priority_fee {
                     cur.priority_fee = *fee;
+                    sets.push("priority_fee".to_string());
                 }
                 if let Some(alts) = lookup_tables {
                     cur.lookup_tables = alts.iter().map(|k| k.to_string()).collect();
+                    sets.push("lookup_tables".to_string());
                 }
             }
         }
+
+        sources.push(WriteSource {
+            signature: d.signature.clone(),
+            slot: d.slot,
+            op: match &d.op {
+                Op::Create { .. } => "create",
+                Op::Update { .. } => "update",
+                Op::Close => "close",
+            }
+            .to_string(),
+            sets,
+        });
     }
 
-    state
+    (state, sources)
 }
 
 fn to_json(ix: &SerializableInstruction) -> InstructionJson {
@@ -424,7 +481,7 @@ async fn history(
             continue;
         };
         for (program, data, accounts) in instructions_of(&tx) {
-            let Some(delta) = decode_write(&program, &data) else {
+            let Some(delta) = decode_write(&program, &data, &s.signature, s.slot) else {
                 continue;
             };
             let Some(slot) = per_index.get_mut(&delta.index) else {
@@ -562,12 +619,14 @@ pub(crate) async fn doctor(
             report.warnings = warnings;
             for idx in &missing {
                 let deltas = per_index.get(idx).cloned().unwrap_or_default();
+                let (recovered, sources) = fold(&deltas);
                 report.fibers.insert(
                     *idx,
                     RecoveredFiber {
                         fiber_pda: fiber_pda(&pubkey, *idx).to_string(),
                         writes_replayed: deltas.len(),
-                        recovered: fold(&deltas),
+                        recovered,
+                        sources,
                     },
                 );
             }
@@ -579,6 +638,7 @@ pub(crate) async fn doctor(
                         fiber_pda: fiber_pda(&pubkey, *idx).to_string(),
                         writes_replayed: 0,
                         recovered: None,
+                        sources: Vec::new(),
                     },
                 );
             }
@@ -776,7 +836,7 @@ async fn verify(rpc: &RpcPool) -> Result<()> {
 
         let (per_index, _, _) = history(rpc, &thread_key, &[index]).await?;
         let deltas = per_index.get(&index).cloned().unwrap_or_default();
-        let rebuilt = fold(&deltas);
+        let (rebuilt, _) = fold(&deltas);
 
         checked += 1;
         let diffs = compare_to_chain(&on_chain, rebuilt.as_ref());
