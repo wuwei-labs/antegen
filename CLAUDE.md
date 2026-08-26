@@ -131,6 +131,34 @@ Common couplings to watch:
 - `antegen-client` change → bump `antegen-cli`, or the fix never reaches a
   binary (release-please attributes by path and cannot see the dependency)
 
+### `last-release-sha`, and why it is there
+
+`.github/release-please-config.json` pins `last-release-sha`. It tells
+release-please not to look at commits at or before that SHA, which is the
+release commit where `antegen-fiber-program` reached 6.0.0 and
+`antegen-thread-program` 5.2.3.
+
+It is load-bearing. Commit `07652fa` carries a `Release-As: 5.2.0` trailer,
+added in May to force those two packages back down after release-please cut a
+phantom v6.0.0 off `!` markers. That trailer is normally inert — once 5.2.0
+shipped it sits behind the last-release boundary and is never read again. But
+if release-please ever loses that boundary and re-scans from the start of
+history, it finds the trailer, honours it, and proposes rolling both packages
+back to 5.2.0. That happened on 2026-08-26 against a fiber 6.0.0 that was
+already tagged, released, and deployed to mainnet.
+
+You cannot remove the trailer without rewriting `main`, so the anchor is the
+fix: it keeps the scan from ever reaching back that far.
+
+Two consequences worth knowing:
+
+- **Never merge a release PR that lowers a version.** Check the manifest diff.
+  A release-please PR that proposes a version below what is already tagged
+  means it has lost the boundary, not that the version is wrong.
+- **Move the anchor forward only when it is safe.** It never needs routine
+  updating. If you do move it, it must land on or after a release commit, or
+  release-please will re-release everything in between.
+
 ### New packages
 
 When adding a new package:
