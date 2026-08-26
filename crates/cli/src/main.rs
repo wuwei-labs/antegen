@@ -300,6 +300,63 @@ EXAMPLES:
         send: bool,
     },
 
+    /// Diagnose threads that cannot execute, and plan their repair
+    #[command(after_long_help = "\
+Reports threads that are intact and still scheduled but cannot build a
+transaction. Today that means a fiber account named in `fiber_ids` no longer
+exists: nothing on chain keeps the list and the accounts in agreement, so an
+account can disappear while the id naming it stays.
+
+Everything here is a read. --plan works out what repairing the findings would
+take and writes it out; it does not carry the repair out, because writing a
+fiber needs the owning thread's authority to sign and that authority belongs to
+whoever created the thread. Where it is a program PDA, only that program can
+replay the plan.
+
+Exits non-zero when any thread is unhealthy, so it can be used as a check.
+
+EXAMPLES:
+    antegen thread doctor
+    antegen thread doctor 2iC6fbLkjR31iMS4gfGQXrzXp8my5Be2TEX8GmnN7Aip
+    antegen thread doctor --verify
+    antegen thread doctor --plan --output one.json --limit 1
+    antegen thread doctor --confirm one.json")]
+    Doctor {
+        /// Thread public key. Omit to scan every thread.
+        address: Option<String>,
+
+        /// Output the full report as JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Work out what repairing the problems found would take, and emit it
+        /// as a plan. Costs a full history walk per affected thread. Nothing is
+        /// signed or sent: the plan is replayed by whoever holds the thread's
+        /// authority, which for a PDA authority is that program, not this CLI.
+        #[arg(long)]
+        plan: bool,
+
+        /// Write the report to FILE as JSON instead of stdout
+        #[arg(long, value_name = "FILE")]
+        output: Option<std::path::PathBuf>,
+
+        /// Prove the reconstruction against fibers that still exist
+        #[arg(long, conflicts_with_all = ["plan", "confirm"])]
+        verify: bool,
+
+        /// After replaying, diff what is on chain against this manifest
+        #[arg(long, value_name = "FILE", conflicts_with = "plan")]
+        confirm: Option<std::path::PathBuf>,
+
+        /// Stop after this many missing fibers
+        #[arg(long)]
+        limit: Option<usize>,
+
+        /// Restrict to a single fiber index
+        #[arg(long)]
+        fiber_index: Option<u8>,
+    },
+
     /// Admin: force delete a thread (skips all checks)
     #[cfg(feature = "dev")]
     Delete {
@@ -532,6 +589,31 @@ async fn run_antegen() -> Result<()> {
             #[cfg(feature = "dev")]
             ThreadCommands::Delete { address } => {
                 commands::thread::admin_delete(address, cli.rpc, cli.keypair).await
+            }
+            ThreadCommands::Doctor {
+                address,
+                json,
+                plan,
+                output,
+                verify,
+                confirm,
+                limit,
+                fiber_index,
+            } => {
+                commands::doctor::doctor(
+                    address,
+                    cli.rpc,
+                    commands::doctor::DoctorOpts {
+                        json,
+                        plan,
+                        output,
+                        verify,
+                        confirm,
+                        limit,
+                        fiber_index,
+                    },
+                )
+                .await
             }
             #[cfg(feature = "dev")]
             ThreadCommands::Test(test_cmd) => {

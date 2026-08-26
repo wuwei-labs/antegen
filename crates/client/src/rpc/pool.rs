@@ -44,6 +44,17 @@ struct JsonRpcResponse<T> {
     error: Option<JsonRpcError>,
 }
 
+/// One entry from `getSignaturesForAddress`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SignatureRecord {
+    pub signature: String,
+    pub slot: u64,
+    #[serde(default)]
+    pub err: Option<serde_json::Value>,
+    #[serde(rename = "blockTime", default)]
+    pub block_time: Option<i64>,
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct JsonRpcError {
     code: i64,
@@ -596,6 +607,73 @@ impl RpcPool {
                 })
             })
             .collect())
+    }
+
+    /// Every signature that touched an address, oldest last.
+    ///
+    /// Paginates to exhaustion rather than returning the first page: callers
+    /// reconstructing an account's history need all of it, and a silent
+    /// truncation at 1000 looks identical to "that is all there was".
+    ///
+    /// History depth is a property of the endpoint. A pruned RPC answers with
+    /// what it still holds and no error, so a short result is not evidence the
+    /// account is young.
+    pub async fn get_signatures_for_address(
+        &self,
+        address: &Pubkey,
+    ) -> Result<Vec<SignatureRecord>> {
+        const PAGE: usize = 1000;
+        let mut out: Vec<SignatureRecord> = Vec::new();
+        let mut before: Option<String> = None;
+
+        loop {
+            let mut params = json!({ "limit": PAGE });
+            if let Some(ref b) = before {
+                params["before"] = json!(b);
+            }
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getSignaturesForAddress",
+                "params": [address.to_string(), params]
+            });
+
+            let response: JsonRpcResponse<Vec<SignatureRecord>> =
+                self.execute_with_failover(&body, true).await?;
+            let page = response.result.unwrap_or_default();
+            let short = page.len() < PAGE;
+
+            if let Some(last) = page.last() {
+                before = Some(last.signature.clone());
+            }
+            out.extend(page);
+
+            if short || before.is_none() {
+                break;
+            }
+        }
+
+        Ok(out)
+    }
+
+    /// Fetch a confirmed transaction, or `None` if the endpoint no longer has
+    /// it. Returns the raw JSON so callers can read instructions, inner
+    /// instructions and balances without this crate having to model them.
+    pub async fn get_transaction(&self, signature: &str) -> Result<Option<serde_json::Value>> {
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTransaction",
+            "params": [signature, {
+                "encoding": "json",
+                "maxSupportedTransactionVersion": 0,
+                "commitment": "confirmed"
+            }]
+        });
+
+        let response: JsonRpcResponse<serde_json::Value> =
+            self.execute_with_failover(&body, true).await?;
+        Ok(response.result.filter(|v| !v.is_null()))
     }
 
     /// Get signature status for confirmation checking.
