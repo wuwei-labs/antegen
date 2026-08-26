@@ -73,8 +73,19 @@ pub mod antegen_fiber {
     }
 
     /// Closes a fiber account, returns rent to thread PDA.
-    pub fn close(ctx: Context<Close>) -> Result<()> {
-        instructions::close::close(ctx)
+    ///
+    /// `fiber_index` is **required**, deliberately unlike the `Trailing`
+    /// arguments on `create` and `update`. Those exist so a caller compiled
+    /// against an older IDL keeps working; here that leniency is the
+    /// vulnerability. An absent index can only mean "derive nothing", which is
+    /// how a caller retires one index while closing another account, and a
+    /// default of 0 would be worse — it would name a real, wrong fiber.
+    ///
+    /// This is a wire break for any program that CPIs straight into `close`.
+    /// They must be rebuilt against this IDL. Failing loudly on old data is the
+    /// intent: the alternative silently accepts the unbound close.
+    pub fn close(ctx: Context<Close>, fiber_index: u8) -> Result<()> {
+        instructions::close::close(ctx, fiber_index)
     }
 
     /// Copies source fiber's instruction into target, closes source.
@@ -133,6 +144,31 @@ mod wire_compat_tests {
 
         let ix = instruction::Update::deserialize(&mut &new_format[..]).unwrap();
         assert_eq!(ix.lookup_tables.into_inner(), Some(tables));
+    }
+
+    /// `close` deliberately does NOT get the `Trailing` treatment.
+    ///
+    /// Old callers sent no arguments at all. Accepting that again would mean
+    /// closing a fiber with nothing binding the account to an index, which is
+    /// the whole hole. Rejecting the old format is the intended behaviour, and
+    /// it is why bumping this program is a breaking change for anything that
+    /// CPIs into `close`.
+    #[test]
+    fn close_rejects_data_without_the_required_index() {
+        let empty: Vec<u8> = Vec::new();
+        assert!(
+            instruction::Close::deserialize(&mut &empty[..]).is_err(),
+            "an unbound close must not decode"
+        );
+
+        let mut with_index = Vec::new();
+        3u8.serialize(&mut with_index).unwrap();
+        assert_eq!(
+            instruction::Close::deserialize(&mut &with_index[..])
+                .unwrap()
+                .fiber_index,
+            3
+        );
     }
 
     #[test]

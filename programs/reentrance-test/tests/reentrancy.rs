@@ -30,7 +30,11 @@ fn make_cpi_update_fiber_instruction(
 }
 
 /// Build an instruction that calls test_processor::cpi_close_fiber.
-fn make_cpi_close_fiber_instruction(thread: &Pubkey, target_fiber: &Pubkey) -> Instruction {
+fn make_cpi_close_fiber_instruction(
+    thread: &Pubkey,
+    target_fiber: &Pubkey,
+    fiber_index: u8,
+) -> Instruction {
     Instruction {
         program_id: TEST_PROCESSOR_ID,
         accounts: vec![
@@ -38,7 +42,7 @@ fn make_cpi_close_fiber_instruction(thread: &Pubkey, target_fiber: &Pubkey) -> I
             AccountMeta::new(*target_fiber, false),      // fiber to close
             AccountMeta::new_readonly(fiber::ID, false), // fiber program
         ],
-        data: antegen_reentrance_test::instruction::CpiCloseFiber {}.data(),
+        data: antegen_reentrance_test::instruction::CpiCloseFiber { fiber_index }.data(),
     }
 }
 
@@ -276,7 +280,7 @@ fn test_reentrancy_close_fiber_during_exec() {
 
     // 3. Create fiber_1 (CPI: close fiber_0)
     let (fiber_1_pubkey, _) = fiber_pda(&thread_pubkey, 1);
-    let cpi_ix = make_cpi_close_fiber_instruction(&thread_pubkey, &fiber_0_pubkey);
+    let cpi_ix = make_cpi_close_fiber_instruction(&thread_pubkey, &fiber_0_pubkey, 0);
     let ser_cpi = make_serializable_instruction(&cpi_ix);
     let ix = build_create_fiber(
         &authority.pubkey(),
