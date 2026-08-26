@@ -34,9 +34,18 @@ pub fn thread_withdraw(ctx: Context<ThreadWithdraw>, amount: u64) -> Result<()> 
     let pay_to = &mut ctx.accounts.pay_to;
     let thread = &mut ctx.accounts.thread;
 
-    // Calculate the minimum rent threshold
-    let data_len = 8 + borsh::to_vec(&**thread)?.len();
-    let minimum_rent = Rent::get().unwrap().minimum_balance(data_len);
+    // Size rent from what the account occupies, not from what the struct
+    // currently serializes to. `Vec`/`String` fields are allocated at their
+    // `max_len`, so a real thread serializes to a fraction of its allocation
+    // — measuring the serialization sets the floor hundreds of bytes too low.
+    //
+    // The runtime is the real backstop here: it rejects any transaction that
+    // leaves a writable account below rent exemption, so the loose floor was
+    // never a way to strand a thread. It only meant a withdrawal the program
+    // said was fine failed later as `InsufficientFundsForRent`, which says
+    // nothing about which account or why. Failing here returns
+    // `WithdrawalTooLarge` instead.
+    let minimum_rent = Rent::get()?.minimum_balance(thread.to_account_info().data_len());
     let post_balance = thread
         .to_account_info()
         .lamports()

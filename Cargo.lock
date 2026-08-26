@@ -484,7 +484,7 @@ version = "0.0.0"
 
 [[package]]
 name = "antegen-cli"
-version = "8.1.0"
+version = "8.2.0"
 dependencies = [
  "anchor-lang",
  "antegen-client",
@@ -518,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-client"
-version = "6.1.1"
+version = "6.2.0"
 dependencies = [
  "anchor-lang",
  "antegen-cron",

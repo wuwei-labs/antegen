@@ -178,3 +178,57 @@ fn test_thread_withdraw_zero_amount() {
 
     send_withdraw(&mut svm, &authority, &authority.pubkey(), &thread_pubkey, 0).unwrap();
 }
+
+/// Withdrawing to the limit the program allows must leave the thread
+/// rent-exempt.
+///
+/// The guard sizes rent from `borsh::to_vec(&**thread).len()`, the bytes the
+/// struct currently serializes to. The account is allocated
+/// `8 + Thread::INIT_SPACE`, which is far larger — `Vec`/`String` fields are
+/// reserved at their `max_len` and a real thread uses a fraction of it. Rent
+/// exemption is charged on the allocation, so measuring the serialization
+/// lets an authority withdraw below the threshold and leave the account
+/// eligible to be purged, taking the thread and its automation with it.
+#[test]
+fn test_thread_withdraw_leaves_thread_rent_exempt() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let thread_pubkey = create_funded_thread(&mut svm, &authority, &payer, "tw-exempt", 5_000_000);
+
+    let account = svm.get_account(&thread_pubkey).unwrap();
+    let allocated = account.data.len();
+    let required = svm.minimum_balance_for_rent_exemption(allocated);
+
+    // Aim one lamport below what the allocation actually needs. If the guard
+    // sized rent correctly this is rejected.
+    let target = required - 1;
+    assert!(
+        account.lamports > target,
+        "thread must start above the rent floor for this to be a real test"
+    );
+    let amount = account.lamports - target;
+
+    let result = send_withdraw(
+        &mut svm,
+        &authority,
+        &authority.pubkey(),
+        &thread_pubkey,
+        amount,
+    );
+
+    let err = result.expect_err("withdrawing below rent exemption must be rejected");
+    let rendered = format!("{:?}", err.err);
+    assert!(
+        rendered.contains("WithdrawalTooLarge") || rendered.contains("Custom"),
+        "should be rejected by the program's own check, not left to the runtime's \
+         InsufficientFundsForRent, which names neither the account nor the reason: {rendered}"
+    );
+
+    let after = svm.get_account(&thread_pubkey).unwrap();
+    assert_eq!(
+        after.lamports, account.lamports,
+        "a rejected withdrawal must not move lamports"
+    );
+}
