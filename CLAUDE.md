@@ -150,7 +150,7 @@ already tagged, released, and deployed to mainnet.
 You cannot remove the trailer without rewriting `main`, so the anchor is the
 fix: it keeps the scan from ever reaching back that far.
 
-Two consequences worth knowing:
+Three consequences worth knowing:
 
 - **Never merge a release PR that lowers a version.** Check the manifest diff.
   A release-please PR that proposes a version below what is already tagged
@@ -158,6 +158,14 @@ Two consequences worth knowing:
 - **Move the anchor forward only when it is safe.** It never needs routine
   updating. If you do move it, it must land on or after a release commit, or
   release-please will re-release everything in between.
+- **Do not walk a program major back.** The May trailer exists because a major
+  on `thread`/`fiber` was treated as wrong on the reasoning that the program ID
+  had not changed. That is no longer the position: with the legacy programs
+  sunset, a major against a stable program ID is fine, and `feat(fiber)!` →
+  6.0.0 is a correct release, not a phantom one. A `!` on a program scope
+  should be left to cut its major. Reaching for another `Release-As:` trailer
+  to force it down is what created this problem in the first place, and the
+  trailer outlives the release it was written for.
 
 ### New packages
 
