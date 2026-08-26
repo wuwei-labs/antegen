@@ -412,6 +412,7 @@ async fn history(
     let mut per_index: BTreeMap<u8, Vec<Delta>> =
         indices.iter().map(|i| (*i, Vec::new())).collect();
     let mut warnings = Vec::new();
+    let mut forged: Vec<String> = Vec::new();
 
     for s in &sigs {
         let Some(tx) = rpc.get_transaction(&s.signature).await? else {
@@ -447,10 +448,38 @@ async fn history(
             // Folding one in would rebuild the fiber from what the attacker
             // supplied rather than from what the thread last legitimately ran.
             let target = fiber_pda(thread, delta.index);
-            if accounts.contains(&target) && accounts.contains(thread) {
+            if !accounts.contains(&target) {
+                continue;
+            }
+            if accounts.contains(thread) {
                 slot.push(delta);
+            } else {
+                // Surfaced rather than silently dropped. A write naming this
+                // fiber but not its thread could not have been made by the
+                // thread, so an operator should know their history was written
+                // to by someone else before they replay a rebuild of it.
+                //
+                // Undercounts the 2026-08-26 hijacks: each was a `create`
+                // followed by a `close`, and that `close` predates the
+                // mandatory `fiber_index`, so it no longer deserializes and
+                // never reaches here. Harmless for the rebuild — a `close`
+                // only zeroes state, and any fiber still listed in `fiber_ids`
+                // has a later `create` that overwrites it regardless — but it
+                // means this count is a floor, not a total.
+                forged.push(format!(
+                    "fiber {}: excluded a write in {} that names the fiber but not its thread",
+                    delta.index, s.signature
+                ));
             }
         }
+    }
+
+    if !forged.is_empty() {
+        warnings.push(format!(
+            "{} write(s) excluded as not made by this thread's authority",
+            forged.len()
+        ));
+        warnings.extend(forged);
     }
 
     Ok((per_index, sigs.len(), warnings))
