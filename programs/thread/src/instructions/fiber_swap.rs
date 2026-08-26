@@ -33,7 +33,17 @@ pub struct FiberSwap<'info> {
 
     /// CHECK: source fiber — closed after its instruction is copied to target.
     /// Shape-agnostic; fiber program validates the `thread` field.
-    #[account(mut)]
+    ///
+    /// Bound to `source_fiber_index` because this instruction drops that index
+    /// from `fiber_ids` while the fiber program sweeps whichever account is
+    /// passed. A mismatched pair retires one index and destroys another's
+    /// account, which is how a thread ends up naming a fiber that is gone.
+    #[account(
+        mut,
+        seeds = [SEED_THREAD_FIBER, thread.key().as_ref(), &[source_fiber_index]],
+        bump,
+        seeds::program = antegen_fiber_program::ID,
+    )]
     pub source: UncheckedAccount<'info>,
 
     /// The Fiber Program for CPI

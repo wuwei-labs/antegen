@@ -27,7 +27,19 @@ pub struct FiberClose<'info> {
 
     /// CHECK: fiber account to close (owned by Fiber Program). Shape-agnostic
     /// — the fiber program validates the `thread` field against the signer.
-    #[account(mut)]
+    ///
+    /// Bound to `fiber_index` here as well, because this instruction drops that
+    /// index from `fiber_ids` regardless of which account it hands the fiber
+    /// program. Without the binding, naming index N while passing index M's
+    /// account retires N in the thread's bookkeeping and destroys M — leaving
+    /// the thread pointing at an account that no longer exists and stranding
+    /// N's rent in an account nothing tracks.
+    #[account(
+        mut,
+        seeds = [SEED_THREAD_FIBER, thread.key().as_ref(), &[fiber_index]],
+        bump,
+        seeds::program = antegen_fiber_program::ID,
+    )]
     pub fiber: UncheckedAccount<'info>,
 
     /// The Fiber Program for CPI
@@ -48,14 +60,17 @@ pub fn fiber_close(ctx: Context<FiberClose>, fiber_index: u8) -> Result<()> {
     }
 
     thread.sign(|seeds| {
-        antegen_fiber_program::cpi::close(CpiContext::new_with_signer(
-            ctx.accounts.fiber_program.key(),
-            antegen_fiber_program::cpi::accounts::Close {
-                thread: thread.to_account_info(),
-                fiber: ctx.accounts.fiber.to_account_info(),
-            },
-            &[seeds],
-        ))
+        antegen_fiber_program::cpi::close(
+            CpiContext::new_with_signer(
+                ctx.accounts.fiber_program.key(),
+                antegen_fiber_program::cpi::accounts::Close {
+                    thread: thread.to_account_info(),
+                    fiber: ctx.accounts.fiber.to_account_info(),
+                },
+                &[seeds],
+            ),
+            fiber_index,
+        )
     })?;
 
     Ok(())
