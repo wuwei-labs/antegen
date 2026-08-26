@@ -179,14 +179,19 @@ reading the creation transaction is the point; many fibers were rewritten by a
 later `update_fiber`, so creation data alone restores stale content.
 
 ```
-antegen thread doctor                              # which threads cannot execute
-antegen thread doctor --verify                     # prove the reconstruction
-antegen thread doctor --recover one.json --limit 1 # stage a single fiber
-antegen thread doctor --confirm one.json           # check what landed
+antegen thread doctor                       # which threads cannot execute
+antegen thread doctor --verify              # prove the reconstruction
+antegen thread doctor --reconstruct \
+    --output one.json --limit 1             # rebuild a single fiber
+antegen thread doctor --confirm one.json    # check what landed
 ```
 
-The command is read-only and its output is a manifest. It deliberately cannot
-replay: writing a fiber requires the owning *thread's* authority to sign, which
+Diagnosis is cheap — an existence check per tracked fiber. `--reconstruct` is
+the expensive part, a full history walk per affected thread, which is why it is
+its own flag rather than implied by naming an output file.
+
+The command is read-only and what it produces is a manifest. It deliberately
+cannot replay: writing a fiber requires the owning *thread's* authority to sign, which
 is a property of whoever created the thread, not of antegen. Where that
 authority is a program PDA, only that program can produce the transaction.
 Recovery therefore belongs to each integrator, and this repository's
@@ -201,8 +206,8 @@ contribution is the reconstruction plus two independent proofs of it:
   the replay transaction is itself part of that fiber's history and a
   history-based check would fold in the write it is meant to be checking.
 
-`--limit 1` exists so an operator can restore one fiber, confirm it, and only
-then continue. Both proofs exit non-zero on mismatch so a batch stops rather
+`--limit 1` exists so an operator can rebuild one fiber, replay it, confirm
+it, and only then continue. Both proofs exit non-zero on mismatch so a batch stops rather
 than grinding through a bad reconstruction.
 
 ## What we are changing beyond the patch

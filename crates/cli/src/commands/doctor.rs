@@ -37,8 +37,10 @@ use crate::commands::get_rpc_url;
 /// additive.
 pub(crate) struct DoctorOpts {
     pub(crate) json: bool,
-    /// Write a reconstruction manifest for every missing fiber.
-    pub(crate) recover: Option<PathBuf>,
+    /// Rebuild the contents of every missing fiber from its write history.
+    pub(crate) reconstruct: bool,
+    /// Write the report to this path as JSON instead of stdout.
+    pub(crate) output: Option<PathBuf>,
     /// Prove the reconstruction against fibers that still exist.
     pub(crate) verify: bool,
     /// After replaying a manifest, diff what is on chain against it.
@@ -486,7 +488,7 @@ pub(crate) async fn doctor(
             warnings: Vec::new(),
         };
 
-        if opts.recover.is_some() {
+        if opts.reconstruct {
             let (per_index, scanned_sigs, warnings) = history(&rpc, &pubkey, &missing).await?;
             report.signatures_scanned = scanned_sigs;
             report.warnings = warnings;
@@ -548,17 +550,15 @@ pub(crate) async fn doctor(
         results,
     };
 
-    if let Some(path) = &opts.recover {
+    if let Some(path) = &opts.output {
         std::fs::write(path, serde_json::to_string_pretty(&manifest)?)
-            .with_context(|| format!("writing manifest to {}", path.display()))?;
-    }
-
-    if opts.json {
+            .with_context(|| format!("writing report to {}", path.display()))?;
+    } else if opts.json {
         println!("{}", serde_json::to_string_pretty(&manifest)?);
         return Ok(());
     }
 
-    render(&manifest, opts.recover.as_deref());
+    render(&manifest, opts.reconstruct, opts.output.as_deref());
 
     // A thread that cannot build is a failure state, not a clean bill of
     // health — exit non-zero so this is usable in a check.
@@ -568,7 +568,7 @@ pub(crate) async fn doctor(
     Ok(())
 }
 
-fn render(m: &Manifest, manifest_path: Option<&std::path::Path>) {
+fn render(m: &Manifest, reconstructed: bool, output: Option<&std::path::Path>) {
     if m.threads_unhealthy == 0 {
         println!(
             "healthy — {} thread(s) scanned, every tracked fiber account exists",
@@ -589,7 +589,7 @@ fn render(m: &Manifest, manifest_path: Option<&std::path::Path>) {
                     format!("reconstructed from {} write(s)", f.writes_replayed)
                 }
                 Some(_) => "reconstructed as idle (no instruction)".to_string(),
-                None if manifest_path.is_some() => "NOT RECOVERABLE from history".to_string(),
+                None if reconstructed => "NOT RECOVERABLE from history".to_string(),
                 None => "missing".to_string(),
             };
             println!("    fiber[{}] {}  {}", idx, f.fiber_pda, state);
@@ -603,18 +603,20 @@ fn render(m: &Manifest, manifest_path: Option<&std::path::Path>) {
     println!("threads scanned      {}", m.threads_scanned);
     println!("threads unhealthy    {}", m.threads_unhealthy);
     println!("fibers missing       {}", m.fibers_missing);
-    if manifest_path.is_some() {
+    if reconstructed {
         println!("fibers reconstructed {}", m.fibers_reconstructed);
         println!("unresolved           {}", m.unresolved.len());
     }
-    if let Some(p) = manifest_path {
-        println!("\nmanifest written to {}", p.display());
+    if let Some(p) = output {
+        println!("\nreport written to {}", p.display());
+    }
+    if reconstructed {
         println!(
-            "This command cannot replay it — writing a fiber needs the thread's \
-             authority to sign."
+            "\nThis command cannot replay a reconstruction — writing a fiber \
+             needs the thread's authority to sign."
         );
     } else {
-        println!("\nRe-run with --recover <FILE> to reconstruct these from history.");
+        println!("\nRe-run with --reconstruct to rebuild these from history.");
     }
 }
 

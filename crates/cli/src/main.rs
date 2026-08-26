@@ -317,7 +317,7 @@ EXAMPLES:
     antegen thread doctor
     antegen thread doctor 2iC6fbLkjR31iMS4gfGQXrzXp8my5Be2TEX8GmnN7Aip
     antegen thread doctor --verify
-    antegen thread doctor --recover one.json --limit 1
+    antegen thread doctor --reconstruct --output one.json --limit 1
     antegen thread doctor --confirm one.json")]
     Doctor {
         /// Thread public key. Omit to scan every thread.
@@ -327,16 +327,23 @@ EXAMPLES:
         #[arg(long)]
         json: bool,
 
-        /// Reconstruct missing fibers from history and write a manifest here
+        /// Also rebuild what the missing fibers contained, by replaying their
+        /// write history. Costs a full history walk per affected thread.
+        /// Nothing is signed or sent — the result is a manifest for the
+        /// thread's authority to replay.
+        #[arg(long)]
+        reconstruct: bool,
+
+        /// Write the report to FILE as JSON instead of stdout
         #[arg(long, value_name = "FILE")]
-        recover: Option<std::path::PathBuf>,
+        output: Option<std::path::PathBuf>,
 
         /// Prove the reconstruction against fibers that still exist
-        #[arg(long, conflicts_with_all = ["recover", "confirm"])]
+        #[arg(long, conflicts_with_all = ["reconstruct", "confirm"])]
         verify: bool,
 
         /// After replaying, diff what is on chain against this manifest
-        #[arg(long, value_name = "FILE", conflicts_with = "recover")]
+        #[arg(long, value_name = "FILE", conflicts_with = "reconstruct")]
         confirm: Option<std::path::PathBuf>,
 
         /// Stop after this many missing fibers
@@ -584,7 +591,8 @@ async fn run_antegen() -> Result<()> {
             ThreadCommands::Doctor {
                 address,
                 json,
-                recover,
+                reconstruct,
+                output,
                 verify,
                 confirm,
                 limit,
@@ -595,7 +603,8 @@ async fn run_antegen() -> Result<()> {
                     cli.rpc,
                     commands::doctor::DoctorOpts {
                         json,
-                        recover,
+                        reconstruct,
+                        output,
                         verify,
                         confirm,
                         limit,
