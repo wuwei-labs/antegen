@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.2.3](https://github.com/wuwei-labs/antegen/compare/antegen-thread-program-v5.2.2...antegen-thread-program-v5.2.3) (2026-08-26)
+
+
+### Bug Fixes
+
+* **fiber:** close rent-sweep hole in create's update-in-place branch ([1aed242](https://github.com/wuwei-labs/antegen/commit/1aed2427c2a11b032cae082f1b73604da2c01c48))
+* **thread:** bind fiber accounts to the index they retire ([2c6fe8e](https://github.com/wuwei-labs/antegen/commit/2c6fe8eecd37f32777f00516135b95987f83c41a))
+
 ## [5.2.2](https://github.com/wuwei-labs/antegen/compare/antegen-thread-program-v5.2.1...antegen-thread-program-v5.2.2) (2026-08-25)
 
 

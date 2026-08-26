@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.1.1](https://github.com/wuwei-labs/antegen/compare/antegen-client-v6.1.0...antegen-client-v6.1.1) (2026-08-26)
+
+
+### Bug Fixes
+
+* **client:** park threads whose fiber account is missing ([2316e25](https://github.com/wuwei-labs/antegen/commit/2316e25e80ac9c6f578d84c687ab385fbd405509))
+* **fiber:** close rent-sweep hole in create's update-in-place branch ([1aed242](https://github.com/wuwei-labs/antegen/commit/1aed2427c2a11b032cae082f1b73604da2c01c48))
+
 ## [6.1.0](https://github.com/wuwei-labs/antegen/compare/antegen-client-v6.0.3...antegen-client-v6.1.0) (2026-08-25)
 
 
