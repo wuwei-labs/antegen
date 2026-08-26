@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 pub(crate) const MIN_BALANCE_LAMPORTS: u64 = 1_000_000;
 
 pub(crate) mod config;
+pub(crate) mod doctor;
 pub(crate) mod geyser;
 pub(crate) mod info;
 pub(crate) mod node;
