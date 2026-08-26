@@ -3,6 +3,18 @@ name: Release
 on:
   push:
     branches: [main]
+  # Manual re-run, for when a push-triggered run is lost rather than failed.
+  # An Actions outage on 2026-08-26 left a run queued and never started, and
+  # because the concurrency group below does not cancel in progress, every
+  # later push was stuck behind it. Without a manual trigger the only way to
+  # recover was to invent a commit on main.
+  #
+  # Safe to run at any time: every publishing job is gated on the release
+  # outputs below, so a run with no release PR merged refreshes that PR and
+  # skips the rest. It re-runs against whatever main points at now, which is
+  # also why re-running the *lost* run is usually wrong — that one is pinned
+  # to the commit it was queued for.
+  workflow_dispatch:
 
 # Only one release run can mutate state at a time.
 concurrency:
