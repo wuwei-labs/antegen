@@ -72,6 +72,18 @@ fn is_program_rejection(error: &str) -> bool {
     error.contains("InstructionError") || error.contains("Custom")
 }
 
+/// Whether the build failed because an account it needs does not exist on chain.
+///
+/// A fiber the thread still lists but that has been closed is not a transient
+/// condition — every rebuild derives the same PDA and gets the same null back.
+/// Retrying costs one `getAccount` per attempt forever, which is what three
+/// mainnet threads did for forty minutes after their fibers were closed out
+/// from under them. Park instead: the watchdog still re-examines the thread,
+/// and an account update re-arms it the moment the fiber is recreated.
+fn is_missing_account_error(error: &str) -> bool {
+    error.contains("not found")
+}
+
 /// Errors that mean "try again", not "this execution is doomed".
 ///
 /// These are cluster-level conditions, not program failures. Treating them as
@@ -401,142 +413,155 @@ async fn execute_thread(
         }
 
         // Build batch — first iteration uses trigger retry, subsequent don't need it
-        let (ixs, priority_fee, needs_continuation, next_cursor, simulated_units) =
-            if batch_num == 1 {
-                // If we were released before the on-chain deadline, wait for it
-                // rather than building a transaction the chain is certain to
-                // reject with 6004. A rejected build costs a fiber fetch and a
-                // simulation, so polling into the deadline is more expensive
-                // than sleeping to it.
-                if let Some(due_at) = trace.due_at {
-                    if due_at > Instant::now() {
-                        log::debug!(
-                            "{}: released {}ms before deadline, waiting",
-                            thread_pubkey,
-                            due_at.duration_since(Instant::now()).as_millis()
-                        );
-                        tokio::time::sleep_until(due_at.into()).await;
-                    }
+        let (ixs, priority_fee, needs_continuation, next_cursor, simulated_units) = if batch_num
+            == 1
+        {
+            // If we were released before the on-chain deadline, wait for it
+            // rather than building a transaction the chain is certain to
+            // reject with 6004. A rejected build costs a fiber fetch and a
+            // simulation, so polling into the deadline is more expensive
+            // than sleeping to it.
+            if let Some(due_at) = trace.due_at {
+                if due_at > Instant::now() {
+                    log::debug!(
+                        "{}: released {}ms before deadline, waiting",
+                        thread_pubkey,
+                        due_at.duration_since(Instant::now()).as_millis()
+                    );
+                    tokio::time::sleep_until(due_at.into()).await;
                 }
+            }
 
-                let trigger_retry_deadline =
-                    Instant::now() + Duration::from_secs(TRIGGER_RETRY_DEADLINE_SECS);
-                loop {
-                    if cancelled.load(Ordering::Relaxed) {
-                        return ExecutionResult::retryable(
-                            thread_pubkey,
-                            "Cancelled during build".to_string(),
-                            0,
-                            trace,
-                        );
-                    }
-                    if Instant::now() > trigger_retry_deadline {
-                        return ExecutionResult::retryable(
-                            thread_pubkey,
-                            "Trigger window expired while waiting for trigger time".to_string(),
-                            0,
-                            trace,
-                        );
-                    }
-                    match executor
-                        .build_execute_transaction(&thread_pubkey, &thread, pending_fiber_cursor)
-                        .await
-                    {
-                        Ok(result) => break result,
-                        Err(e) => {
-                            let error_str = e.to_string();
-                            if is_trigger_not_ready_error(&error_str) {
-                                // Wake when the chain's clock is projected to
-                                // cross the deadline, rather than polling on a
-                                // fixed quantum that adds up to half a second of
-                                // avoidable delay per attempt.
-                                let backoff = trace
-                                    .due_at
-                                    .and_then(|due| due.checked_duration_since(Instant::now()))
-                                    .map(|remaining| remaining.max(TRIGGER_RETRY_MIN_BACKOFF))
-                                    .unwrap_or(TRIGGER_RETRY_MIN_BACKOFF);
-                                log::debug!(
-                                    "Thread {} trigger not ready (6004), retrying in {}ms",
-                                    thread_pubkey,
-                                    backoff.as_millis()
-                                );
-                                tokio::time::sleep(backoff).await;
-                                continue;
-                            } else if is_thread_paused_error(&error_str) {
-                                log::debug!(
-                                    "Thread {} is paused (6006), skipping execution",
-                                    thread_pubkey
-                                );
-                                // Unpausing writes to the thread account, so an
-                                // update will re-arm this; parking is correct.
-                                return ExecutionResult::fatal(
-                                    thread_pubkey,
-                                    "Thread is paused".to_string(),
-                                    0,
-                                    trace,
-                                );
-                            } else if !is_retryable_chain_error(&error_str)
-                                && is_program_rejection(&error_str)
-                            {
-                                // A program rejected the instruction. Retrying
-                                // rebuilds the same transaction and simulates it
-                                // against the same state, so it fails the same
-                                // way — a thread whose fiber had gone stale sat
-                                // eight hours overdue doing exactly that, one
-                                // simulation every few seconds. Park instead:
-                                // the watchdog still re-examines it, and an
-                                // account update re-arms it immediately if the
-                                // state it needs comes back.
-                                log::warn!(
-                                "Thread {} rejected by program, parking until state changes: {}",
-                                thread_pubkey,
-                                error_str
-                            );
-                                return ExecutionResult::fatal(
-                                    thread_pubkey,
-                                    format!("Program rejected the instruction: {}", e),
-                                    0,
-                                    trace,
-                                );
-                            } else {
-                                log::error!(
-                                    "Failed to build transaction for thread {}: {:?}",
-                                    thread_pubkey,
-                                    e
-                                );
-                                return ExecutionResult::retryable(
-                                    thread_pubkey,
-                                    format!("Transaction build failed: {}", e),
-                                    0,
-                                    trace,
-                                );
-                            }
-                        }
-                    }
+            let trigger_retry_deadline =
+                Instant::now() + Duration::from_secs(TRIGGER_RETRY_DEADLINE_SECS);
+            loop {
+                if cancelled.load(Ordering::Relaxed) {
+                    return ExecutionResult::retryable(
+                        thread_pubkey,
+                        "Cancelled during build".to_string(),
+                        0,
+                        trace,
+                    );
                 }
-            } else {
-                // Continuation batch — build against fresh on-chain state
+                if Instant::now() > trigger_retry_deadline {
+                    return ExecutionResult::retryable(
+                        thread_pubkey,
+                        "Trigger window expired while waiting for trigger time".to_string(),
+                        0,
+                        trace,
+                    );
+                }
                 match executor
                     .build_execute_transaction(&thread_pubkey, &thread, pending_fiber_cursor)
                     .await
                 {
-                    Ok(result) => result,
+                    Ok(result) => break result,
                     Err(e) => {
-                        log::error!(
-                            "{}: continuation batch {} build failed: {:?}",
-                            thread_pubkey,
-                            batch_num,
-                            e
-                        );
-                        return ExecutionResult::retryable(
-                            thread_pubkey,
-                            format!("Continuation batch {} build failed: {}", batch_num, e),
-                            0,
-                            trace,
-                        );
+                        let error_str = e.to_string();
+                        if is_trigger_not_ready_error(&error_str) {
+                            // Wake when the chain's clock is projected to
+                            // cross the deadline, rather than polling on a
+                            // fixed quantum that adds up to half a second of
+                            // avoidable delay per attempt.
+                            let backoff = trace
+                                .due_at
+                                .and_then(|due| due.checked_duration_since(Instant::now()))
+                                .map(|remaining| remaining.max(TRIGGER_RETRY_MIN_BACKOFF))
+                                .unwrap_or(TRIGGER_RETRY_MIN_BACKOFF);
+                            log::debug!(
+                                "Thread {} trigger not ready (6004), retrying in {}ms",
+                                thread_pubkey,
+                                backoff.as_millis()
+                            );
+                            tokio::time::sleep(backoff).await;
+                            continue;
+                        } else if is_thread_paused_error(&error_str) {
+                            log::debug!(
+                                "Thread {} is paused (6006), skipping execution",
+                                thread_pubkey
+                            );
+                            // Unpausing writes to the thread account, so an
+                            // update will re-arm this; parking is correct.
+                            return ExecutionResult::fatal(
+                                thread_pubkey,
+                                "Thread is paused".to_string(),
+                                0,
+                                trace,
+                            );
+                        } else if is_missing_account_error(&error_str) {
+                            log::warn!(
+                                    "Thread {} references an account that does not exist, parking until state changes: {}",
+                                    thread_pubkey,
+                                    error_str
+                                );
+                            return ExecutionResult::fatal(
+                                thread_pubkey,
+                                format!("Transaction build failed: {}", e),
+                                0,
+                                trace,
+                            );
+                        } else if !is_retryable_chain_error(&error_str)
+                            && is_program_rejection(&error_str)
+                        {
+                            // A program rejected the instruction. Retrying
+                            // rebuilds the same transaction and simulates it
+                            // against the same state, so it fails the same
+                            // way — a thread whose fiber had gone stale sat
+                            // eight hours overdue doing exactly that, one
+                            // simulation every few seconds. Park instead:
+                            // the watchdog still re-examines it, and an
+                            // account update re-arms it immediately if the
+                            // state it needs comes back.
+                            log::warn!(
+                                "Thread {} rejected by program, parking until state changes: {}",
+                                thread_pubkey,
+                                error_str
+                            );
+                            return ExecutionResult::fatal(
+                                thread_pubkey,
+                                format!("Program rejected the instruction: {}", e),
+                                0,
+                                trace,
+                            );
+                        } else {
+                            log::error!(
+                                "Failed to build transaction for thread {}: {:?}",
+                                thread_pubkey,
+                                e
+                            );
+                            return ExecutionResult::retryable(
+                                thread_pubkey,
+                                format!("Transaction build failed: {}", e),
+                                0,
+                                trace,
+                            );
+                        }
                     }
                 }
-            };
+            }
+        } else {
+            // Continuation batch — build against fresh on-chain state
+            match executor
+                .build_execute_transaction(&thread_pubkey, &thread, pending_fiber_cursor)
+                .await
+            {
+                Ok(result) => result,
+                Err(e) => {
+                    log::error!(
+                        "{}: continuation batch {} build failed: {:?}",
+                        thread_pubkey,
+                        batch_num,
+                        e
+                    );
+                    return ExecutionResult::retryable(
+                        thread_pubkey,
+                        format!("Continuation batch {} build failed: {}", batch_num, e),
+                        0,
+                        trace,
+                    );
+                }
+            }
+        };
 
         trace.mark_built();
         max_priority_fee = max_priority_fee.max(priority_fee);
@@ -943,6 +968,22 @@ mod tests {
 
         assert!(!is_trigger_not_ready_error(CUSTOM_OTHER));
         assert!(!is_thread_paused_error(CUSTOM_OTHER));
+    }
+
+    #[test]
+    fn a_closed_fiber_is_not_a_transient_condition() {
+        // The exact string the executor produces when the PDA a thread still
+        // lists resolves to nothing on chain. Retrying re-derives the same
+        // address and gets the same null, so this must park.
+        assert!(is_missing_account_error(
+            "Fiber J6FXwz1QPHNKMxAzBwUXy2t2XEELLCjYBMH4J4dkZqr9 not found"
+        ));
+        assert!(is_missing_account_error("Thread config 5Nn3 not found"));
+
+        // A blockhash the cluster has not caught up to is a different thing
+        // entirely, and parking on it would strand a perfectly good execution.
+        assert!(!is_missing_account_error(r#""BlockhashNotFound""#));
+        assert!(!is_missing_account_error(CUSTOM_OTHER));
     }
 
     #[test]
