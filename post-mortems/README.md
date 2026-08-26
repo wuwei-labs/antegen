@@ -43,7 +43,10 @@ Cover, in roughly this order:
 - **Timeline** — UTC. Include detection, and be honest about the gap between
   the incident and noticing it.
 - **Fix** — what shipped, and what the audit turned up beyond the original bug.
-- **What we are changing** — the class of mistake, not the instance.
+- **What we are changing** — the class of mistake, not the instance. Mark
+  each item shipped or outstanding. Most of what lands in this section is
+  already done by the time the write-up exists, and an unmarked list lets the
+  one thing nobody has started read like the rest.
 
 Name external reporters and thank them, unless they ask otherwise. If a bounty
 was paid, state the amount.

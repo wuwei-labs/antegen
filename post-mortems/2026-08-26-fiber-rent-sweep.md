@@ -196,20 +196,38 @@ than grinding through a bad reconstruction.
 
 ## What we are changing beyond the patch
 
-1. **Address-bind every account, always.** A stored field naming an owner is a
-   convenience, not a boundary. Where an account's address encodes its
-   relationship, derive and check it — even when another instruction "already
-   validated" it.
-2. **Audit by capability, not by instruction.** The fix came from enumerating
-   every path that can decrease an account's lamports and asking what
-   authorizes each, rather than reviewing instructions one at a time. The
-   `fiber_close`/`fiber_swap` desync was found this way and would not have been
-   found otherwise.
-3. **Alert on the symptom.** 623 accounts closed by one wallet in 17 seconds
-   should page someone. It did not. Repeated build failures across many threads
-   should page someone too. They did not.
-4. **Test the negative.** A regression test that has never been observed to
-   fail is not evidence of anything.
+Three of these shipped with the fix. One has not started, and is marked so
+rather than left to blur into the others — an action list where done and
+not-done read alike is how the not-done part gets forgotten.
+
+1. **Address-bind every account, always.** *(shipped, [#67](https://github.com/wuwei-labs/antegen/pull/67))*
+   A stored field naming an owner is a convenience, not a boundary. Where an
+   account's address encodes its relationship, derive and check it — even when
+   another instruction "already validated" it. Every fiber read and write path
+   is now bound: `create` and `close` derive explicitly, `update`,
+   `fiber_close` and `fiber_swap` carry `seeds` constraints, and `thread_exec`
+   checks the derived address *and* the stored owner.
+
+2. **Audit by capability, not by instruction.** *(done during the response)*
+   Enumerating every path that can decrease an account's lamports and asking
+   what authorizes each found the `fiber_close`/`fiber_swap` desync, which
+   reviewing instructions one at a time had not. Stated here as the method to
+   reach for next time, not as pending work.
+
+3. **Alert on the symptom.** *(outstanding — nothing built)* 623 accounts
+   closed by one wallet in 17 seconds should page someone. It did not.
+   Hundreds of threads failing to build against the same error should page
+   someone too. It did not. There is no alerting in this repository today:
+   `observability.rs` carries actor lifecycle and nothing that watches for a
+   condition. Detection depended on a person reading executor logs 40 minutes
+   later, and nothing has changed about that. This is the real outstanding
+   item from the incident and it is larger than the bug was.
+
+4. **Test the negative.** *(shipped for this incident; standing practice
+   thereafter)* A regression test that has never been observed to fail is not
+   evidence of anything. The exploit test was confirmed failing against a build
+   without the fix before being trusted, and the recovery tooling's `--verify`
+   and `--confirm` were each proven to reject a deliberately corrupted input.
 
 ## Thanks
 
