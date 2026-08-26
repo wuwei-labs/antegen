@@ -2,8 +2,11 @@
 
 **Status:** resolved, patched, recovery funded
 **Severity:** high impact, narrow surface
-**Funds at risk:** rent-exempt lamports only. No user deposits, no ATLAS, no
-escrow, no thread balances.
+**Scope:** `antegen-fiber-program`, `antegen-thread-program`,
+`antegen-client`. Downstream impact and its recovery are written up by the
+affected integrator.
+**Funds at risk:** rent-exempt lamports only. No thread balances, no token
+accounts, no authority over anything a fiber's instruction touches.
 **Reporter:** [`8HKKBaA8UEgqHsbE9cPzqMk9QLeW1h9P1JspqCw4EcFz`](https://solscan.io/account/8HKKBaA8UEgqHsbE9cPzqMk9QLeW1h9P1JspqCw4EcFz)
 (unsolicited, via live exploitation)
 
@@ -14,12 +17,13 @@ any wallet claim ownership of an existing fiber account and then close it,
 sweeping its rent-exempt balance. In a 17-second window, 623 fiber accounts
 were emptied for a total of **5.383511280 SOL**.
 
-The 358 threads that owned those fibers were not touched. They survived
-intact, still listing fiber indices whose accounts no longer existed, which
-stopped them executing.
+The threads that owned those fibers were not touched. They survived intact,
+still listing fiber indices whose accounts no longer existed — which is what
+stopped them executing, and why the failure surfaced as an executor problem
+rather than an on-chain one.
 
-We are treating the swept SOL as a bug bounty. It will not be pursued. Every
-destroyed fiber account is being restored at our own cost.
+We are treating the swept SOL as a bug bounty. It will not be pursued, and
+every destroyed fiber account is being restored at our cost.
 
 ## Impact
 
@@ -28,19 +32,22 @@ destroyed fiber account is being restored at our own cost.
 | Fiber accounts destroyed | 623 |
 | Lamports swept | 5,383,511,280 (**5.383511280 SOL**) |
 | Average per account | ~0.00864 SOL (one rent-exempt balance) |
-| Threads left unable to execute | 358 |
+| Threads left unable to execute | 358 (all one integrator) |
 | Exploit window | 2026-08-26 08:30:53 → 08:31:10 UTC (17 seconds) |
 | Exploit transactions | 623, all successful, all top-level |
 | User funds lost | none |
 
 Only rent-exempt lamports were reachable. A fiber account holds a compiled
-instruction and its rent — no balances, no authority over tokens. The blast
-radius was every fiber in the program; the value inside each one was the
-minimum needed to keep a ~1.2 KB account alive.
+instruction and its rent — no balances, and no authority over the accounts
+that instruction names. The blast radius was every fiber in the program; the
+value inside each one was the minimum needed to keep a ~1.2 KB account alive.
 
-The user-visible symptom was automation stopping. Executors logged
-`Fiber <pubkey> not found` and retried against an address that would never
-resolve again.
+Every affected thread happened to belong to a single integrator, which is a
+fact about who had adopted fibers by 2026-08-26 rather than anything the
+attack selected for. Any fiber in the program was reachable the same way.
+
+The symptom was automation stopping. Executors logged `Fiber <pubkey> not
+found` and retried against an address that would never resolve again.
 
 ## Root cause
 
@@ -140,28 +147,52 @@ account was passed, with nothing cross-checking the two. A mismatched pair left
 a thread naming an account that was gone and stranded the other's rent
 permanently. Authority-only, never exploited, now rejected by seeds constraints.
 
+**The executor's response, in `antegen-client`.** A build failure on a missing
+account was classified retryable, so each affected thread was re-dispatched on
+a backoff schedule forever, spending one `getAccount` per attempt on an address
+that would never resolve. Every rebuild derives the same PDA and gets the same
+null back, so this is fatal rather than transient. It now parks: the watchdog
+still re-examines the thread, and an account update re-arms it the moment the
+fiber returns.
+
+This did not cause the incident, but it is why 358 dead threads produced a
+sustained load against RPC instead of quietly going idle, and it is the reason
+the logs were loud enough to notice at all.
+
 **Tests.** Six adversarial tests now pin every path by which rent can leave a
 fiber. The exploit test was confirmed to fail without the fix, not merely to
 pass with it.
 
 ## Recovery
 
-Fiber contents are not recoverable from chain state — the accounts were zeroed.
-They are reconstructed by replaying each fiber's creation and every subsequent
-update from transaction history, in slot order. Replaying only the creation
-would restore stale content; many fibers were rewritten after creation.
+Fiber contents are not recoverable from chain state — `close` zeroes the
+account. The only surviving record is the transaction history that wrote them.
 
-The reconstruction is verified against the fibers the attacker did not reach:
-every survivor reproduces byte-identically from history, including one folded
-from 15 successive writes.
+`scripts/recover_fibers.py` reconstructs them: it walks each thread's history,
+decodes every instruction that ever wrote a fiber — including the CPI'd ones,
+which are the majority — and folds them in slot order. Folding rather than
+reading the creation transaction is the point; many fibers were rewritten by a
+later `update_fiber`, so creation data alone restores stale content.
 
-Restoring a fiber requires the owning thread's authority to sign. For the
-affected threads that authority is a program PDA with no private key, so
-recovery runs through the owning program under an admin-gated instruction that
-can only stage the two instruction shapes those fibers are allowed to hold.
+The tool is read-only and its output is a manifest. It deliberately cannot
+replay: writing a fiber requires the owning *thread's* authority to sign, which
+is a property of whoever created the thread, not of antegen. Where that
+authority is a program PDA, only that program can produce the transaction.
+Recovery therefore belongs to each integrator, and this repository's
+contribution is the reconstruction plus two independent proofs of it:
 
-Every recreated account is funded by us. Nobody who had a thread stop is being
-asked to pay to restart it.
+- `--verify` replays history for fibers the attacker did not reach and diffs
+  the result against their live on-chain state. Every survivor reproduces
+  byte-identically, including one folded from 15 successive writes. This is the
+  evidence that a reconstruction is trustworthy *before* anything is replayed.
+- `--confirm` diffs what landed on chain against the manifest that was
+  replayed. It deliberately does not re-derive from history, because by then
+  the replay transaction is itself part of that fiber's history and a
+  history-based check would fold in the write it is meant to be checking.
+
+`--limit 1` exists so an operator can restore one fiber, confirm it, and only
+then continue. Both proofs exit non-zero on mismatch so a batch stops rather
+than grinding through a bad reconstruction.
 
 ## What we are changing beyond the patch
 

@@ -1,6 +1,13 @@
 # Post-mortems
 
-Incident write-ups for antegen and the programs it deploys.
+Incident write-ups for antegen: the programs in this repository, the client
+that executes against them, and the tooling around both.
+
+Scope is antegen's own surface. When an incident here reaches a downstream
+integrator, that integrator writes up their own impact and recovery in their
+own repository; this one covers the defect, the fix, and what antegen changes
+because of it. Cross-link rather than duplicate — two write-ups drifting apart
+is worse than one.
 
 One file per incident, named `YYYY-MM-DD-short-slug.md`, dated by when the
 incident *started* rather than when it was found or fixed.
@@ -13,9 +20,9 @@ incident *started* rather than when it was found or fixed.
 
 ## What belongs here
 
-Anything that reached mainnet and cost money, downtime, or trust: exploited
-vulnerabilities, wrong state written on chain, releases that broke deployed
-programs, outages in the executor network.
+Anything in antegen that reached mainnet and cost money, downtime, or trust:
+exploited vulnerabilities, wrong state written on chain, releases that broke
+deployed programs, outages in the executor network.
 
 Near-misses caught before deploy do not need a write-up. A vulnerability found
 by an outside party does, whether or not it was exploited.
