@@ -300,16 +300,18 @@ EXAMPLES:
         send: bool,
     },
 
-    /// Diagnose threads that cannot execute, and reconstruct missing fibers
+    /// Diagnose threads that cannot execute, and plan their repair
     #[command(after_long_help = "\
-A thread lists fiber indices in `fiber_ids`, and each names a PDA holding an
-instruction. Nothing on chain keeps the two in agreement, so an account can
-disappear while the id that names it stays — leaving a thread that is intact,
-still scheduled, and permanently unable to build a transaction.
+Reports threads that are intact and still scheduled but cannot build a
+transaction. Today that means a fiber account named in `fiber_ids` no longer
+exists: nothing on chain keeps the list and the accounts in agreement, so an
+account can disappear while the id naming it stays.
 
-Diagnosis is a read. So is --recover: reconstructing a fiber replays its write
-history, but writing one back needs the owning thread's authority to sign,
-which this command does not have. The output is a manifest for that owner.
+Everything here is a read. --plan works out what repairing the findings would
+take and writes it out; it does not carry the repair out, because writing a
+fiber needs the owning thread's authority to sign and that authority belongs to
+whoever created the thread. Where it is a program PDA, only that program can
+replay the plan.
 
 Exits non-zero when any thread is unhealthy, so it can be used as a check.
 
@@ -317,7 +319,7 @@ EXAMPLES:
     antegen thread doctor
     antegen thread doctor 2iC6fbLkjR31iMS4gfGQXrzXp8my5Be2TEX8GmnN7Aip
     antegen thread doctor --verify
-    antegen thread doctor --reconstruct --output one.json --limit 1
+    antegen thread doctor --plan --output one.json --limit 1
     antegen thread doctor --confirm one.json")]
     Doctor {
         /// Thread public key. Omit to scan every thread.
@@ -327,23 +329,23 @@ EXAMPLES:
         #[arg(long)]
         json: bool,
 
-        /// Also rebuild what the missing fibers contained, by replaying their
-        /// write history. Costs a full history walk per affected thread.
-        /// Nothing is signed or sent — the result is a manifest for the
-        /// thread's authority to replay.
+        /// Work out what repairing the problems found would take, and emit it
+        /// as a plan. Costs a full history walk per affected thread. Nothing is
+        /// signed or sent: the plan is replayed by whoever holds the thread's
+        /// authority, which for a PDA authority is that program, not this CLI.
         #[arg(long)]
-        reconstruct: bool,
+        plan: bool,
 
         /// Write the report to FILE as JSON instead of stdout
         #[arg(long, value_name = "FILE")]
         output: Option<std::path::PathBuf>,
 
         /// Prove the reconstruction against fibers that still exist
-        #[arg(long, conflicts_with_all = ["reconstruct", "confirm"])]
+        #[arg(long, conflicts_with_all = ["plan", "confirm"])]
         verify: bool,
 
         /// After replaying, diff what is on chain against this manifest
-        #[arg(long, value_name = "FILE", conflicts_with = "reconstruct")]
+        #[arg(long, value_name = "FILE", conflicts_with = "plan")]
         confirm: Option<std::path::PathBuf>,
 
         /// Stop after this many missing fibers
@@ -591,7 +593,7 @@ async fn run_antegen() -> Result<()> {
             ThreadCommands::Doctor {
                 address,
                 json,
-                reconstruct,
+                plan,
                 output,
                 verify,
                 confirm,
@@ -603,7 +605,7 @@ async fn run_antegen() -> Result<()> {
                     cli.rpc,
                     commands::doctor::DoctorOpts {
                         json,
-                        reconstruct,
+                        plan,
                         output,
                         verify,
                         confirm,

@@ -1,5 +1,12 @@
-//! `antegen thread doctor` — diagnose threads that cannot execute, and
-//! reconstruct fiber accounts that no longer exist.
+//! `antegen thread doctor` — diagnose threads that cannot execute, and plan
+//! their repair.
+//!
+//! Diagnosis is the durable part and is meant to grow: any condition that
+//! leaves a thread scheduled but unable to build belongs here. `--plan` is the
+//! remedy side, and is deliberately named for what it produces rather than
+//! what it would like to do — the CLI cannot apply it. Should a check ever
+//! have a remedy this binary can sign for, `--apply` is the flag to add, and
+//! the reason it is still free.
 //!
 //! A thread carries `fiber_ids`, a list of indices whose PDAs hold the
 //! instructions it runs. Nothing on chain keeps that list and those accounts in
@@ -37,8 +44,8 @@ use crate::commands::get_rpc_url;
 /// additive.
 pub(crate) struct DoctorOpts {
     pub(crate) json: bool,
-    /// Rebuild the contents of every missing fiber from its write history.
-    pub(crate) reconstruct: bool,
+    /// Work out what repairing each problem would take, and emit it as a plan.
+    pub(crate) plan: bool,
     /// Write the report to this path as JSON instead of stdout.
     pub(crate) output: Option<PathBuf>,
     /// Prove the reconstruction against fibers that still exist.
@@ -488,7 +495,7 @@ pub(crate) async fn doctor(
             warnings: Vec::new(),
         };
 
-        if opts.reconstruct {
+        if opts.plan {
             let (per_index, scanned_sigs, warnings) = history(&rpc, &pubkey, &missing).await?;
             report.signatures_scanned = scanned_sigs;
             report.warnings = warnings;
@@ -558,7 +565,7 @@ pub(crate) async fn doctor(
         return Ok(());
     }
 
-    render(&manifest, opts.reconstruct, opts.output.as_deref());
+    render(&manifest, opts.plan, opts.output.as_deref());
 
     // A thread that cannot build is a failure state, not a clean bill of
     // health — exit non-zero so this is usable in a check.
@@ -568,7 +575,7 @@ pub(crate) async fn doctor(
     Ok(())
 }
 
-fn render(m: &Manifest, reconstructed: bool, output: Option<&std::path::Path>) {
+fn render(m: &Manifest, planned: bool, output: Option<&std::path::Path>) {
     if m.threads_unhealthy == 0 {
         println!(
             "healthy — {} thread(s) scanned, every tracked fiber account exists",
@@ -589,7 +596,7 @@ fn render(m: &Manifest, reconstructed: bool, output: Option<&std::path::Path>) {
                     format!("reconstructed from {} write(s)", f.writes_replayed)
                 }
                 Some(_) => "reconstructed as idle (no instruction)".to_string(),
-                None if reconstructed => "NOT RECOVERABLE from history".to_string(),
+                None if planned => "NOT RECOVERABLE from history".to_string(),
                 None => "missing".to_string(),
             };
             println!("    fiber[{}] {}  {}", idx, f.fiber_pda, state);
@@ -603,20 +610,21 @@ fn render(m: &Manifest, reconstructed: bool, output: Option<&std::path::Path>) {
     println!("threads scanned      {}", m.threads_scanned);
     println!("threads unhealthy    {}", m.threads_unhealthy);
     println!("fibers missing       {}", m.fibers_missing);
-    if reconstructed {
+    if planned {
         println!("fibers reconstructed {}", m.fibers_reconstructed);
         println!("unresolved           {}", m.unresolved.len());
     }
     if let Some(p) = output {
         println!("\nreport written to {}", p.display());
     }
-    if reconstructed {
+    if planned {
         println!(
-            "\nThis command cannot replay a reconstruction — writing a fiber \
-             needs the thread's authority to sign."
+            "\nThis command cannot carry the plan out — writing a fiber needs \
+             the thread's authority to sign, and for these threads that is a \
+             program, not a keypair."
         );
     } else {
-        println!("\nRe-run with --reconstruct to rebuild these from history.");
+        println!("\nRe-run with --plan to work out what repairing these would take.");
     }
 }
 

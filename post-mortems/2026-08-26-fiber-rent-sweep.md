@@ -181,14 +181,21 @@ later `update_fiber`, so creation data alone restores stale content.
 ```
 antegen thread doctor                       # which threads cannot execute
 antegen thread doctor --verify              # prove the reconstruction
-antegen thread doctor --reconstruct \
-    --output one.json --limit 1             # rebuild a single fiber
+antegen thread doctor --plan \
+    --output one.json --limit 1             # plan a single fiber's repair
 antegen thread doctor --confirm one.json    # check what landed
 ```
 
-Diagnosis is cheap — an existence check per tracked fiber. `--reconstruct` is
-the expensive part, a full history walk per affected thread, which is why it is
-its own flag rather than implied by naming an output file.
+Diagnosis is cheap — an existence check per tracked fiber. `--plan` is the
+expensive part, a full history walk per affected thread, which is why it is its
+own flag rather than implied by naming an output file.
+
+`--plan` is named for what it produces rather than what it would like to do.
+The CLI cannot carry it out: writing a fiber needs the owning thread's
+authority to sign, and for every thread affected here that authority is a
+program PDA. `--fix` would have promised a repair this binary structurally
+cannot perform, which is the same mistake in naming that `state.thread` made in
+code — an assurance that reads as a guarantee and is not one.
 
 The command is read-only and what it produces is a manifest. It deliberately
 cannot replay: writing a fiber requires the owning *thread's* authority to sign, which
@@ -206,8 +213,8 @@ contribution is the reconstruction plus two independent proofs of it:
   the replay transaction is itself part of that fiber's history and a
   history-based check would fold in the write it is meant to be checking.
 
-`--limit 1` exists so an operator can rebuild one fiber, replay it, confirm
-it, and only then continue. Both proofs exit non-zero on mismatch so a batch stops rather
+`--limit 1` exists so an operator can plan one fiber, replay it, confirm it,
+and only then continue. Both proofs exit non-zero on mismatch so a batch stops rather
 than grinding through a bad reconstruction.
 
 ## What we are changing beyond the patch
