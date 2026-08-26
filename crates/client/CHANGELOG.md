@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.2.0](https://github.com/wuwei-labs/antegen/compare/antegen-client-v6.1.1...antegen-client-v6.2.0) (2026-08-26)
+
+
+### Features
+
+* **cli:** add `thread doctor` and drop the standalone recovery script ([22298a7](https://github.com/wuwei-labs/antegen/commit/22298a700d0fb182a410493a5d47d26a340fdffc))
+* **cli:** add `thread doctor`, and the post-mortem that produced it ([a3bcea0](https://github.com/wuwei-labs/antegen/commit/a3bcea0e9718ec7351af4b033d4cd0f8cc8a4da7))
+
 ## [6.1.1](https://github.com/wuwei-labs/antegen/compare/antegen-client-v6.1.0...antegen-client-v6.1.1) (2026-08-26)
 
 
