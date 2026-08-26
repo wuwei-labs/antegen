@@ -1,6 +1,6 @@
 # Fiber rent sweep — 2026-08-26
 
-**Status:** resolved, patched, recovery funded
+**Status:** patched on mainnet 2026-08-26 10:23:02 UTC; recovery funded and in progress
 **Severity:** high impact, narrow surface
 **Scope:** `antegen-fiber-program`, `antegen-thread-program`,
 `antegen-client`. Downstream impact and its recovery are written up by the
@@ -110,7 +110,9 @@ All times UTC, 2026-08-26.
 | ~09:15 | Root cause identified on chain; confirmed not a node bug |
 | ~09:30 | Fix written, regression test confirmed failing without it |
 | ~10:00 | Full audit of every rent-bearing path completed |
-| same day | [antegen#67](https://github.com/wuwei-labs/antegen/pull/67) merged and released |
+| ~10:00 | [antegen#67](https://github.com/wuwei-labs/antegen/pull/67) merged and released |
+| 10:22:28 | Thread program upgraded on mainnet ([tx](https://solscan.io/tx/4FwAQUmiYtKszFjYZJESrqb6wVQuvBg5jX6UQuDqHcMgWEHvbFEAj1ULm7MjopKapaJUhBfBVPDQXP932H4rELgK)) |
+| 10:23:02 | Fiber program upgraded ([tx](https://solscan.io/tx/2KPWpvghDUoLbzeLn8nMVR829txh1QfXkXRdag3XAykt7R9oy1LSQqGhhxonNnqW4ZLbMj8b7U8mjuVNvip8QT6L)) — vulnerability closed |
 
 The gap between exploitation and detection was ~40 minutes, and it was closed
 by an executor's error logs rather than by any alerting we had in place. That
@@ -246,3 +248,28 @@ If you would like to look at the rest of the program surface, we would welcome
 it, and we would rather hear from you first next time. Open an issue, or reach
 us at the contact in the repository, and we will treat it as a disclosure with
 a bounty attached rather than a race.
+
+## Deployment
+
+Both programs upgraded on mainnet-beta on 2026-08-26, signed by the config
+admin.
+
+| Program | Address | Upgrade transaction | Slot | Time (UTC) |
+|---|---|---|---|---|
+| `antegen-thread-program` | [`AgTv5w…4dpSx`](https://solscan.io/account/AgTv5w1UvUb6zeqkThwMrztGu9hpepBu8YLghuR4dpSx) | [`4FwAQUmi…rELgK`](https://solscan.io/tx/4FwAQUmiYtKszFjYZJESrqb6wVQuvBg5jX6UQuDqHcMgWEHvbFEAj1ULm7MjopKapaJUhBfBVPDQXP932H4rELgK) | 441846236 | 10:22:28 |
+| `antegen-fiber-program` | [`AgFv5a…e1hKx`](https://solscan.io/account/AgFv5afjW9DmSPkiEvJ1er5bAAmRUqaBeTB6Cr8e1hKx) | [`2KPWpvgh…8QT6L`](https://solscan.io/tx/2KPWpvghDUoLbzeLn8nMVR829txh1QfXkXRdag3XAykt7R9oy1LSQqGhhxonNnqW4ZLbMj8b7U8mjuVNvip8QT6L) | 441846329 | 10:23:02 |
+
+The thread program went first, 34 seconds ahead of the fiber program. That
+order was deliberate. Making `fiber_index` mandatory on `fiber::close` is a
+wire break, and the two programs disagree about it in only one direction: the
+old fiber program ignores the trailing index byte the new thread program sends,
+because Anchor dispatches instruction data with `deserialize` and tolerates
+trailing bytes. Deploying fiber first would instead have left the old thread
+program sending no index at all to an instruction that now requires one,
+breaking `fiber_close` and `thread_close` until the second upgrade landed.
+Thread-first has no such window.
+
+The vulnerability closed with the fiber upgrade at 10:23:02 — **1h 51m 52s**
+after the last exploit transaction. The reporter has sent no transaction since
+08:39:14, well before either upgrade, and no fiber account has been swept
+since. Fiber accounts are being created again and are staying alive.
