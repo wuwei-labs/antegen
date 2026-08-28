@@ -1,5 +1,17 @@
 # Changelog
 
+## [6.1.0](https://github.com/wuwei-labs/antegen/compare/antegen-fiber-program-v6.0.0...antegen-fiber-program-v6.1.0) (2026-08-28)
+
+
+### Features
+
+* **fiber:** publish an on-chain security contact ([7746650](https://github.com/wuwei-labs/antegen/commit/7746650f0daa9f9b00f6c808c8e70474e1032451))
+
+
+### Bug Fixes
+
+* **fiber:** check account ownership before decoding a fiber ([a53afdc](https://github.com/wuwei-labs/antegen/commit/a53afdc5a15f5ac93affca79a038fea61f2044db))
+
 ## [6.0.0](https://github.com/wuwei-labs/antegen/compare/antegen-fiber-program-v5.2.2...antegen-fiber-program-v6.0.0) (2026-08-26)
 
 
