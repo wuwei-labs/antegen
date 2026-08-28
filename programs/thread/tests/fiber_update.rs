@@ -7,6 +7,20 @@ use solana_sdk::{
 mod common;
 use common::*;
 
+
+/// Deterministic stand-in for `Pubkey::new_unique()`.
+///
+/// Still distinct on every call, but reproducible from run to run, so a
+/// failing assertion reports the same addresses each time.
+fn unique_pubkey() -> Pubkey {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let mut bytes = [0u8; 32];
+    bytes[..8].copy_from_slice(&NEXT.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+    Pubkey::new_from_array(bytes)
+}
+
+
 fn setup_thread_with_fiber_account(
     svm: &mut litesvm::LiteSVM,
     authority: &Keypair,
@@ -212,8 +226,8 @@ fn test_fiber_update_replaces_lookup_tables() {
 
     let (thread_pubkey, fiber_pubkey) =
         setup_thread_with_fiber_account(&mut svm, &authority, &payer, "fu-alt-rep");
-    let alt_a = Pubkey::new_unique();
-    let alt_b = Pubkey::new_unique();
+    let alt_a = unique_pubkey();
+    let alt_b = unique_pubkey();
 
     let new_memo = make_memo_instruction("with-alts", None);
     let serializable = make_serializable_instruction(&new_memo);
@@ -249,7 +263,7 @@ fn test_fiber_update_none_leaves_lookup_tables_unchanged() {
 
     let (thread_pubkey, fiber_pubkey) =
         setup_thread_with_fiber_account(&mut svm, &authority, &payer, "fu-alt-keep");
-    let alt = Pubkey::new_unique();
+    let alt = unique_pubkey();
 
     // First write: set lookup_tables = [alt].
     let memo = make_memo_instruction("set-alts", None);
@@ -307,7 +321,7 @@ fn test_fiber_update_rejects_more_than_four_alts() {
 
     let (thread_pubkey, fiber_pubkey) =
         setup_thread_with_fiber_account(&mut svm, &authority, &payer, "fu-alt-5");
-    let five_alts: Vec<Pubkey> = (0..5).map(|_| Pubkey::new_unique()).collect();
+    let five_alts: Vec<Pubkey> = (0..5).map(|_| unique_pubkey()).collect();
 
     let memo = make_memo_instruction("too-many", None);
     let serializable = make_serializable_instruction(&memo);

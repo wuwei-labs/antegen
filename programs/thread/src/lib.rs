@@ -260,6 +260,18 @@ mod wire_compat_tests {
     use super::*;
     use anchor_lang::AnchorDeserialize;
 
+    /// Deterministic stand-in for `Pubkey::new_unique()`.
+    ///
+    /// Still distinct on every call, but reproducible from run to run, so a
+    /// failing assertion reports the same addresses each time.
+    fn unique_pubkey() -> Pubkey {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let mut bytes = [0u8; 32];
+        bytes[..8].copy_from_slice(&NEXT.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+        Pubkey::new_from_array(bytes)
+    }
+
     /// Instruction data exactly as a caller built against the 5.0.12 IDL sends
     /// it: everything through `track`, and then nothing.
     ///
@@ -295,7 +307,7 @@ mod wire_compat_tests {
     /// clients.
     #[test]
     fn update_fiber_decodes_data_with_the_appended_argument() {
-        let tables = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+        let tables = vec![unique_pubkey(), unique_pubkey()];
         let mut new_format = Vec::new();
         7u8.serialize(&mut new_format).unwrap();
         None::<SerializableInstruction>
@@ -312,7 +324,7 @@ mod wire_compat_tests {
     #[test]
     fn create_fiber_decodes_both_wire_formats() {
         let ix_data = SerializableInstruction {
-            program_id: Pubkey::new_unique(),
+            program_id: unique_pubkey(),
             accounts: vec![],
             data: vec![],
         };
@@ -325,7 +337,7 @@ mod wire_compat_tests {
         let old = instruction::CreateFiber::deserialize(&mut &old_format[..]).unwrap();
         assert!(old.lookup_tables.into_inner().is_empty());
 
-        let tables = vec![Pubkey::new_unique()];
+        let tables = vec![unique_pubkey()];
         let mut new_format = old_format.clone();
         tables.serialize(&mut new_format).unwrap();
 

@@ -310,7 +310,7 @@ fn test_exec_thread_timestamp_not_ready() {
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
     svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let future_ts = get_clock(&svm).unix_timestamp + 3600; // 1 hour from now
+    let future_ts = get_clock(&svm).unix_timestamp.checked_add(3600).unwrap(); // 1 hour from now
     let (config_pubkey, _) = config_pda();
     let (thread_pubkey, fiber_pubkey) = setup_exec_thread(
         &mut svm,
@@ -357,7 +357,7 @@ fn test_exec_thread_timestamp_ready() {
     svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let clock = get_clock(&svm);
-    let target_ts = clock.unix_timestamp + 10;
+    let target_ts = clock.unix_timestamp.checked_add(10).unwrap();
     let (config_pubkey, _) = config_pda();
     let (thread_pubkey, fiber_pubkey) = setup_exec_thread(
         &mut svm,
@@ -473,7 +473,7 @@ fn test_exec_thread_slot_trigger() {
     svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let clock = get_clock(&svm);
-    let target_slot = clock.slot + 10;
+    let target_slot = clock.slot.checked_add(10).unwrap();
     let (config_pubkey, _) = config_pda();
     let (thread_pubkey, fiber_pubkey) = setup_exec_thread(
         &mut svm,
@@ -728,7 +728,8 @@ fn test_exec_thread_signal_chain() {
     let payer = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
     svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
-    svm.airdrop(&payer.pubkey(), DEFAULT_AIRDROP * 2).unwrap();
+    svm.airdrop(&payer.pubkey(), DEFAULT_AIRDROP.checked_mul(2).unwrap())
+        .unwrap();
 
     let (config_pubkey, _) = config_pda();
 
@@ -1047,10 +1048,11 @@ fn test_exec_timestamp_chain_then_update_unpause() {
     let payer = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
     svm.airdrop(&executor.pubkey(), DEFAULT_AIRDROP).unwrap();
-    svm.airdrop(&payer.pubkey(), DEFAULT_AIRDROP * 2).unwrap();
+    svm.airdrop(&payer.pubkey(), DEFAULT_AIRDROP.checked_mul(2).unwrap())
+        .unwrap();
 
     let clock = get_clock(&svm);
-    let target_ts = clock.unix_timestamp + 10;
+    let target_ts = clock.unix_timestamp.checked_add(10).unwrap();
     let (config_pubkey, _) = config_pda();
 
     // Create thread with Timestamp trigger (simulates contract_process switching to Timestamp)

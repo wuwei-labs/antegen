@@ -8,6 +8,20 @@ use solana_sdk::{
 mod common;
 use common::*;
 
+
+/// Deterministic stand-in for `Pubkey::new_unique()`.
+///
+/// Still distinct on every call, but reproducible from run to run, so a
+/// failing assertion reports the same addresses each time.
+fn unique_pubkey() -> Pubkey {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let mut bytes = [0u8; 32];
+    bytes[..8].copy_from_slice(&NEXT.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+    Pubkey::new_from_array(bytes)
+}
+
+
 /// Helper to create a thread and return (thread_pubkey, bump).
 fn create_thread_helper(
     svm: &mut litesvm::LiteSVM,
@@ -212,7 +226,7 @@ fn test_create_thread_account_trigger() {
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let monitored = Pubkey::new_unique();
+    let monitored = unique_pubkey();
     let (thread_pubkey, _) = create_thread_helper(
         &mut svm,
         &authority,
@@ -307,7 +321,7 @@ fn test_create_thread_id_pubkey() {
     let authority = Keypair::new();
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
-    let id_pubkey = Pubkey::new_unique();
+    let id_pubkey = unique_pubkey();
     let thread_id = ThreadId::Pubkey(id_pubkey);
     let (thread_pubkey, _) = thread_pda(&authority.pubkey(), id_pubkey.as_ref());
 
@@ -559,8 +573,8 @@ fn test_create_thread_with_fiber_carries_lookup_tables() {
 
     let memo_ix = make_memo_instruction("with-alt", None);
     let ser_ix = make_serializable_instruction(&memo_ix);
-    let alt_a = Pubkey::new_unique();
-    let alt_b = Pubkey::new_unique();
+    let alt_a = unique_pubkey();
+    let alt_b = unique_pubkey();
 
     let ix = build_create_thread_with_alts(
         &authority.pubkey(),

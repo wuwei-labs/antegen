@@ -4,13 +4,27 @@ use antegen_fiber_program::*;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::pubkey::Pubkey;
 
+
+/// Deterministic stand-in for `Pubkey::new_unique()`.
+///
+/// Still distinct on every call, but reproducible from run to run, so a
+/// failing assertion reports the same addresses each time.
+fn unique_pubkey() -> Pubkey {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let mut bytes = [0u8; 32];
+    bytes[..8].copy_from_slice(&NEXT.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+    Pubkey::new_from_array(bytes)
+}
+
+
 // ============================================================================
 // compile / decompile tests
 // ============================================================================
 
 #[test]
 fn test_compile_empty_accounts() {
-    let program_id = Pubkey::new_unique();
+    let program_id = unique_pubkey();
     let ix = Instruction {
         program_id,
         accounts: vec![],
@@ -34,8 +48,8 @@ fn test_compile_empty_accounts() {
 
 #[test]
 fn test_compile_duplicate_accounts() {
-    let program_id = Pubkey::new_unique();
-    let dup_key = Pubkey::new_unique();
+    let program_id = unique_pubkey();
+    let dup_key = unique_pubkey();
 
     // Same pubkey appears twice: once as readonly, once as writable+signer
     let ix = Instruction {
@@ -62,11 +76,11 @@ fn test_compile_duplicate_accounts() {
 
 #[test]
 fn test_compile_all_permission_types() {
-    let program_id = Pubkey::new_unique();
-    let rw_signer = Pubkey::new_unique();
-    let ro_signer = Pubkey::new_unique();
-    let rw = Pubkey::new_unique();
-    let ro = Pubkey::new_unique();
+    let program_id = unique_pubkey();
+    let rw_signer = unique_pubkey();
+    let ro_signer = unique_pubkey();
+    let rw = unique_pubkey();
+    let ro = unique_pubkey();
 
     let ix = Instruction {
         program_id,
@@ -99,11 +113,11 @@ fn test_compile_all_permission_types() {
 
 #[test]
 fn test_compile_decompile_roundtrip_permissions() {
-    let program_id = Pubkey::new_unique();
-    let rw_signer = Pubkey::new_unique();
-    let ro_signer = Pubkey::new_unique();
-    let rw = Pubkey::new_unique();
-    let ro = Pubkey::new_unique();
+    let program_id = unique_pubkey();
+    let rw_signer = unique_pubkey();
+    let ro_signer = unique_pubkey();
+    let rw = unique_pubkey();
+    let ro = unique_pubkey();
 
     let ix = Instruction {
         program_id,
@@ -160,7 +174,7 @@ fn test_decompile_empty_instructions_vec() {
         num_rw_signers: 0,
         num_rw: 0,
         instructions: vec![], // empty!
-        accounts: vec![Pubkey::new_unique()],
+        accounts: vec![unique_pubkey()],
     };
 
     let result = decompile_instruction(&compiled);
@@ -173,8 +187,8 @@ fn test_decompile_empty_instructions_vec() {
 
 #[test]
 fn test_sentinel_does_not_promote_program_id() {
-    let program_id = Pubkey::new_unique();
-    let real_account = Pubkey::new_unique();
+    let program_id = unique_pubkey();
+    let real_account = unique_pubkey();
 
     // Simulate Anchor optional None: program_id used as sentinel with mut flag
     let ix = Instruction {
@@ -221,8 +235,8 @@ fn test_sentinel_does_not_promote_program_id() {
 
 #[test]
 fn test_payer_pubkey_replacement() {
-    let program_id = Pubkey::new_unique();
-    let executor = Pubkey::new_unique();
+    let program_id = unique_pubkey();
+    let executor = unique_pubkey();
 
     // Create instruction with PAYER_PUBKEY as an account
     let ix = Instruction {
@@ -235,7 +249,7 @@ fn test_payer_pubkey_replacement() {
     let compiled_bytes = borsh::to_vec(&compiled).unwrap();
 
     let fiber = FiberState {
-        thread: Pubkey::new_unique(),
+        thread: unique_pubkey(),
         compiled_instruction: compiled_bytes,
         last_executed: 0,
         exec_count: 0,
@@ -251,9 +265,9 @@ fn test_payer_pubkey_replacement() {
 
 #[test]
 fn test_payer_pubkey_no_match() {
-    let program_id = Pubkey::new_unique();
-    let executor = Pubkey::new_unique();
-    let some_key = Pubkey::new_unique();
+    let program_id = unique_pubkey();
+    let executor = unique_pubkey();
+    let some_key = unique_pubkey();
 
     // No PAYER_PUBKEY in accounts
     let ix = Instruction {
@@ -266,7 +280,7 @@ fn test_payer_pubkey_no_match() {
     let compiled_bytes = borsh::to_vec(&compiled).unwrap();
 
     let fiber = FiberState {
-        thread: Pubkey::new_unique(),
+        thread: unique_pubkey(),
         compiled_instruction: compiled_bytes,
         last_executed: 0,
         exec_count: 0,
@@ -285,7 +299,7 @@ fn test_payer_pubkey_no_match() {
 
 #[test]
 fn test_pubkey_derivation() {
-    let thread = Pubkey::new_unique();
+    let thread = unique_pubkey();
     let fiber_index: u8 = 3;
 
     let derived = FiberState::pubkey(thread, fiber_index);
@@ -301,7 +315,7 @@ fn test_pubkey_derivation() {
 
 #[test]
 fn test_pubkey_different_indices() {
-    let thread = Pubkey::new_unique();
+    let thread = unique_pubkey();
 
     let pda_0 = FiberState::pubkey(thread, 0);
     let pda_1 = FiberState::pubkey(thread, 1);
@@ -314,8 +328,8 @@ fn test_pubkey_different_indices() {
 
 #[test]
 fn test_pubkey_different_threads() {
-    let thread_a = Pubkey::new_unique();
-    let thread_b = Pubkey::new_unique();
+    let thread_a = unique_pubkey();
+    let thread_b = unique_pubkey();
 
     let pda_a = FiberState::pubkey(thread_a, 0);
     let pda_b = FiberState::pubkey(thread_b, 0);
@@ -345,7 +359,7 @@ fn craft_v1_buffer(state: &FiberVersionedState) -> Vec<u8> {
 
 #[test]
 fn test_fiber_read_dispatches_legacy_buffer() {
-    let thread = Pubkey::new_unique();
+    let thread = unique_pubkey();
     let legacy = FiberState {
         thread,
         compiled_instruction: vec![1, 2, 3],
@@ -365,9 +379,9 @@ fn test_fiber_read_dispatches_legacy_buffer() {
 
 #[test]
 fn test_fiber_read_dispatches_v1_buffer() {
-    let thread = Pubkey::new_unique();
-    let alt_a = Pubkey::new_unique();
-    let alt_b = Pubkey::new_unique();
+    let thread = unique_pubkey();
+    let alt_a = unique_pubkey();
+    let alt_b = unique_pubkey();
     let state = FiberVersionedState {
         version: CURRENT_FIBER_VERSION,
         thread,
@@ -423,7 +437,7 @@ fn test_fiber_versioned_state_roundtrip_empty_lookup_tables() {
     // dispatcher — guards against borsh-trailing-vec mishaps.
     let state = FiberVersionedState {
         version: CURRENT_FIBER_VERSION,
-        thread: Pubkey::new_unique(),
+        thread: unique_pubkey(),
         compiled_instruction: vec![],
         last_executed: 0,
         exec_count: 0,

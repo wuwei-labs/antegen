@@ -133,7 +133,7 @@ fn test_thread_delete_returns_rent_to_admin() {
 
     let admin_after = get_balance(&svm, &admin.pubkey());
     // Admin should gain the thread's balance minus tx fee
-    let gained = admin_after as i64 - admin_before as i64;
+    let gained = (admin_after as i64).checked_sub(admin_before as i64).unwrap();
     assert!(gained > 0);
     // Should be close to thread_balance (minus tx fee ~5000)
     assert!(gained as u64 > thread_balance.saturating_sub(10_000));
