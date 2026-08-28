@@ -1,5 +1,19 @@
 # Changelog
 
+## [8.3.0](https://github.com/wuwei-labs/antegen/compare/antegen-cli-v8.2.0...antegen-cli-v8.3.0) (2026-08-26)
+
+
+### Features
+
+* **cli:** add `thread doctor` and drop the standalone recovery script ([22298a7](https://github.com/wuwei-labs/antegen/commit/22298a700d0fb182a410493a5d47d26a340fdffc))
+* **cli:** add `thread doctor`, and the post-mortem that produced it ([a3bcea0](https://github.com/wuwei-labs/antegen/commit/a3bcea0e9718ec7351af4b033d4cd0f8cc8a4da7))
+* **cli:** report writes excluded as not made by the thread's authority ([5b09fda](https://github.com/wuwei-labs/antegen/commit/5b09fdad3e002d943f0ff6fe5a5a0e03cc1bf2c9))
+
+
+### Bug Fixes
+
+* **cli:** exclude forged writes when rebuilding a fiber ([3a33327](https://github.com/wuwei-labs/antegen/commit/3a33327f54540a5ec7f8af879d32c26189436449))
+
 ## [8.2.0](https://github.com/wuwei-labs/antegen/compare/antegen-cli-v8.1.0...antegen-cli-v8.2.0) (2026-08-26)
 
 

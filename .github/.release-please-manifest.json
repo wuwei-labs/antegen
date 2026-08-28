@@ -1,9 +1,9 @@
 {
   "crates/cron": "4.1.0",
-  "crates/client": "6.2.0",
+  "crates/client": "6.3.0",
   "crates/ws": "0.2.0",
   "programs/thread": "5.2.3",
   "programs/fiber": "6.0.0",
-  "crates/cli": "8.2.0",
+  "crates/cli": "8.3.0",
   "plugin/geyser": "5.1.0"
 }
