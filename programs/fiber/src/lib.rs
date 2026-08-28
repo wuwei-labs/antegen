@@ -12,6 +12,25 @@ use anchor_lang::solana_program::instruction::Instruction;
 
 declare_id!("AgFv5afjW9DmSPkiEvJ1er5bAAmRUqaBeTB6Cr8e1hKx");
 
+// On-chain security contact, read by explorers from the deployed `.so`.
+//
+// Gated on `not(no-entrypoint)` for the same reason the entrypoint is: the
+// macro emits a `#[no_mangle]` static into the binary, and this crate is
+// depended on with the `cpi` feature (which implies `no-entrypoint`) by the
+// thread program, which publishes its own. Two of these in one binary is a
+// link-time symbol collision.
+#[cfg(not(feature = "no-entrypoint"))]
+solana_security_txt::security_txt! {
+    name: "Antegen Fiber Program",
+    project_url: "https://antegen.xyz/",
+    contacts: "email:anthony@wuwei.dev",
+    policy: "https://github.com/wuwei-labs/antegen/blob/main/SECURITY.md",
+    preferred_languages: "en",
+    source_code: "https://github.com/wuwei-labs/antegen/tree/main/programs/fiber",
+    source_release: concat!("antegen-fiber-program-v", env!("CARGO_PKG_VERSION")),
+    auditors: "None"
+}
+
 #[program]
 pub mod antegen_fiber {
     use super::*;
