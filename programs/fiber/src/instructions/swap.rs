@@ -15,12 +15,22 @@ pub struct Swap<'info> {
     #[account(mut)]
     pub thread: Signer<'info>,
 
-    /// CHECK: target fiber, shape-agnostic — validated manually below.
-    #[account(mut)]
+    /// CHECK: target fiber, shape-agnostic — bound to this program by the
+    /// owner constraint, then read manually via `Fiber` below.
+    #[account(
+        mut,
+        constraint = target.to_account_info().owner == &crate::ID
+            @ AntegenFiberError::InvalidAccountOwner,
+    )]
     pub target: UncheckedAccount<'info>,
 
-    /// CHECK: source fiber, shape-agnostic — validated manually below.
-    #[account(mut)]
+    /// CHECK: source fiber, shape-agnostic — bound to this program by the
+    /// owner constraint, then read manually via `Fiber` below.
+    #[account(
+        mut,
+        constraint = source.to_account_info().owner == &crate::ID
+            @ AntegenFiberError::InvalidAccountOwner,
+    )]
     pub source: UncheckedAccount<'info>,
 }
 
@@ -29,21 +39,25 @@ pub fn swap(ctx: Context<Swap>) -> Result<()> {
     let target_info = ctx.accounts.target.to_account_info();
     let source_info = ctx.accounts.source.to_account_info();
 
-    let source_read = {
-        let data = source_info.try_borrow_data()?;
-        Fiber::try_deserialize(&mut &data[..])?
-    };
-    require!(
-        source_read.thread() == thread_key,
+    // Copying a fiber onto itself would wipe it and then sweep its rent — the
+    // caller ends up with neither the source nor the target it asked for.
+    require_keys_neq!(
+        target_info.key(),
+        source_info.key(),
+        AntegenFiberError::SwapSourceIsTarget
+    );
+
+    let source_read = Fiber::try_from(&source_info)?;
+    require_keys_eq!(
+        source_read.thread(),
+        thread_key,
         AntegenFiberError::InvalidFiberPDA
     );
 
-    let target_read = {
-        let data = target_info.try_borrow_data()?;
-        Fiber::try_deserialize(&mut &data[..])?
-    };
-    require!(
-        target_read.thread() == thread_key,
+    let target_read = Fiber::try_from(&target_info)?;
+    require_keys_eq!(
+        target_read.thread(),
+        thread_key,
         AntegenFiberError::InvalidFiberPDA
     );
 

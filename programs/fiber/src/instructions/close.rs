@@ -1,6 +1,6 @@
 use crate::constants::*;
 use crate::errors::AntegenFiberError;
-use crate::state::Fiber;
+use crate::state::{Fiber, FiberState, FiberVersionedState};
 use anchor_lang::prelude::*;
 
 /// Accounts required by the `close_fiber` instruction.
@@ -39,12 +39,10 @@ pub fn close(ctx: Context<Close>, _fiber_index: u8) -> Result<()> {
     // being swept. It is also the check an attacker satisfied on mainnet by
     // first rewriting `state.thread` through `create`'s unvalidated
     // update-in-place branch — which is why it is no longer the only one.
-    let read = {
-        let data = fiber_info.try_borrow_data()?;
-        Fiber::try_deserialize(&mut &data[..])?
-    };
-    require!(
-        read.thread() == thread_info.key(),
+    let read = Fiber::try_from(&fiber_info)?;
+    require_keys_eq!(
+        read.thread(),
+        thread_info.key(),
         AntegenFiberError::InvalidFiberPDA
     );
 
@@ -59,6 +57,32 @@ pub(crate) fn sweep_fiber_lamports<'info>(
     fiber: &AccountInfo<'info>,
     thread: &AccountInfo<'info>,
 ) -> Result<()> {
+    // Refuse to wipe anything that is not a fiber. Both callers deserialize
+    // first, so this is redundant today — it is here so that a future caller
+    // cannot quietly turn this into a general-purpose account eraser.
+    {
+        require_keys_eq!(
+            *fiber.owner,
+            crate::ID,
+            AntegenFiberError::InvalidAccountOwner
+        );
+        /// Reads the leading 8-byte Anchor discriminator off an account buffer.
+        fn try_from_slice(data: &[u8]) -> Result<[u8; 8]> {
+            data.get(..8)
+                .ok_or(error!(AntegenFiberError::InvalidFiberData))?
+                .try_into()
+                .map_err(|_| error!(AntegenFiberError::InvalidFiberData))
+        }
+
+        let data = fiber.try_borrow_data()?;
+        let disc = try_from_slice(&data)?;
+        require!(
+            disc[..] == FiberVersionedState::DISCRIMINATOR[..]
+                || disc[..] == FiberState::DISCRIMINATOR[..],
+            AntegenFiberError::InvalidFiberData
+        );
+    }
+
     let fiber_lamports = fiber.lamports();
     **thread.try_borrow_mut_lamports()? = thread
         .lamports()

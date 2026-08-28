@@ -22,4 +22,13 @@ pub enum AntegenFiberError {
 
     #[msg("Fiber account data is malformed or has unknown discriminator")]
     InvalidFiberData,
+
+    #[msg("Account is not owned by the Fiber Program")]
+    InvalidAccountOwner,
+
+    #[msg("Fiber account is too small to hold the serialized state")]
+    FiberAccountTooSmall,
+
+    #[msg("Swap source and target must be different accounts")]
+    SwapSourceIsTarget,
 }

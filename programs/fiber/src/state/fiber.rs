@@ -76,6 +76,14 @@ pub struct FiberVersionedState {
     pub lookup_tables: Vec<Pubkey>,
 }
 
+/// Total on-chain size of a fiber account: Anchor's 8-byte discriminator plus
+/// the versioned state.
+///
+/// Stated once because two programs depend on it agreeing — the thread program
+/// pre-funds rent for exactly this many bytes and the fiber program allocates
+/// them. Computing it separately in each place is how the two drift apart.
+pub const FIBER_ACCOUNT_SPACE: usize = 8 + FiberVersionedState::INIT_SPACE;
+
 impl FiberVersionedState {
     pub fn pubkey(thread: Pubkey, fiber_index: u8) -> Pubkey {
         FiberState::pubkey(thread, fiber_index)
@@ -119,6 +127,27 @@ impl anchor_lang::AccountDeserialize for Fiber {
         } else {
             Err(error!(AntegenFiberError::InvalidFiberData))
         }
+    }
+}
+
+impl<'a, 'info> TryFrom<&'a AccountInfo<'info>> for Fiber {
+    type Error = anchor_lang::error::Error;
+
+    /// Reads a fiber out of a raw account, checking ownership first.
+    ///
+    /// [`AccountDeserialize`] only inspects the byte buffer, so on its own it
+    /// will happily decode a look-alike account owned by some other program.
+    /// Every shape-agnostic caller goes through this conversion instead of
+    /// borrowing and deserializing inline, so the owner check cannot be
+    /// omitted at an individual call site.
+    fn try_from(info: &'a AccountInfo<'info>) -> Result<Self> {
+        require_keys_eq!(
+            *info.owner,
+            crate::ID,
+            AntegenFiberError::InvalidAccountOwner
+        );
+        let data = info.try_borrow_data()?;
+        Fiber::try_deserialize(&mut &data[..])
     }
 }
 

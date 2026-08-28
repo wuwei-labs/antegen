@@ -14,8 +14,16 @@ pub struct Create<'info> {
     /// Thread PDA - signer (via invoke_signed from Thread Program)
     pub thread: Signer<'info>,
 
-    /// CHECK: The fiber account to create — validated manually via PDA derivation
-    #[account(mut)]
+    /// CHECK: The fiber account to create — bound to the signing thread and
+    /// `fiber_index` by seeds, and re-derived explicitly in the handler.
+    #[account(
+        mut,
+        seeds = [SEED_THREAD_FIBER, thread.key().as_ref(), &[fiber_index]],
+        bump,
+        constraint = fiber.to_account_info().owner == &crate::ID
+            || fiber.to_account_info().owner == &System::id()
+            @ AntegenFiberError::InvalidAccountOwner,
+    )]
     pub fiber: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
@@ -41,13 +49,13 @@ pub fn create(
     // without this any wallet could sign as `thread`, claim someone else's
     // fiber, and then `close` it to sweep the rent — which is exactly what was
     // done on mainnet against live threads.
-    require!(
+    require_keys_eq!(
         Pubkey::find_program_address(
             &[SEED_THREAD_FIBER, thread_key.as_ref(), &[fiber_index]],
             &crate::ID,
         )
-        .0
-        .eq(&fiber_info.key()),
+        .0,
+        fiber_info.key(),
         AntegenFiberError::InvalidFiberPDA
     );
 
@@ -68,10 +76,7 @@ pub fn create(
         let compiled = compile_instruction(instruction)?;
         let compiled_bytes = borsh::to_vec(&compiled)?;
 
-        let fiber_read = {
-            let data = fiber_info.try_borrow_data()?;
-            Fiber::try_deserialize(&mut &data[..])?
-        };
+        let fiber_read = Fiber::try_from(&fiber_info)?;
 
         match fiber_read {
             Fiber::Legacy(mut state) => {
@@ -125,12 +130,16 @@ pub fn initialize_fiber<'info>(
         &[SEED_THREAD_FIBER, thread_key.as_ref(), &[fiber_index]],
         &crate::ID,
     );
-    require!(
-        expected_pda.eq(&fiber.key()),
+    // The seeds below are handed to `invoke_signed` as this program's
+    // signature. Proving the account they derive matches the account we were
+    // given keeps that signature from being lent to any other address.
+    require_keys_eq!(
+        expected_pda,
+        fiber.key(),
         AntegenFiberError::InvalidFiberPDA
     );
 
-    let space = 8 + FiberVersionedState::INIT_SPACE;
+    let space = FIBER_ACCOUNT_SPACE;
     let rent = Rent::get()?;
     let min_lamports = rent.minimum_balance(space);
     require!(
@@ -173,18 +182,46 @@ pub fn initialize_fiber<'info>(
     write_versioned(&fiber_info, &state)
 }
 
-pub(crate) fn write_versioned(fiber_info: &AccountInfo, state: &FiberVersionedState) -> Result<()> {
+/// Writes `discriminator || borsh(state)` into the account.
+///
+/// Both length checks replace slice indexing that panicked rather than
+/// returned: an update that grew the encoded state past the space the account
+/// was allocated with aborted the transaction with no usable error, and a
+/// buffer shorter than the discriminator did the same.
+fn write_state(fiber_info: &AccountInfo, discriminator: &[u8], state_bytes: &[u8]) -> Result<()> {
+    /// An Anchor discriminator is exactly 8 bytes; anything else is a caller
+    /// bug and would otherwise panic inside `copy_from_slice`.
+    fn try_from_slice(discriminator: &[u8]) -> Result<[u8; 8]> {
+        discriminator
+            .try_into()
+            .map_err(|_| error!(AntegenFiberError::InvalidFiberData))
+    }
+
+    let disc = try_from_slice(discriminator)?;
+
     let mut data = fiber_info.try_borrow_mut_data()?;
-    data[..8].copy_from_slice(FiberVersionedState::DISCRIMINATOR);
-    let state_bytes = borsh::to_vec(state)?;
-    data[8..8 + state_bytes.len()].copy_from_slice(&state_bytes);
+    let end = disc
+        .len()
+        .checked_add(state_bytes.len())
+        .ok_or(AntegenFiberError::FiberAccountTooSmall)?;
+    require!(
+        end <= data.len(),
+        AntegenFiberError::FiberAccountTooSmall
+    );
+
+    data[..8].copy_from_slice(&disc);
+    data[8..end].copy_from_slice(state_bytes);
     Ok(())
 }
 
+pub(crate) fn write_versioned(fiber_info: &AccountInfo, state: &FiberVersionedState) -> Result<()> {
+    write_state(
+        fiber_info,
+        FiberVersionedState::DISCRIMINATOR,
+        &borsh::to_vec(state)?,
+    )
+}
+
 pub(crate) fn write_legacy(fiber_info: &AccountInfo, state: &FiberState) -> Result<()> {
-    let mut data = fiber_info.try_borrow_mut_data()?;
-    data[..8].copy_from_slice(FiberState::DISCRIMINATOR);
-    let state_bytes = borsh::to_vec(state)?;
-    data[8..8 + state_bytes.len()].copy_from_slice(&state_bytes);
-    Ok(())
+    write_state(fiber_info, FiberState::DISCRIMINATOR, &borsh::to_vec(state)?)
 }

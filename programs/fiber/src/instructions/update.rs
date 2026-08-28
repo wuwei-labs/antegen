@@ -19,6 +19,9 @@ pub struct Update<'info> {
         mut,
         seeds = [SEED_THREAD_FIBER, thread.key().as_ref(), &[fiber_index]],
         bump,
+        constraint = fiber.to_account_info().owner == &crate::ID
+            || fiber.to_account_info().owner == &System::id()
+            @ AntegenFiberError::InvalidAccountOwner,
     )]
     pub fiber: UncheckedAccount<'info>,
 
@@ -58,10 +61,17 @@ pub fn update(
         return Ok(());
     }
 
-    let fiber_read = {
-        let data = fiber_info.try_borrow_data()?;
-        Fiber::try_deserialize(&mut &data[..])?
-    };
+    let fiber_read = Fiber::try_from(&fiber_info)?;
+
+    // Redundant against the seeds above, and kept for the same reason
+    // `close` keeps it: it is the one check that reads the account's own
+    // record of which thread owns it, so a fiber whose stored owner ever
+    // diverges from its address fails closed rather than being rewritten.
+    require_keys_eq!(
+        fiber_read.thread(),
+        thread_key,
+        AntegenFiberError::InvalidFiberPDA
+    );
 
     match fiber_read {
         Fiber::Legacy(mut state) => {
