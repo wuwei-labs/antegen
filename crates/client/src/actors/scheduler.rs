@@ -54,8 +54,13 @@ impl Kind {
         }
     }
 
-    /// How far ahead a parked entry is re-armed, so a thread that stops
-    /// producing account updates is still re-examined eventually.
+    /// How far ahead a parked entry's `due` is placed.
+    ///
+    /// Not a re-arm on its own: `take_due` requires `Phase::Due`, and nothing
+    /// promotes a parked entry, so this value is inert until an `upsert`
+    /// replaces the entry. What actually brings a parked thread back is the
+    /// refresh marker — `REFRESH_AFTER` after a success, `PARKED_REFRESH` after
+    /// a failure. This keeps the ordered key sane in the meantime.
     fn parked_watchdog(self) -> u64 {
         match self {
             Kind::Time => 120, // seconds
@@ -161,6 +166,20 @@ pub struct Dispatched {
 /// silent in normal operation, far shorter than the watchdog it backs up.
 const REFRESH_AFTER: Duration = Duration::from_secs(10);
 
+/// How long a thread parked by a *failure* waits before refetching.
+///
+/// Separate from `REFRESH_AFTER` because the two answer different questions.
+/// `REFRESH_AFTER` backstops an account update that is already on its way, so
+/// it is deliberately short. Nothing is on its way here — nothing executed —
+/// and when the cause lies outside the thread's own account there is no update
+/// to wait for at all. Since `Phase::Parked` is only left via the `upsert` this
+/// refetch causes, this constant is the retry cadence for a failing thread.
+///
+/// Wall-clock, and deliberately not `Kind::parked_watchdog()`: that is measured
+/// in each kind's own chain units — 300 *slots*, 1 *epoch* — which would read as
+/// 300 seconds and 1 second if used as a duration.
+const PARKED_REFRESH: Duration = Duration::from_secs(120);
+
 /// Cap on how many parked threads are refreshed in one pass, so a large fleet
 /// cannot turn the safety net into a request storm.
 const MAX_REFRESH_PER_PASS: usize = 32;
@@ -250,6 +269,11 @@ impl Scheduler {
     ///
     /// An advancing `exec_count` or a changed due value means the chain moved,
     /// which clears any backoff this node had applied.
+    ///
+    /// This is also the *only* exit from `Phase::Parked` — see `complete`. A
+    /// parked entry is not dispatchable and no sweep promotes it, so whatever
+    /// schedules the refetch that lands here decides how often a parked thread
+    /// is retried.
     pub fn upsert(
         &mut self,
         pk: Pubkey,
@@ -474,12 +498,28 @@ impl Scheduler {
             //
             // The refresh invalidates the cache and refetches, so the next
             // attempt is made against what the chain actually says.
+            //
+            // The marker is the watchdog, not `REFRESH_AFTER`. `REFRESH_AFTER`
+            // is a backstop for an account update that is already on its way —
+            // true after a successful execution, false here, because nothing
+            // executed. Worse, when the reason for failing is outside the
+            // thread's own account, no update is ever coming: a fiber whose
+            // instruction references an account that has since been closed
+            // provokes no write to the thread, so every refresh refetches
+            // identical state and dispatches an identical failing transaction.
+            //
+            // A mainnet thread did exactly that for ten hours: 322 attempts an
+            // hour, one every 10.2 seconds, which is `REFRESH_AFTER` and not any
+            // watchdog. Since `Phase::Parked` is only ever left via the `upsert`
+            // this refresh causes, the marker *is* the retry cadence for a
+            // parked thread — `due` is inert while parked, and setting it to the
+            // watchdog re-arms nothing on its own.
             Outcome::EmptyFiber | Outcome::Fatal => {
                 self.reschedule(
                     pk,
                     current.saturating_add(kind.parked_watchdog()),
                     Phase::Parked,
-                    Some(now + REFRESH_AFTER),
+                    Some(now + PARKED_REFRESH),
                 );
             }
 
@@ -753,10 +793,73 @@ mod tests {
 
         assert_eq!(s.get(&pk(1)).unwrap().phase, Phase::Parked);
         assert!(
-            s.take_stale_parked(now + REFRESH_AFTER + Duration::from_millis(1))
+            s.take_stale_parked(now + PARKED_REFRESH + Duration::from_millis(1))
                 .contains(&pk(1)),
             "a fatally parked thread must be refetched, or it retries stale state forever"
         );
+    }
+
+    /// The regression, stated as the operator saw it.
+    ///
+    /// A mainnet thread whose fiber referenced a since-closed account failed
+    /// 322 times an hour — one attempt every 10.2 seconds, which is
+    /// `REFRESH_AFTER`. Nothing executed, so no account update was ever coming;
+    /// each refresh refetched identical state and re-dispatched an identical
+    /// failing transaction.
+    #[test]
+    fn a_failure_park_refreshes_on_the_long_cadence() {
+        let mut s = Scheduler::new();
+        let now = Instant::now();
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
+        s.take_due(Kind::Time, 200, now);
+        s.complete(&pk(1), Outcome::Fatal, 0, 200, now);
+
+        assert!(
+            s.take_stale_parked(now + REFRESH_AFTER + Duration::from_millis(1))
+                .is_empty(),
+            "a failure park must not refetch on the success backstop's cadence"
+        );
+        assert!(
+            s.take_stale_parked(now + PARKED_REFRESH + Duration::from_millis(1))
+                .contains(&pk(1)),
+            "a failure park must still refetch eventually, or it strands"
+        );
+    }
+
+    /// The short backstop is correct after a success — an account update really
+    /// is on its way, and waiting two minutes for one that was dropped would
+    /// idle the thread on every execution.
+    #[test]
+    fn a_success_park_still_refreshes_on_the_short_cadence() {
+        let mut s = Scheduler::new();
+        let now = Instant::now();
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
+        s.take_due(Kind::Time, 200, now);
+        s.complete(&pk(1), Outcome::Succeeded, 0, 200, now);
+
+        assert!(s
+            .take_stale_parked(now + REFRESH_AFTER + Duration::from_millis(1))
+            .contains(&pk(1)));
+    }
+
+    /// `Phase::Parked` has exactly one exit, and it is not the watchdog. If a
+    /// sweep is ever added that promotes parked entries, this test should fail
+    /// and the refresh markers above should be reconsidered along with it.
+    #[test]
+    fn a_parked_entry_is_never_dispatchable_by_itself() {
+        let mut s = Scheduler::new();
+        let now = Instant::now();
+        s.upsert(pk(1), Kind::Time, 100, 0, false, Retry::default());
+        s.take_due(Kind::Time, 200, now);
+        s.complete(&pk(1), Outcome::Fatal, 0, 200, now);
+
+        let far_past_every_watchdog = 200 + Kind::Time.parked_watchdog() * 10;
+        assert!(
+            s.take_due(Kind::Time, far_past_every_watchdog, now + PARKED_REFRESH * 10)
+                .is_empty(),
+            "a parked entry only returns via upsert"
+        );
+        assert_eq!(s.get(&pk(1)).unwrap().phase, Phase::Parked);
     }
 
     #[test]
@@ -768,7 +871,7 @@ mod tests {
         s.complete(&pk(1), Outcome::EmptyFiber, 0, 200, now);
 
         assert!(s
-            .take_stale_parked(now + REFRESH_AFTER + Duration::from_millis(1))
+            .take_stale_parked(now + PARKED_REFRESH + Duration::from_millis(1))
             .contains(&pk(1)));
     }
 
