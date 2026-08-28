@@ -12,6 +12,25 @@ use anchor_lang::solana_program::instruction::Instruction;
 
 declare_id!("AgFv5afjW9DmSPkiEvJ1er5bAAmRUqaBeTB6Cr8e1hKx");
 
+// On-chain security contact, read by explorers from the deployed `.so`.
+//
+// Gated on `not(no-entrypoint)` for the same reason the entrypoint is: the
+// macro emits a `#[no_mangle]` static into the binary, and this crate is
+// depended on with the `cpi` feature (which implies `no-entrypoint`) by the
+// thread program, which publishes its own. Two of these in one binary is a
+// link-time symbol collision.
+#[cfg(not(feature = "no-entrypoint"))]
+solana_security_txt::security_txt! {
+    name: "Antegen Fiber Program",
+    project_url: "https://antegen.xyz/",
+    contacts: "email:anthony@wuwei.dev",
+    policy: "https://github.com/wuwei-labs/antegen/blob/main/SECURITY.md",
+    preferred_languages: "en",
+    source_code: "https://github.com/wuwei-labs/antegen/tree/main/programs/fiber",
+    source_release: concat!("antegen-fiber-program-v", env!("CARGO_PKG_VERSION")),
+    auditors: "None"
+}
+
 #[program]
 pub mod antegen_fiber {
     use super::*;
@@ -100,6 +119,18 @@ mod wire_compat_tests {
     use super::*;
     use anchor_lang::AnchorDeserialize;
 
+    /// Deterministic stand-in for `Pubkey::new_unique()`.
+    ///
+    /// Still distinct on every call, but reproducible from run to run, so a
+    /// failing assertion reports the same addresses each time.
+    fn unique_pubkey() -> Pubkey {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let mut bytes = [0u8; 32];
+        bytes[..8].copy_from_slice(&NEXT.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+        Pubkey::new_from_array(bytes)
+    }
+
     /// Instruction data exactly as a caller built against the pre-`lookup_tables`
     /// IDL sends it: everything through `priority_fee`, and then nothing.
     ///
@@ -133,7 +164,7 @@ mod wire_compat_tests {
     /// clients.
     #[test]
     fn update_decodes_data_with_the_appended_argument() {
-        let tables = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+        let tables = vec![unique_pubkey(), unique_pubkey()];
         let mut new_format = Vec::new();
         1u8.serialize(&mut new_format).unwrap();
         None::<SerializableInstruction>
@@ -174,7 +205,7 @@ mod wire_compat_tests {
     #[test]
     fn create_decodes_both_wire_formats() {
         let ix_data = SerializableInstruction {
-            program_id: Pubkey::new_unique(),
+            program_id: unique_pubkey(),
             accounts: vec![],
             data: vec![],
         };
@@ -187,7 +218,7 @@ mod wire_compat_tests {
         let old = instruction::Create::deserialize(&mut &old_format[..]).unwrap();
         assert!(old.lookup_tables.into_inner().is_empty());
 
-        let tables = vec![Pubkey::new_unique()];
+        let tables = vec![unique_pubkey()];
         let mut new_format = old_format.clone();
         tables.serialize(&mut new_format).unwrap();
 

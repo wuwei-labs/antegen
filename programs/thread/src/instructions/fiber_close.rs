@@ -39,6 +39,8 @@ pub struct FiberClose<'info> {
         seeds = [SEED_THREAD_FIBER, thread.key().as_ref(), &[fiber_index]],
         bump,
         seeds::program = antegen_fiber_program::ID,
+        constraint = fiber.to_account_info().owner == &antegen_fiber_program::ID
+            @ AntegenThreadError::InvalidFiberAccount,
     )]
     pub fiber: UncheckedAccount<'info>,
 

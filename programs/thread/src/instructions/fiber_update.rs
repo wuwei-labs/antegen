@@ -22,8 +22,18 @@ pub struct FiberUpdate<'info> {
     )]
     pub thread: Account<'info, Thread>,
 
-    /// CHECK: The fiber account to update (may not exist yet, validated by Fiber Program via CPI)
-    #[account(mut)]
+    /// CHECK: The fiber account to update (may not exist yet, validated by
+    /// Fiber Program via CPI). Bound to `fiber_index` here so the thread's
+    /// bookkeeping and the account actually written can never disagree.
+    #[account(
+        mut,
+        seeds = [SEED_THREAD_FIBER, thread.key().as_ref(), &[fiber_index]],
+        bump,
+        seeds::program = antegen_fiber_program::ID,
+        constraint = fiber.to_account_info().owner == &antegen_fiber_program::ID
+            || fiber.to_account_info().owner == &System::id()
+            @ AntegenThreadError::InvalidFiberAccount,
+    )]
     pub fiber: UncheckedAccount<'info>,
 
     /// The Fiber Program for CPI
@@ -64,7 +74,7 @@ pub fn fiber_update(
     // Pre-fund fiber account from thread PDA if not yet initialized
     let fiber_info = ctx.accounts.fiber.to_account_info();
     if fiber_info.data_len().eq(&0) {
-        let space = 8 + antegen_fiber_program::state::FiberVersionedState::INIT_SPACE;
+        let space = antegen_fiber_program::state::FIBER_ACCOUNT_SPACE;
         let rent_lamports = Rent::get()?.minimum_balance(space);
         **thread.to_account_info().try_borrow_mut_lamports()? -= rent_lamports;
         **fiber_info.try_borrow_mut_lamports()? += rent_lamports;

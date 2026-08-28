@@ -1,3 +1,4 @@
+use crate::errors::AntegenFiberError;
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
 use std::collections::HashMap;
@@ -172,29 +173,41 @@ pub fn decompile_instruction(compiled: &CompiledInstructionV0) -> Result<Instruc
     }
 
     let ix = &compiled.instructions[0];
-    let program_id = compiled.accounts[ix.program_id_index as usize];
+    let program_id = *compiled
+        .accounts
+        .get(ix.program_id_index as usize)
+        .ok_or(AntegenFiberError::InvalidCompiledInstruction)?;
+
+    // Widen before summing. These three counts are read straight off the
+    // account, and their `u8` sum can exceed 255 — which aborts the
+    // transaction instead of rejecting the instruction.
+    let rw_signers_end = u16::from(compiled.num_rw_signers);
+    let signers_end = rw_signers_end
+        .checked_add(u16::from(compiled.num_ro_signers))
+        .ok_or(AntegenFiberError::InvalidCompiledInstruction)?;
+    let writable_end = signers_end
+        .checked_add(u16::from(compiled.num_rw))
+        .ok_or(AntegenFiberError::InvalidCompiledInstruction)?;
 
     let accounts: Vec<AccountMeta> = ix
         .accounts
         .iter()
         .map(|&idx| {
-            let pubkey = compiled.accounts[idx as usize];
-            let is_writable = if idx < compiled.num_rw_signers {
-                true
-            } else if idx < compiled.num_rw_signers + compiled.num_ro_signers {
-                false
-            } else {
-                idx < compiled.num_rw_signers + compiled.num_ro_signers + compiled.num_rw
-            };
-            let is_signer = idx < compiled.num_rw_signers + compiled.num_ro_signers;
+            // Indexing directly panicked on an index past the end of the
+            // deduplicated account list.
+            let pubkey = *compiled
+                .accounts
+                .get(idx as usize)
+                .ok_or(AntegenFiberError::InvalidCompiledInstruction)?;
+            let idx = u16::from(idx);
 
-            AccountMeta {
+            Ok(AccountMeta {
                 pubkey,
-                is_signer,
-                is_writable,
-            }
+                is_signer: idx < signers_end,
+                is_writable: idx < rw_signers_end || (idx >= signers_end && idx < writable_end),
+            })
         })
-        .collect();
+        .collect::<Result<_>>()?;
 
     Ok(Instruction {
         program_id,

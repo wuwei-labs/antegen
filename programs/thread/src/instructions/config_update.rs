@@ -27,7 +27,9 @@ pub struct ConfigUpdate<'info> {
     #[account(
         mut,
         seeds = [SEED_CONFIG],
-        bump = config.bump
+        bump = config.bump,
+        constraint = config.to_account_info().owner == &crate::ID
+            @ AntegenThreadError::InvalidAccountOwner,
     )]
     pub config: Account<'info, ThreadConfig>,
 }
@@ -92,7 +94,10 @@ pub fn config_update(ctx: Context<ConfigUpdate>, params: ConfigUpdateParams) -> 
     }
 
     // Validate that total fees equal 100%
-    let total_fees = config.executor_fee_bps + config.core_team_bps;
+    let total_fees = config
+        .executor_fee_bps
+        .checked_add(config.core_team_bps)
+        .ok_or(AntegenThreadError::InvalidFeePercentage)?;
     require!(
         total_fees == 10000,
         AntegenThreadError::InvalidFeePercentage

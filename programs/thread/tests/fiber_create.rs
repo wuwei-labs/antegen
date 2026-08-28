@@ -7,6 +7,18 @@ use solana_sdk::{
 mod common;
 use common::*;
 
+/// Deterministic stand-in for `Pubkey::new_unique()`.
+///
+/// Still distinct on every call, but reproducible from run to run, so a
+/// failing assertion reports the same addresses each time.
+fn unique_pubkey() -> Pubkey {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let mut bytes = [0u8; 32];
+    bytes[..8].copy_from_slice(&NEXT.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+    Pubkey::new_from_array(bytes)
+}
+
 /// Helper to create a thread with no fibers and return thread_pubkey.
 fn setup_thread(
     svm: &mut litesvm::LiteSVM,
@@ -275,8 +287,8 @@ fn test_fiber_create_stores_lookup_tables() {
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let thread_pubkey = setup_thread(&mut svm, &authority, &payer, "fc-alt-store");
-    let alt_a = Pubkey::new_unique();
-    let alt_b = Pubkey::new_unique();
+    let alt_a = unique_pubkey();
+    let alt_b = unique_pubkey();
     let fiber_pubkey = send_create_fiber_with_alts(
         &mut svm,
         &authority,
@@ -299,7 +311,7 @@ fn test_fiber_create_at_alt_boundary_succeeds() {
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let thread_pubkey = setup_thread(&mut svm, &authority, &payer, "fc-alt-4");
-    let four_alts: Vec<Pubkey> = (0..4).map(|_| Pubkey::new_unique()).collect();
+    let four_alts: Vec<Pubkey> = (0..4).map(|_| unique_pubkey()).collect();
     let fiber_pubkey = send_create_fiber_with_alts(
         &mut svm,
         &authority,
@@ -321,7 +333,7 @@ fn test_fiber_create_rejects_more_than_four_alts() {
     svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
 
     let thread_pubkey = setup_thread(&mut svm, &authority, &payer, "fc-alt-5");
-    let five_alts: Vec<Pubkey> = (0..5).map(|_| Pubkey::new_unique()).collect();
+    let five_alts: Vec<Pubkey> = (0..5).map(|_| unique_pubkey()).collect();
     let result =
         send_create_fiber_with_alts(&mut svm, &authority, &payer, &thread_pubkey, 0, five_alts);
     assert!(

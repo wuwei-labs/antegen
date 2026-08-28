@@ -23,6 +23,11 @@ pub struct ThreadClose<'info> {
     pub authority: Signer<'info>,
 
     /// The address to return the data rent lamports to.
+    ///
+    /// Deliberately not pinned to `thread.authority`: the authority signs this
+    /// instruction and may direct its own rent anywhere, which the CLI relies
+    /// on. The one target that is never meaningful is the thread itself —
+    /// Anchor would credit the account it is about to zero, burning the rent.
     #[account(mut)]
     pub close_to: SystemAccount<'info>,
 
@@ -30,6 +35,8 @@ pub struct ThreadClose<'info> {
     #[account(
         mut,
         close = close_to,
+        constraint = thread.to_account_info().owner == &crate::ID
+            @ AntegenThreadError::InvalidAccountOwner,
         seeds = [
             SEED_THREAD,
             thread.authority.as_ref(),
@@ -46,6 +53,14 @@ pub struct ThreadClose<'info> {
 pub fn thread_close<'info>(ctx: Context<'info, ThreadClose<'info>>) -> Result<()> {
     let thread = &mut ctx.accounts.thread;
     let thread_key = thread.key();
+
+    // See `close_to` above: any target the authority names is fair game except
+    // the thread itself, which would credit the rent to the account Anchor is
+    // about to zero out.
+    let close_to = ctx.accounts.close_to.key();
+    if close_to == thread_key {
+        return Err(AntegenThreadError::InvalidCloseTarget.into());
+    }
 
     // Process each fiber account from remaining_accounts via CPI to Fiber Program
     for account in ctx.remaining_accounts.iter() {

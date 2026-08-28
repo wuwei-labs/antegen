@@ -15,6 +15,18 @@ use solana_sdk::{
 mod common;
 use common::setup::{FIBER_PROGRAM_ID, PROGRAM_ID};
 
+/// Deterministic stand-in for `Pubkey::new_unique()`.
+///
+/// Still distinct on every call, but reproducible from run to run, so a
+/// failing assertion reports the same addresses each time.
+fn unique_pubkey() -> Pubkey {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let mut bytes = [0u8; 32];
+    bytes[..8].copy_from_slice(&NEXT.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+    Pubkey::new_from_array(bytes)
+}
+
 // ============================================================================
 // Thread::advance_to_next_fiber tests
 // ============================================================================
@@ -23,7 +35,7 @@ fn make_thread(fiber_ids: Vec<u8>, fiber_cursor: u8) -> Thread {
     Thread {
         version: CURRENT_THREAD_VERSION,
         bump: 0,
-        authority: Pubkey::new_unique(),
+        authority: unique_pubkey(),
         id: b"test".to_vec(),
         name: "test".to_string(),
         created_at: 0,
@@ -86,7 +98,7 @@ fn test_advance_to_next_fiber_cursor_not_found() {
 #[test]
 fn test_has_nonce_account_true() {
     let mut thread = make_thread(vec![], 0);
-    thread.nonce_account = Pubkey::new_unique(); // real nonce
+    thread.nonce_account = unique_pubkey(); // real nonce
     assert!(thread.has_nonce_account());
 }
 
@@ -169,9 +181,9 @@ fn test_is_ready_block_slot() {
 
 #[test]
 fn test_compile_decompile_roundtrip() {
-    let program_id = Pubkey::new_unique();
-    let account1 = Pubkey::new_unique();
-    let account2 = Pubkey::new_unique();
+    let program_id = unique_pubkey();
+    let account1 = unique_pubkey();
+    let account2 = unique_pubkey();
 
     let ix = Instruction {
         program_id,
@@ -193,10 +205,10 @@ fn test_compile_decompile_roundtrip() {
 #[test]
 fn test_compiled_account_sorting() {
     // Accounts should be sorted: rw_signers, ro_signers, rw, ro
-    let program_id = Pubkey::new_unique();
-    let ro_account = Pubkey::new_unique();
-    let rw_signer = Pubkey::new_unique();
-    let rw_account = Pubkey::new_unique();
+    let program_id = unique_pubkey();
+    let ro_account = unique_pubkey();
+    let rw_signer = unique_pubkey();
+    let rw_account = unique_pubkey();
 
     let ix = Instruction {
         program_id,
@@ -224,7 +236,7 @@ fn make_config() -> ThreadConfig {
     ThreadConfig {
         version: 1,
         bump: 0,
-        admin: Pubkey::new_unique(),
+        admin: unique_pubkey(),
         paused: false,
         commission_fee: 1000,
         executor_fee_bps: 9000,
@@ -245,7 +257,7 @@ fn test_commission_within_grace() {
 fn test_commission_during_decay() {
     let config = make_config();
     // Halfway through decay: 5s grace + 147.5s into 295s decay
-    let time = 5 + 147; // 152s total
+    let time: i64 = 5i64.checked_add(147).unwrap(); // 152s total
     let multiplier = config.calculate_commission_multiplier(time);
     assert!(multiplier < 1.0 && multiplier > 0.0);
 }
@@ -297,13 +309,13 @@ fn test_payment_no_payment_positive_balance() {
 
 #[test]
 fn test_jitter_zero() {
-    let pubkey = Pubkey::new_unique();
+    let pubkey = unique_pubkey();
     assert_eq!(calculate_jitter_offset(100, &pubkey, 0), 0);
 }
 
 #[test]
 fn test_jitter_deterministic() {
-    let pubkey = Pubkey::new_unique();
+    let pubkey = unique_pubkey();
     let j1 = calculate_jitter_offset(100, &pubkey, 60);
     let j2 = calculate_jitter_offset(100, &pubkey, 60);
     assert_eq!(j1, j2); // same inputs -> same output
@@ -311,7 +323,7 @@ fn test_jitter_deterministic() {
 
 #[test]
 fn test_jitter_bounded() {
-    let pubkey = Pubkey::new_unique();
+    let pubkey = unique_pubkey();
     let jitter = 60u64;
     let offset = calculate_jitter_offset(12345, &pubkey, jitter);
     assert!(offset >= 0);
@@ -338,7 +350,7 @@ fn test_next_timestamp_cron() {
 
 #[test]
 fn test_thread_pda_derivation() {
-    let authority = Pubkey::new_unique();
+    let authority = unique_pubkey();
     let id = b"test-thread";
     let (expected, _bump) =
         Pubkey::find_program_address(&[SEED_THREAD, authority.as_ref(), id], &PROGRAM_ID);
@@ -348,7 +360,7 @@ fn test_thread_pda_derivation() {
 
 #[test]
 fn test_fiber_pda_derivation() {
-    let thread = Pubkey::new_unique();
+    let thread = unique_pubkey();
     let index = 3u8;
     // FiberState PDAs use the Fiber Program ID
     let (expected, _bump) = Pubkey::find_program_address(

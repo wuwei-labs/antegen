@@ -27,6 +27,7 @@ custom-panic = []
 
 [dependencies]
 anchor-lang = { workspace = true }
+solana-security-txt = { workspace = true }
 
 [dev-dependencies]
 solana-sdk = { workspace = true }

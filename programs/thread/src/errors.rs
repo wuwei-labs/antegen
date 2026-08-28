@@ -143,6 +143,15 @@ pub enum AntegenThreadError {
 
     #[msg("Thread has not signaled close - fiber_signal must be Signal::Close")]
     CloseNotSignaled,
+
+    #[msg("Thread account already exists - close it before creating it again")]
+    ThreadAlreadyInitialized,
+
+    #[msg("Account is not owned by the Thread Program")]
+    InvalidAccountOwner,
+
+    #[msg("Close target must not be the account being closed")]
+    InvalidCloseTarget,
 }
 
 /// Alias for AntegenThreadError

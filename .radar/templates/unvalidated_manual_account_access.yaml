@@ -1,0 +1,45 @@
+version: 0.1.0
+author: wuwei-labs
+accent: anchor
+name: Unvalidated Manual Account Access
+description: >-
+  An instruction handler reads or writes an UncheckedAccount's raw data without
+  ever proving which account it was handed. Anchor validates nothing for
+  UncheckedAccount, so unless the handler derives the address itself or
+  compares it against an expected key, a caller can substitute any account of
+  the right shape. Deriving the address in a sibling helper is not enough - the
+  proof has to be on the path that touches the data.
+severity: High
+certainty: Medium
+rule: |
+  for source, nodes in ast:
+      try:
+          # An instruction module that hands at least one account to the
+          # program without Anchor-side validation.
+          nodes.find_chained_calls("derive", "Accounts").exit_on_none()
+          nodes.find_by_names("UncheckedAccount").exit_on_none()
+
+          # Scope the check to instruction handlers. Pure byte-level helpers
+          # legitimately take an already-validated AccountInfo; the caller is
+          # where the identity of the account is established or lost.
+          for func in nodes.find_all_functions():
+              try:
+                  func.find_by_names("Context").exit_on_none()
+                  borrows = func.find_by_names(
+                      "try_borrow_data", "try_borrow_mut_data"
+                  ).exit_on_none()
+
+                  # Proof of identity, in either accepted form: derive the
+                  # address here, or compare it to one already established.
+                  func.find_by_names(
+                      "find_program_address", "create_program_address"
+                  ).exit_on_value()
+                  func.find_by_names(
+                      "require_keys_eq", "require_keys_neq", "require_eq"
+                  ).exit_on_value()
+
+                  print(borrows.first().to_result())
+              except:
+                  continue
+      except:
+          continue

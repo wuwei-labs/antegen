@@ -86,10 +86,12 @@ pub struct CpiUpdateFiber<'info> {
     pub thread: Signer<'info>,
 
     /// CHECK: Fiber to update — passed through to Fiber Program
-    #[account(mut)]
+    #[account(mut, constraint = fiber.to_account_info().owner == &fiber::ID)]
     pub fiber: UncheckedAccount<'info>,
 
-    /// CHECK: Fiber Program
+    /// CHECK: Fiber Program — pinned so this harness exercises reentrancy
+    /// against the real program rather than whatever the caller supplies.
+    #[account(address = fiber::ID)]
     pub fiber_program: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
@@ -102,10 +104,12 @@ pub struct CpiCloseFiber<'info> {
     pub thread: Signer<'info>,
 
     /// CHECK: Fiber to close — passed through to Fiber Program
-    #[account(mut)]
+    #[account(mut, constraint = fiber.to_account_info().owner == &fiber::ID)]
     pub fiber: UncheckedAccount<'info>,
 
-    /// CHECK: Fiber Program
+    /// CHECK: Fiber Program — pinned so this harness exercises reentrancy
+    /// against the real program rather than whatever the caller supplies.
+    #[account(address = fiber::ID)]
     pub fiber_program: UncheckedAccount<'info>,
 }
 
@@ -116,13 +120,15 @@ pub struct CpiSwapFiber<'info> {
     pub thread: Signer<'info>,
 
     /// CHECK: Target fiber — passed through to Fiber Program
-    #[account(mut)]
+    #[account(mut, constraint = target.to_account_info().owner == &fiber::ID)]
     pub target: UncheckedAccount<'info>,
 
     /// CHECK: Source fiber — passed through to Fiber Program
-    #[account(mut)]
+    #[account(mut, constraint = source.to_account_info().owner == &fiber::ID)]
     pub source: UncheckedAccount<'info>,
 
-    /// CHECK: Fiber Program
+    /// CHECK: Fiber Program — pinned so this harness exercises reentrancy
+    /// against the real program rather than whatever the caller supplies.
+    #[account(address = fiber::ID)]
     pub fiber_program: UncheckedAccount<'info>,
 }

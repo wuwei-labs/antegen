@@ -12,13 +12,22 @@ pub struct ThreadWithdraw<'info> {
     pub authority: Signer<'info>,
 
     /// CHECK: The account to withdraw lamports to.
-    #[account(mut)]
+    ///
+    /// Withdrawing into the thread itself debits and credits the same account,
+    /// so the balance check passes and nothing moves. Reject it rather than
+    /// silently returning success for a withdrawal that did not happen.
+    #[account(
+        mut,
+        constraint = pay_to.key() != thread.key() @ AntegenThreadError::InvalidCloseTarget,
+    )]
     pub pay_to: UncheckedAccount<'info>,
 
     /// The thread to be.
     #[account(
         mut,
         has_one = authority,
+        constraint = thread.to_account_info().owner == &crate::ID
+            @ AntegenThreadError::InvalidAccountOwner,
         seeds = [
             SEED_THREAD,
             thread.authority.as_ref(),

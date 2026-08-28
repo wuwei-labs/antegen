@@ -105,6 +105,18 @@ mod idl {
 mod tests {
     use super::*;
 
+    /// Deterministic stand-in for `Pubkey::new_unique()`.
+    ///
+    /// Still distinct on every call, but reproducible from run to run, so a
+    /// failing assertion reports the same addresses each time.
+    fn unique_pubkey() -> Pubkey {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let mut bytes = [0u8; 32];
+        bytes[..8].copy_from_slice(&NEXT.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+        Pubkey::new_from_array(bytes)
+    }
+
     /// The case this type exists for: instruction data that stops before the
     /// appended argument, as sent by a caller built against the older IDL.
     #[test]
@@ -120,7 +132,7 @@ mod tests {
 
     #[test]
     fn present_input_round_trips() {
-        for value in [None, Some(vec![]), Some(vec![Pubkey::new_unique(); 3])] {
+        for value in [None, Some(vec![]), Some(vec![unique_pubkey(); 3])] {
             let wrapped = Trailing(value.clone());
             let mut bytes = Vec::new();
             wrapped.serialize(&mut bytes).unwrap();
@@ -135,7 +147,7 @@ mod tests {
     /// indistinguishable from a plain borsh one.
     #[test]
     fn serialization_matches_the_inner_type() {
-        let value = Some(vec![Pubkey::new_unique()]);
+        let value = Some(vec![unique_pubkey()]);
         let mut wrapped_bytes = Vec::new();
         Trailing(value.clone())
             .serialize(&mut wrapped_bytes)
@@ -149,7 +161,7 @@ mod tests {
     /// value would decode against a buffer missing its first byte.
     #[test]
     fn the_probe_byte_is_not_consumed() {
-        let value = Some(vec![Pubkey::new_unique(), Pubkey::new_unique()]);
+        let value = Some(vec![unique_pubkey(), unique_pubkey()]);
         let mut bytes = Vec::new();
         value.serialize(&mut bytes).unwrap();
 

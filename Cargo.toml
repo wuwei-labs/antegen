@@ -147,6 +147,10 @@ solana-logger = "=3.0.0"
 solana-nonce = "=3.0.0"
 solana-program = "=3.0.0"
 solana-sdk = "=3.0.0"
+# Emits the on-chain `security.txt` blob read by explorers. Default features
+# only (the `parser` feature pulls thiserror/memchr and is for readers, not
+# for the programs that publish the section).
+solana-security-txt = { version = "=1.1.3", default-features = false }
 solana-system-interface = { version = "=3.0.0", features = ["bincode"] }
 solana-transaction-status = "=3.1.4"
 

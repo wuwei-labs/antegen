@@ -21,6 +21,8 @@ pub struct ThreadUpdate<'info> {
     #[account(
         mut,
         constraint = authority.key().eq(&thread.authority),
+        constraint = thread.to_account_info().owner == &crate::ID
+            @ crate::errors::AntegenThreadError::InvalidAccountOwner,
         seeds = [
             SEED_THREAD,
             thread.authority.as_ref(),

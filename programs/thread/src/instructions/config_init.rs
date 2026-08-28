@@ -26,16 +26,21 @@ pub fn config_init(ctx: Context<ConfigInit>) -> Result<()> {
     let config = &mut ctx.accounts.config;
     let admin = &ctx.accounts.admin;
 
-    // Initialize with default values
-    config.version = 1;
-    config.bump = ctx.bumps.config;
-    config.admin = admin.key();
-    config.paused = false;
-    config.commission_fee = 1000; // 1000 lamports base commission
-    config.executor_fee_bps = 9000; // 90% to executor
-    config.core_team_bps = 1000; // 10% to core team
-    config.grace_period_seconds = 5; // 5 second grace period
-    config.fee_decay_seconds = 295; // 295 second decay (total 300s = 5 minutes)
+    // The starting fee policy lives on the type; only the two fields that
+    // depend on this instruction's accounts are filled in here.
+    **config = ThreadConfig {
+        bump: ctx.bumps.config,
+        admin: admin.key(),
+        ..Default::default()
+    };
+
+    // `init` assigns ownership as part of account creation. Assert it rather
+    // than assume it, so the invariant the rest of the program relies on is
+    // stated where the account is created.
+    require!(
+        config.to_account_info().owner == &crate::ID,
+        crate::errors::AntegenThreadError::InvalidAccountOwner
+    );
 
     msg!("Thread config initialized with admin: {}", admin.key());
 
