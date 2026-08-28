@@ -46,10 +46,14 @@ pub struct ThreadCreate<'info> {
     #[account(mut)]
     pub nonce_account: Option<Signer<'info>>,
 
-    /// CHECK: Recent blockhashes sysvar (optional - only required for durable nonce threads)
+    /// CHECK: Recent blockhashes sysvar (optional - only required for durable
+    /// nonce threads). Pinned by address: the System Program would reject a
+    /// substitute during the nonce CPI, but failing here names the problem.
+    #[account(address = SYSVAR_RECENT_BLOCKHASHES)]
     pub recent_blockhashes: Option<UncheckedAccount<'info>>,
 
     /// CHECK: Rent sysvar (optional - only required for durable nonce threads)
+    #[account(address = SYSVAR_RENT)]
     pub rent: Option<UncheckedAccount<'info>>,
 
     pub system_program: Program<'info, System>,

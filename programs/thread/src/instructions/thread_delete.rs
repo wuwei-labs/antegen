@@ -19,8 +19,10 @@ pub struct ThreadDelete<'info> {
     )]
     pub config: Account<'info, ThreadConfig>,
 
-    /// CHECK: The thread to delete - unchecked so we can close broken/undeserializable accounts
-    #[account(mut)]
+    /// CHECK: The thread to delete - deliberately not deserialized, so that
+    /// threads too corrupt to decode can still be cleared. Ownership is still
+    /// required, here and again in the handler.
+    #[account(mut, owner = crate::ID)]
     pub thread: UncheckedAccount<'info>,
 }
 

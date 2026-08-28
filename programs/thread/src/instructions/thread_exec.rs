@@ -59,12 +59,18 @@ pub struct ThreadExec<'info> {
     )]
     pub admin: UncheckedAccount<'info>,
 
-    /// Optional nonce account for durable nonces
-    /// CHECK: Only required if thread has nonce account
-    #[account(mut)]
+    /// Optional nonce account for durable nonces.
+    /// CHECK: Only required if thread has nonce account. The handler pins it
+    /// to `thread.nonce_account`; the owner constraint here rejects anything
+    /// that is not a System Program account before that comparison runs.
+    #[account(
+        mut,
+        owner = anchor_lang::solana_program::system_program::ID,
+    )]
     pub nonce_account: Option<UncheckedAccount<'info>>,
 
     /// CHECK: Recent blockhashes sysvar (optional - only required if thread has nonce account)
+    #[account(address = SYSVAR_RECENT_BLOCKHASHES)]
     pub recent_blockhashes: Option<UncheckedAccount<'info>>,
 
     #[account(address = anchor_lang::system_program::ID)]
