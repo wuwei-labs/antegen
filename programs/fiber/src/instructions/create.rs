@@ -204,10 +204,7 @@ fn write_state(fiber_info: &AccountInfo, discriminator: &[u8], state_bytes: &[u8
         .len()
         .checked_add(state_bytes.len())
         .ok_or(AntegenFiberError::FiberAccountTooSmall)?;
-    require!(
-        end <= data.len(),
-        AntegenFiberError::FiberAccountTooSmall
-    );
+    require!(end <= data.len(), AntegenFiberError::FiberAccountTooSmall);
 
     data[..8].copy_from_slice(&disc);
     data[8..end].copy_from_slice(state_bytes);
@@ -223,5 +220,9 @@ pub(crate) fn write_versioned(fiber_info: &AccountInfo, state: &FiberVersionedSt
 }
 
 pub(crate) fn write_legacy(fiber_info: &AccountInfo, state: &FiberState) -> Result<()> {
-    write_state(fiber_info, FiberState::DISCRIMINATOR, &borsh::to_vec(state)?)
+    write_state(
+        fiber_info,
+        FiberState::DISCRIMINATOR,
+        &borsh::to_vec(state)?,
+    )
 }

@@ -4,7 +4,6 @@ use antegen_fiber_program::*;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::pubkey::Pubkey;
 
-
 /// Deterministic stand-in for `Pubkey::new_unique()`.
 ///
 /// Still distinct on every call, but reproducible from run to run, so a
@@ -16,7 +15,6 @@ fn unique_pubkey() -> Pubkey {
     bytes[..8].copy_from_slice(&NEXT.fetch_add(1, Ordering::Relaxed).to_le_bytes());
     Pubkey::new_from_array(bytes)
 }
-
 
 // ============================================================================
 // compile / decompile tests

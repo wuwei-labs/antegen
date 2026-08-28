@@ -112,7 +112,10 @@ impl CommissionCalculator for ThreadConfig {
             return 0.0;
         }
 
-        let decay_end = match self.grace_period_seconds.checked_add(self.fee_decay_seconds) {
+        let decay_end = match self
+            .grace_period_seconds
+            .checked_add(self.fee_decay_seconds)
+        {
             Some(end) => end,
             None => return 0.0,
         };

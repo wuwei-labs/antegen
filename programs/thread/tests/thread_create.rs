@@ -8,7 +8,6 @@ use solana_sdk::{
 mod common;
 use common::*;
 
-
 /// Deterministic stand-in for `Pubkey::new_unique()`.
 ///
 /// Still distinct on every call, but reproducible from run to run, so a
@@ -20,7 +19,6 @@ fn unique_pubkey() -> Pubkey {
     bytes[..8].copy_from_slice(&NEXT.fetch_add(1, Ordering::Relaxed).to_le_bytes());
     Pubkey::new_from_array(bytes)
 }
-
 
 /// Helper to create a thread and return (thread_pubkey, bump).
 fn create_thread_helper(
