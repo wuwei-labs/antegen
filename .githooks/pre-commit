@@ -47,11 +47,26 @@ results="$workdir/radar.json"
 log="$workdir/radar.log"
 trap 'rm -rf "$workdir"' EXIT
 
+# `-t` replaces the builtin template set rather than adding to it, so merge
+# the repo's own templates with the builtins into one directory. Without this
+# the custom rules would run *instead of* the 38 shipped ones.
+templates="$workdir/templates"
+mkdir -p "$templates"
+builtin=${RADAR_BUILTIN_TEMPLATES:-$HOME/.radar/api/builtin_templates}
+if [ -d "$builtin" ]; then
+    cp "$builtin"/*.yaml "$templates"/ 2>/dev/null
+else
+    echo "pre-commit: could not find radar's builtin templates at $builtin."
+    echo "  Set RADAR_BUILTIN_TEMPLATES to their location."
+    exit 1
+fi
+cp "$repo_root"/.radar/templates/*.yaml "$templates"/ 2>/dev/null
+
 echo "pre-commit: scanning programs/ with radar (takes about a minute)..."
 # radar's exit status is not a verdict: it exits 0 when it has findings to
 # report and 1 when the scan came back clean. The log and the results file are
 # what actually say what happened.
-( cd "$repo_root" && radar -p programs -o "$results" ) >"$log" 2>&1
+( cd "$repo_root" && radar -p programs -t "$templates" -o "$results" ) >"$log" 2>&1
 
 # radar clears its cached ASTs by tearing down its containers, and gives that
 # teardown 30 seconds. When it times out radar carries on and reports the
@@ -64,8 +79,20 @@ if grep -q "Cleanup timed out" "$log"; then
 fi
 
 # Confirm the run actually did the work, rather than falling through quietly.
-if ! grep -q "Ran .* templates" "$log"; then
+# radar only runs templates whose accent matches the framework it detects, so
+# the floor is the anchor-accent subset rather than every file in the merged
+# directory. The count catches a half-built template set: a scan that quietly
+# ran only the repo's own rules would look clean for the wrong reason.
+expected=$(grep -l "^accent: anchor" "$templates"/*.yaml 2>/dev/null | wc -l | tr -d ' ')
+ran=$(sed -n 's/.*Ran \([0-9]*\) template.*/\1/p' "$log" | head -1)
+if [ -z "$ran" ]; then
     echo "pre-commit: radar did not report running any templates."
+    tail -20 "$log"
+    exit 1
+fi
+if [ "$ran" -lt "$expected" ]; then
+    echo "pre-commit: radar ran $ran templates but $expected anchor rules were"
+    echo "  staged for it - the template set did not load as expected."
     tail -20 "$log"
     exit 1
 fi
