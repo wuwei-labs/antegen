@@ -85,6 +85,18 @@ Sharing`, `Unchecked Close Target`, `Unconstrained UncheckedAccount`,
 anywhere in a file disables the check for every other instruction defined in
 it.
 
+This part is fixable in the templates alone — the AST does nest each
+`#[account(...)]` under its own field, and a rule can scope to it by slicing
+`node.access_path` at `.ty` to get the field prefix
+(`...struct.fields.named[N]`) and only accepting attributes underneath it. A
+scoped rewrite of `Unconstrained UncheckedAccount` correctly reports
+`wide_open` in the example above, where the shipped rule reports nothing.
+
+It is only half a fix, though, because of the line-number bug below: the
+scoped rule identifies the right *account* but still prints the first
+`UncheckedAccount`'s line. Both need fixing for the result to be actionable,
+and they live in different places — one in the YAML, one in the core.
+
 ## Other radar behaviour worth knowing
 
 - **Its exit status is not a verdict.** radar exits `0` when it has findings
@@ -93,6 +105,20 @@ it.
   containers down, with a 30-second timeout; on timeout it continues and
   reports the previous run's findings against the current tree, line numbers
   and all. `.githooks/pre-commit` fails rather than trusting such a run.
-- **Reported spans are approximate.** Results come from `parent.to_result()`,
-  which frequently lands on an enclosing node — a `#[derive(Accounts)]` header
-  or a `use` line — rather than the operation that triggered the rule.
+- **Reported line numbers are unreliable for any repeated identifier.** Spans
+  are not taken from the parser. `api/utils/ast.py::enrich_ast_with_source_lines`
+  regex-searches the file for each identifier by name and assigns
+  `positions[0]` — its first textual occurrence. The branch meant to hand later
+  nodes their own position tests `pos not in node.get("src", [])`, comparing
+  against the node's own (absent) `src` rather than against the positions
+  already consumed, so it always re-assigns the first one.
+
+  Every node sharing an identifier therefore reports the same location. In a
+  struct with three `UncheckedAccount` fields, all three report the first
+  one's line; a second `Signer` field reports the first `Signer`'s line. It is
+  also why `Invoke Signed Unvalidated Seeds` points at
+  `use ...::invoke_signed;` — the import is where that identifier first
+  appears in the file.
+
+  Treat a finding as naming a *file and a rule*, not a line. Read the rule and
+  find the real site yourself.
