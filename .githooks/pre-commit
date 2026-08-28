@@ -1,0 +1,95 @@
+#!/bin/sh
+#
+# Runs the radar static analyser over programs/ before a commit lands.
+#
+# Only fires when a Rust file under programs/ is staged, because the scan
+# takes about a minute and needs Docker running. Set SKIP_RADAR=1 to bypass
+# it for one commit, or use `git commit --no-verify`.
+#
+# Install: git config core.hooksPath .githooks
+
+set -u
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR -- 'programs/*.rs' 'programs/**/*.rs')
+if [ -z "$staged" ]; then
+    exit 0
+fi
+
+if [ "${SKIP_RADAR:-0}" = "1" ]; then
+    echo "pre-commit: SKIP_RADAR=1, skipping radar scan"
+    exit 0
+fi
+
+if ! command -v radar >/dev/null 2>&1; then
+    echo "pre-commit: radar not found on PATH."
+    echo "  Install it, or commit with SKIP_RADAR=1 to bypass."
+    exit 1
+fi
+
+if ! docker info >/dev/null 2>&1; then
+    echo "pre-commit: radar needs Docker, which is not responding."
+    echo "  Start Docker, or commit with SKIP_RADAR=1 to bypass."
+    exit 1
+fi
+
+# radar scans paths on disk, so it sees the working tree rather than what is
+# staged. Say so when the two differ instead of implying the commit itself
+# was the thing scanned.
+unstaged=$(git diff --name-only -- 'programs/*.rs' 'programs/**/*.rs')
+if [ -n "$unstaged" ]; then
+    echo "pre-commit: note - programs/ has unstaged changes, so this scan"
+    echo "  covers the working tree, not the staged snapshot."
+fi
+
+repo_root=$(git rev-parse --show-toplevel)
+workdir=$(mktemp -d)
+results="$workdir/radar.json"
+log="$workdir/radar.log"
+trap 'rm -rf "$workdir"' EXIT
+
+echo "pre-commit: scanning programs/ with radar (takes about a minute)..."
+# radar's exit status is not a verdict: it exits 0 when it has findings to
+# report and 1 when the scan came back clean. The log and the results file are
+# what actually say what happened.
+( cd "$repo_root" && radar -p programs -o "$results" ) >"$log" 2>&1
+
+# radar clears its cached ASTs by tearing down its containers, and gives that
+# teardown 30 seconds. When it times out radar carries on and reports the
+# previous run's findings against the current tree — line numbers and all.
+# A stale clean result is worse than no scan, so refuse to trust the run.
+if grep -q "Cleanup timed out" "$log"; then
+    echo "pre-commit: radar could not clear its cache, so its results may be"
+    echo "  stale. Re-run after 'docker compose -f ~/.radar/docker-compose.yml down -v'."
+    exit 1
+fi
+
+# Confirm the run actually did the work, rather than falling through quietly.
+if ! grep -q "Ran .* templates" "$log"; then
+    echo "pre-commit: radar did not report running any templates."
+    tail -20 "$log"
+    exit 1
+fi
+
+# radar only writes the output file when it has something to report.
+if [ -f "$results" ]; then
+    echo
+    echo "pre-commit: radar found issues - commit blocked."
+    echo
+    grep -E "^\[ |^ \* " "$log" | head -60
+    echo
+    echo "  To see the full results:"
+    echo "    radar -p programs -o radar.json"
+    echo "  To commit anyway: SKIP_RADAR=1 git commit ..."
+    exit 1
+fi
+
+if grep -q "No results found" "$log"; then
+    echo "pre-commit: radar clean"
+    exit 0
+fi
+
+# Neither a results file nor a clean verdict: the scan did not finish the way
+# either branch above expects, so do not read it as a pass.
+echo "pre-commit: could not tell whether radar passed - treating as a failure."
+tail -20 "$log"
+exit 1
