@@ -250,3 +250,110 @@ fn test_thread_close_returns_all_lamports() {
         thread_balance + fiber_balance
     );
 }
+
+/// A tracked fiber whose account was destroyed out from under the thread —
+/// the shape the 2026-08-26 rent sweep left behind on 25 mainnet threads.
+///
+/// Passing the dead account is how the caller accounts for the id: the address
+/// still derives, and the empty slot proves there is nothing left to close.
+#[test]
+fn test_thread_close_tracked_fiber_account_gone() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let thread_pubkey = create_thread_no_fiber(&mut svm, &authority, &payer, "tc-gone");
+    let fiber0 = add_external_fiber(&mut svm, &authority, &payer, &thread_pubkey, 0);
+    let fiber1 = add_external_fiber(&mut svm, &authority, &payer, &thread_pubkey, 1);
+
+    // Destroy fiber 1's account, leaving the thread still tracking index 1.
+    svm.set_account(fiber1, solana_sdk::account::Account::default())
+        .unwrap();
+    assert!(!account_exists(&svm, &fiber1));
+
+    let ix = build_close_thread(
+        &authority.pubkey(),
+        &authority.pubkey(),
+        &thread_pubkey,
+        &[fiber0, fiber1],
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    svm.send_transaction(tx).unwrap();
+
+    assert!(!account_exists(&svm, &thread_pubkey));
+    assert!(!account_exists(&svm, &fiber0));
+}
+
+/// Tolerating a destroyed fiber does not relax the invariant: every id in
+/// `fiber_ids` must still be accounted for. Omitting the dead one leaves the
+/// list non-empty and the close is refused, exactly as before.
+#[test]
+fn test_thread_close_omitting_dead_fiber_still_fails() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let thread_pubkey = create_thread_no_fiber(&mut svm, &authority, &payer, "tc-gone2");
+    let fiber0 = add_external_fiber(&mut svm, &authority, &payer, &thread_pubkey, 0);
+    let fiber1 = add_external_fiber(&mut svm, &authority, &payer, &thread_pubkey, 1);
+
+    svm.set_account(fiber1, solana_sdk::account::Account::default())
+        .unwrap();
+
+    let ix = build_close_thread(
+        &authority.pubkey(),
+        &authority.pubkey(),
+        &thread_pubkey,
+        &[fiber0], // index 1 left unaccounted for
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    assert!(svm.send_transaction(tx).is_err());
+    assert!(account_exists(&svm, &thread_pubkey));
+}
+
+/// An empty account that is not a derived fiber PDA of this thread is still
+/// rejected — emptiness is only ever read *after* derivation has bound the
+/// slot to a tracked id.
+#[test]
+fn test_thread_close_empty_account_not_a_tracked_fiber() {
+    let (mut svm, _admin, payer) = create_test_env();
+    let authority = Keypair::new();
+    svm.airdrop(&authority.pubkey(), DEFAULT_AIRDROP).unwrap();
+
+    let thread_pubkey = create_thread_no_fiber(&mut svm, &authority, &payer, "tc-gone3");
+    let fiber0 = add_external_fiber(&mut svm, &authority, &payer, &thread_pubkey, 0);
+
+    // A fiber PDA of some *other* thread: empty, plausibly shaped, and not a
+    // derivation of anything this thread tracks. The second thread is never
+    // created, so the account does not exist either.
+    let (other_thread, _) = thread_pda(&authority.pubkey(), b"tc-gone3-other");
+    let (foreign_fiber, _) = fiber_pda(&other_thread, 0);
+
+    let ix = build_close_thread(
+        &authority.pubkey(),
+        &authority.pubkey(),
+        &thread_pubkey,
+        &[fiber0, foreign_fiber],
+    );
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[&payer, &authority],
+        blockhash,
+    );
+    assert!(svm.send_transaction(tx).is_err());
+    assert!(account_exists(&svm, &thread_pubkey));
+}

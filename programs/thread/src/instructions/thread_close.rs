@@ -10,7 +10,10 @@ use {
 /// Accounts required by the `thread_close` instruction.
 ///
 /// External fiber accounts (FiberState PDAs) should be passed via remaining_accounts.
-/// All external fibers must be provided - partial deletion is not allowed.
+/// Every id in `fiber_ids` must be accounted for — partial deletion is not
+/// allowed. An id whose account no longer exists is accounted for by passing
+/// that account anyway: the address still derives, and an empty slot is taken
+/// as proof there is nothing left to close.
 #[derive(Accounts)]
 pub struct ThreadClose<'info> {
     /// The authority (owner) of the thread OR the thread itself (for self-deletion via CPI).
@@ -46,14 +49,11 @@ pub fn thread_close<'info>(ctx: Context<'info, ThreadClose<'info>>) -> Result<()
 
     // Process each fiber account from remaining_accounts via CPI to Fiber Program
     for account in ctx.remaining_accounts.iter() {
-        // Validate the slot holds a fiber (legacy or V1) belonging to this thread.
-        let fiber_read = Fiber::try_deserialize(&mut &account.data.borrow()[..])?;
-        require!(
-            fiber_read.thread() == thread_key,
-            AntegenThreadError::InvalidFiberAccount
-        );
-
-        // Find which fiber_id this account corresponds to by checking PDA derivation
+        // Find which fiber_id this account corresponds to by checking PDA
+        // derivation. Done before reading the account so that a fiber whose
+        // account is gone can still be identified — derivation is what binds
+        // the slot to this thread, and it holds whether or not anything is
+        // there.
         let account_key = account.key();
         let pos = thread
             .fiber_ids
@@ -61,6 +61,29 @@ pub fn thread_close<'info>(ctx: Context<'info, ThreadClose<'info>>) -> Result<()
             .position(|&idx| FiberState::pubkey(thread_key, idx) == account_key)
             .ok_or(AntegenThreadError::InvalidFiberAccount)?;
         let fiber_index = thread.fiber_ids.remove(pos);
+
+        // A tracked fiber whose account no longer exists. `fiber_ids` records
+        // indices, and nothing on chain keeps that list in agreement with the
+        // accounts those indices name — a fiber can be closed out from under a
+        // thread that still lists it, which is what the 2026-08-26 rent sweep
+        // did at scale.
+        //
+        // Dropping the id is the whole remedy: there is nothing left to close,
+        // and no rent to return. Refusing to drop it is what made such a thread
+        // impossible to close by *anyone* — passing the dead account failed to
+        // deserialize, and omitting it left `fiber_ids` non-empty below. The
+        // caller cannot resolve that from the outside, because only this
+        // program can edit the list.
+        if account.data_is_empty() {
+            continue;
+        }
+
+        // Validate the slot holds a fiber (legacy or V1) belonging to this thread.
+        let fiber_read = Fiber::try_deserialize(&mut &account.data.borrow()[..])?;
+        require!(
+            fiber_read.thread() == thread_key,
+            AntegenThreadError::InvalidFiberAccount
+        );
 
         // CPI to Fiber Program's close_fiber (rent returns to thread PDA)
         let fiber_program = ctx
