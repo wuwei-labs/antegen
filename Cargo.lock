@@ -617,6 +617,7 @@ dependencies = [
  "litesvm-token",
  "solana-nonce",
  "solana-sdk",
+ "solana-security-txt",
  "solana-system-interface 3.0.0",
 ]
 

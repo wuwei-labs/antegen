@@ -33,6 +33,25 @@ use state::{SerializableInstruction, Trigger};
 
 declare_id!("AgTv5w1UvUb6zeqkThwMrztGu9hpepBu8YLghuR4dpSx");
 
+// On-chain security contact, read by explorers from the deployed `.so`.
+//
+// Gated on `not(no-entrypoint)` for the same reason the entrypoint is: the
+// macro emits a `#[no_mangle]` static into the binary, and this crate is also
+// pulled in as a plain library (the `cpi` feature implies `no-entrypoint`).
+// A dependent program building its own `security_txt!` would otherwise
+// collide with this one at link time.
+#[cfg(not(feature = "no-entrypoint"))]
+solana_security_txt::security_txt! {
+    name: "Antegen Thread Program",
+    project_url: "https://antegen.xyz/",
+    contacts: "email:anthony@wuwei.dev",
+    policy: "https://github.com/wuwei-labs/antegen/blob/main/SECURITY.md",
+    preferred_languages: "en",
+    source_code: "https://github.com/wuwei-labs/antegen/tree/main/programs/thread",
+    source_release: concat!("antegen-thread-program-v", env!("CARGO_PKG_VERSION")),
+    auditors: "None"
+}
+
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub enum ThreadId {
     Bytes(Vec<u8>),
