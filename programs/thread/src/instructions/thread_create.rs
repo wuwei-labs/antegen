@@ -37,7 +37,7 @@ pub struct ThreadCreate<'info> {
         ],
         bump,
         payer = payer,
-        space = 8 + Thread::INIT_SPACE
+        space = THREAD_ACCOUNT_SPACE
     )]
     pub thread: Account<'info, Thread>,
 
@@ -54,8 +54,16 @@ pub struct ThreadCreate<'info> {
 
     pub system_program: Program<'info, System>,
 
-    /// CHECK: Fiber account (optional — only when creating with an instruction)
-    #[account(mut)]
+    /// CHECK: Fiber account (optional — only when creating with an
+    /// instruction). Not yet allocated on a fresh create, so a bare system
+    /// account is expected here; what it must never be is some third
+    /// program's account.
+    #[account(
+        mut,
+        constraint = fiber.to_account_info().owner == &antegen_fiber_program::ID
+            || fiber.to_account_info().owner == &System::id()
+            @ AntegenThreadError::MissingFiberAccount,
+    )]
     pub fiber: Option<UncheckedAccount<'info>>,
 
     /// Fiber Program (optional — only required when fiber is provided)
@@ -75,6 +83,16 @@ pub fn thread_create(
     let authority: &Signer = &ctx.accounts.authority;
     let payer: &Signer = &ctx.accounts.payer;
     let thread: &mut Account<Thread> = &mut ctx.accounts.thread;
+
+    // `init_if_needed` will hand back an existing thread rather than failing,
+    // and everything below overwrites it — schedule, exec_count, created_at.
+    // The seeds bind the account to a signing authority, so only the owner can
+    // reach their own thread this way, but silently resetting a live thread's
+    // execution history is not what a second `create` should do.
+    require!(
+        !thread.is_initialized(),
+        AntegenThreadError::ThreadAlreadyInitialized
+    );
 
     // Check if nonce account is provided for durable nonce thread
     let create_durable_thread = ctx.accounts.nonce_account.is_some();
@@ -232,7 +250,7 @@ pub fn thread_create(
 
         // Conditional pre-funding: only pre-fund if fiber account is not yet initialized
         if fiber.to_account_info().data_len() == 0 {
-            let space = 8 + antegen_fiber_program::state::FiberVersionedState::INIT_SPACE;
+            let space = antegen_fiber_program::state::FIBER_ACCOUNT_SPACE;
             let rent_lamports = Rent::get()?.minimum_balance(space);
             **thread.to_account_info().try_borrow_mut_lamports()? -= rent_lamports;
             **fiber.to_account_info().try_borrow_mut_lamports()? += rent_lamports;

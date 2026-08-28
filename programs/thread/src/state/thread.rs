@@ -152,6 +152,57 @@ pub struct Thread {
     pub close_fiber: Vec<u8>,
 }
 
+/// Total on-chain size of a thread account: Anchor's 8-byte discriminator
+/// plus the state itself.
+pub const THREAD_ACCOUNT_SPACE: usize = 8 + Thread::INIT_SPACE;
+
+/// Hashes the window of account data an `Account` trigger watches.
+///
+/// Both callers used to slice `data` directly, which panics whenever `offset`
+/// runs past the end of the account — pointing a thread at an account shorter
+/// than the one it was created against aborted the transaction instead of
+/// returning an error. Only one of the two callers checked that the account it
+/// was handed is the one the trigger actually names; doing it here applies
+/// that check to both.
+fn hash_trigger_window(
+    account_info: &AccountInfo,
+    address: &Pubkey,
+    offset: u64,
+    size: u64,
+) -> Result<u64> {
+    require_keys_eq!(
+        *account_info.key,
+        *address,
+        AntegenThreadError::TriggerConditionFailed
+    );
+
+    let data = account_info.try_borrow_data()?;
+    let offset: usize = offset
+        .try_into()
+        .map_err(|_| error!(AntegenThreadError::TriggerConditionFailed))?;
+    let size: usize = size
+        .try_into()
+        .map_err(|_| error!(AntegenThreadError::TriggerConditionFailed))?;
+    let range_end = offset
+        .checked_add(size)
+        .ok_or(AntegenThreadError::TriggerConditionFailed)?;
+
+    /// Clamps the requested window to what the account actually holds.
+    ///
+    /// A window that overruns the end hashes whatever is present from
+    /// `offset` onward; an offset past the end has nothing to hash and is
+    /// rejected rather than silently treated as an empty window.
+    fn try_from_slice(data: &[u8], offset: usize, range_end: usize) -> Result<&[u8]> {
+        data.get(offset..range_end.min(data.len()))
+            .ok_or(error!(AntegenThreadError::TriggerConditionFailed))
+    }
+
+    use std::hash::Hash;
+    let mut hasher = DefaultHasher::new();
+    try_from_slice(&data, offset, range_end)?.hash(&mut hasher);
+    Ok(hasher.finish())
+}
+
 impl Thread {
     /// Derive the pubkey of a thread account.
     pub fn pubkey(authority: Pubkey, id: impl AsRef<[u8]>) -> Pubkey {
@@ -159,6 +210,16 @@ impl Thread {
         assert!(id_bytes.len() <= 32, "Thread ID must not exceed 32 bytes");
 
         Pubkey::find_program_address(&[SEED_THREAD, authority.as_ref(), id_bytes], &crate::ID).0
+    }
+
+    /// Whether this account already holds a created thread.
+    ///
+    /// `thread_create` allocates with `init_if_needed`, so it is handed a
+    /// zeroed account on a genuine create and a populated one on a repeat
+    /// call. `version` is written once at creation and never cleared, which
+    /// makes it the field that distinguishes the two.
+    pub fn is_initialized(&self) -> bool {
+        self.version != 0
     }
 
     /// Check if this thread has a nonce account.
@@ -425,25 +486,7 @@ impl TriggerProcessor for Thread {
                     .first()
                     .ok_or(AntegenThreadError::TriggerConditionFailed)?;
 
-                // Verify it's the correct account
-                require!(
-                    address.eq(account_info.key),
-                    AntegenThreadError::TriggerConditionFailed
-                );
-
-                // Compute data hash
-                let mut hasher = DefaultHasher::new();
-                let data = &account_info.try_borrow_data()?;
-                let offset = *offset as usize;
-                let range_end = offset.checked_add(*size as usize).unwrap();
-
-                use std::hash::Hash;
-                if data.len() > range_end {
-                    data[offset..range_end].hash(&mut hasher);
-                } else {
-                    data[offset..].hash(&mut hasher);
-                }
-                let data_hash = hasher.finish();
+                let data_hash = hash_trigger_window(account_info, address, *offset, *size)?;
 
                 // Verify hash changed
                 if let Schedule::OnChange { prev: prior_hash } = &self.schedule {
@@ -470,24 +513,17 @@ impl TriggerProcessor for Thread {
         let current_timestamp = clock.unix_timestamp;
 
         self.schedule = match &self.trigger {
-            Trigger::Account { offset, size, .. } => {
+            Trigger::Account {
+                address,
+                offset,
+                size,
+            } => {
                 // Compute data hash for Account trigger
                 let account_info = remaining_accounts
                     .first()
                     .ok_or(AntegenThreadError::TriggerConditionFailed)?;
 
-                let mut hasher = DefaultHasher::new();
-                let data = &account_info.try_borrow_data()?;
-                let offset = *offset as usize;
-                let range_end = offset.checked_add(*size as usize).unwrap();
-
-                use std::hash::Hash;
-                if data.len() > range_end {
-                    data[offset..range_end].hash(&mut hasher);
-                } else {
-                    data[offset..].hash(&mut hasher);
-                }
-                let data_hash = hasher.finish();
+                let data_hash = hash_trigger_window(account_info, address, *offset, *size)?;
 
                 Schedule::OnChange { prev: data_hash }
             }
@@ -624,6 +660,16 @@ impl NonceProcessor for Thread {
 
         match (nonce_account, recent_blockhashes) {
             (Some(nonce_acc), Some(recent_bh)) => {
+                // The thread PDA signs the advance below. Nothing upstream
+                // binds the passed nonce account to the one this thread was
+                // created with, so pin it here rather than lending the
+                // signature to whatever account the executor supplied.
+                require_keys_eq!(
+                    nonce_acc.key(),
+                    self.nonce_account,
+                    AntegenThreadError::InvalidNonceAccount
+                );
+
                 // Get thread key from account info
                 let thread_key = *thread_account_info.key;
 

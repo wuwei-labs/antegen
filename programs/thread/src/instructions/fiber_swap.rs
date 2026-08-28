@@ -28,7 +28,11 @@ pub struct FiberSwap<'info> {
 
     /// CHECK: target fiber — receives source's instruction content.
     /// Shape-agnostic; fiber program validates the `thread` field.
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = target.to_account_info().owner == &antegen_fiber_program::ID
+            @ AntegenThreadError::InvalidFiberAccount,
+    )]
     pub target: UncheckedAccount<'info>,
 
     /// CHECK: source fiber — closed after its instruction is copied to target.

@@ -7,7 +7,14 @@ use crate::state::Signal;
 /// The thread signs via invoke_signed in thread_exec.
 #[derive(Accounts)]
 pub struct ThreadMemo<'info> {
-    /// The thread account that signs this instruction via CPI
+    /// The thread account that signs this instruction via CPI.
+    ///
+    /// This instruction is only reachable through `thread_exec`, which signs
+    /// as the thread PDA. Requiring the signer to be an account this program
+    /// owns keeps it from being driven directly by an arbitrary wallet.
+    #[account(
+        constraint = signer.to_account_info().owner == &crate::ID,
+    )]
     pub signer: Signer<'info>,
 }
 

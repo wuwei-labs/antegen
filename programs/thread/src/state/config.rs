@@ -64,44 +64,103 @@ pub struct ThreadConfig {
     pub fee_decay_seconds: i64,
 }
 
+/// Total on-chain size of the config account: Anchor's 8-byte discriminator
+/// plus the state itself.
+pub const CONFIG_ACCOUNT_SPACE: usize = 8 + ThreadConfig::INIT_SPACE;
+
+impl Default for ThreadConfig {
+    /// The fee policy a freshly initialized config starts with.
+    ///
+    /// `bump` and `admin` have no meaningful default — `config_init` fills
+    /// them in from the account it just created and the signer that created it.
+    fn default() -> Self {
+        Self {
+            version: 1,
+            bump: 0,
+            admin: Pubkey::default(),
+            paused: false,
+            commission_fee: 1000,   // lamports, base commission
+            executor_fee_bps: 9000, // 90% to executor
+            core_team_bps: 1000,    // 10% to core team
+            grace_period_seconds: 5,
+            fee_decay_seconds: 295, // 300s total, with the grace period
+        }
+    }
+}
+
 impl ThreadConfig {
     pub fn pubkey() -> Pubkey {
         Pubkey::find_program_address(&[crate::SEED_CONFIG], &crate::ID).0
     }
 
     pub fn space() -> usize {
-        8 + Self::INIT_SPACE
+        CONFIG_ACCOUNT_SPACE
     }
 }
 
 impl CommissionCalculator for ThreadConfig {
     fn calculate_commission_multiplier(&self, time_since_ready: i64) -> f64 {
+        // Within grace period: full commission.
         if time_since_ready <= self.grace_period_seconds {
-            // Within grace period: full commission
-            1.0
-        } else if time_since_ready <= self.grace_period_seconds + self.fee_decay_seconds {
-            // Within decay period: linear decay from 100% to 0%
-            let time_into_decay = (time_since_ready - self.grace_period_seconds) as f64;
-            let decay_progress = time_into_decay / self.fee_decay_seconds as f64;
-            1.0 - decay_progress
-        } else {
-            // After grace + decay period: no commission
-            0.0
+            return 1.0;
         }
+
+        // A zero or negative decay window has no slope to interpolate along;
+        // dividing by it produced NaN, which then silently became a zero fee.
+        // Say so directly instead.
+        if self.fee_decay_seconds <= 0 {
+            return 0.0;
+        }
+
+        let decay_end = match self.grace_period_seconds.checked_add(self.fee_decay_seconds) {
+            Some(end) => end,
+            None => return 0.0,
+        };
+        if time_since_ready > decay_end {
+            // After grace + decay period: no commission.
+            return 0.0;
+        }
+
+        // Within decay period: linear decay from 100% to 0%.
+        let time_into_decay = time_since_ready.saturating_sub(self.grace_period_seconds) as f64;
+        let decay_progress = time_into_decay / self.fee_decay_seconds as f64;
+        (1.0 - decay_progress).clamp(0.0, 1.0)
     }
 
     fn calculate_effective_commission(&self, time_since_ready: i64) -> u64 {
         let multiplier = self.calculate_commission_multiplier(time_since_ready);
-        (self.commission_fee as f64 * multiplier) as u64
+        if !multiplier.is_finite() || multiplier <= 0.0 {
+            return 0;
+        }
+
+        // Scale through basis points rather than multiplying a u64 by an f64.
+        // `commission_fee` is admin-set and unbounded, and `f64 as u64`
+        // saturates silently at the top of the range.
+        let bps = (multiplier.min(1.0) * 10_000.0) as u64;
+        self.commission_fee
+            .checked_mul(bps)
+            .map(|scaled| scaled / 10_000)
+            .unwrap_or(self.commission_fee)
     }
 
     fn calculate_executor_fee(&self, effective_commission: u64) -> u64 {
-        (effective_commission * self.executor_fee_bps) / 10_000
+        scale_bps(effective_commission, self.executor_fee_bps)
     }
 
     fn calculate_core_team_fee(&self, effective_commission: u64) -> u64 {
-        (effective_commission * self.core_team_bps) / 10_000
+        scale_bps(effective_commission, self.core_team_bps)
     }
+}
+
+/// Applies a basis-point rate to a lamport amount.
+///
+/// Widened to `u128` first: the plain `u64` product of an admin-set commission
+/// and a rate overflows before the division brings it back into range, which
+/// aborts the execution rather than paying out a capped fee.
+fn scale_bps(amount: u64, bps: u64) -> u64 {
+    let scaled = (amount as u128).saturating_mul(bps as u128);
+    let fee = scaled.checked_div(10_000).unwrap_or(0);
+    u64::try_from(fee).unwrap_or(u64::MAX)
 }
 
 impl PaymentProcessor for ThreadConfig {

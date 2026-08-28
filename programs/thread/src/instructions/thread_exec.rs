@@ -33,8 +33,15 @@ pub struct ThreadExec<'info> {
     )]
     pub thread: Box<Account<'info, Thread>>,
 
-    /// CHECK: fiber to execute (owned by Fiber Program). Shape-agnostic —
-    /// dispatched manually via `Fiber` so both legacy and V1 fibers run.
+    /// CHECK: fiber to execute. Shape-agnostic — dispatched manually via
+    /// `Fiber` so both legacy and V1 fibers run. The owner constraint is what
+    /// makes that manual read safe: the discriminator alone would accept a
+    /// look-alike account owned by anyone, and this instruction lends the
+    /// thread's signature to whatever instruction it decodes.
+    #[account(
+        constraint = fiber.to_account_info().owner == &antegen_fiber_program::ID
+            @ AntegenThreadError::InvalidFiberAccount,
+    )]
     pub fiber: UncheckedAccount<'info>,
 
     /// The config for fee distribution
@@ -140,14 +147,20 @@ pub fn thread_exec<'info>(
     let fiber = &ctx.accounts.fiber;
 
     let expected_fiber = thread.fiber_at_index(&thread_pubkey, fiber_cursor);
-    require!(
-        fiber.key().eq(&expected_fiber),
+    require_keys_eq!(
+        fiber.key(),
+        expected_fiber,
         AntegenThreadError::WrongFiberIndex
     );
 
-    let fiber_read = Fiber::try_deserialize(&mut &fiber.data.borrow()[..])?;
-    require!(
-        fiber_read.thread().eq(&thread_pubkey),
+    // `try_from` checks the account is owned by the Fiber Program before
+    // decoding it — the discriminator alone would accept a look-alike account
+    // owned by anyone, and this instruction lends the thread's signature to
+    // whatever instruction it reads out.
+    let fiber_read = Fiber::try_from(&fiber.to_account_info())?;
+    require_keys_eq!(
+        fiber_read.thread(),
+        thread_pubkey,
         AntegenThreadError::InvalidFiberAccount
     );
     let instruction = fiber_read.get_instruction(&executor.key())?;
@@ -210,7 +223,9 @@ pub fn thread_exec<'info>(
 
     // ── Payments (when chain ends) ──
     if signal.ne(&Signal::Chain) {
-        let balance_change = executor.lamports() as i64 - executor_lamports_start as i64;
+        let balance_change = (executor.lamports() as i64)
+            .checked_sub(executor_lamports_start as i64)
+            .ok_or(AntegenThreadError::InvalidThreadState)?;
         let payments =
             config.calculate_payments(time_since_ready, balance_change, forgo_commission);
 
