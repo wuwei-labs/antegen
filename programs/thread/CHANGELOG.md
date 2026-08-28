@@ -1,5 +1,25 @@
 # Changelog
 
+## [7.0.0](https://github.com/wuwei-labs/antegen/compare/antegen-thread-program-v6.0.0...antegen-thread-program-v7.0.0) (2026-08-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **thread:** drop a wrong signer constraint, pin the nonce sysvars
+* **thread:** thread_create no longer accepts an already-initialized thread. It allocates with init_if_needed and overwrote every field below that, so a repeat create silently reset a live thread's schedule and exec_count; it now fails instead. Callers using create as an upsert must switch to thread_update, or close the thread first.
+
+### Features
+
+* **thread:** publish an on-chain security contact ([6b06d3b](https://github.com/wuwei-labs/antegen/commit/6b06d3bb6b94d6c39268859c93e8c8cdfffc948c))
+
+
+### Bug Fixes
+
+* **thread:** bind accounts the thread PDA signs against ([492d1b0](https://github.com/wuwei-labs/antegen/commit/492d1b06c27104ed528df7c8eeb6fee56c0501a3))
+* **thread:** drop a wrong signer constraint, pin the nonce sysvars ([475157b](https://github.com/wuwei-labs/antegen/commit/475157b55189abd22e27552de9e1c6549d818d1b))
+* **thread:** let a thread close when a tracked fiber is gone ([8a3ecae](https://github.com/wuwei-labs/antegen/commit/8a3ecae4bc3a21bb5b4b65e02a405f6fdad24771))
+* **thread:** let a thread close when a tracked fiber is gone ([f00b774](https://github.com/wuwei-labs/antegen/commit/f00b774727784bcd05d1b80dc037e174f9c1a080))
+
 ## [6.0.0](https://github.com/wuwei-labs/antegen/compare/antegen-thread-program-v5.2.3...antegen-thread-program-v6.0.0) (2026-08-28)
 
 
