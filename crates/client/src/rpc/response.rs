@@ -149,6 +149,14 @@ pub struct SafeSimulationValue {
     pub logs: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_optional_u64")]
     pub units_consumed: Option<u64>,
+    /// Bytes of account data the simulated transaction actually loaded.
+    ///
+    /// The measurement behind the loaded-accounts limit we request. Absent on
+    /// RPC versions that predate the field, in which case no limit is set and
+    /// the runtime's own default applies — the behaviour before this was
+    /// measured at all.
+    #[serde(default)]
+    pub loaded_accounts_data_size: Option<u32>,
     pub accounts: Option<Vec<Option<SafeUiAccount>>>,
     pub return_data: Option<serde_json::Value>,
 }

@@ -247,10 +247,8 @@ impl CuOracle {
 
     fn adjust(&self, thread: &Pubkey, f: impl Fn(u32, &CuOracleConfig) -> u32) {
         let current = self.margin_bps(thread);
-        let next = f(current, &self.config).clamp(
-            self.config.min_margin_bps,
-            self.config.max_margin_bps,
-        );
+        let next =
+            f(current, &self.config).clamp(self.config.min_margin_bps, self.config.max_margin_bps);
         self.margins.insert(*thread, next);
     }
 }
@@ -259,6 +257,31 @@ impl Default for CuOracle {
     fn default() -> Self {
         Self::new(CuOracleConfig::default())
     }
+}
+
+/// Granularity the cost model charges loaded account data in: 8 cost units per
+/// 32 KiB page, or part thereof.
+pub const LOADED_ACCOUNTS_PAGE_BYTES: u32 = 32 * 1024;
+
+/// The runtime's default when a transaction requests no limit: 64 MiB, which is
+/// 2,048 pages and so 16,384 cost units — more, at the terminal resource-fee
+/// rate, than today's entire transaction fee, charged on every transaction that
+/// stays silent about what it actually loads.
+pub const MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES: u32 = 64 * 1024 * 1024;
+
+/// Turn a measured loaded-accounts size into the limit to request.
+///
+/// Rounds up to the page the cost model charges in and adds `slack_pages`.
+/// Slack is nearly free — a page is 8 cost units, so two pages of headroom cost
+/// 16 against the 16,384 that requesting nothing costs — while being short is
+/// a failed transaction and a missed trigger window. There is no reason to cut
+/// this fine.
+pub fn loaded_accounts_limit(measured_bytes: u32, slack_pages: u32) -> u32 {
+    let pages = measured_bytes.div_ceil(LOADED_ACCOUNTS_PAGE_BYTES);
+    pages
+        .saturating_add(slack_pages)
+        .saturating_mul(LOADED_ACCOUNTS_PAGE_BYTES)
+        .min(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES)
 }
 
 /// What a landed transaction actually used, read from its logs.
@@ -467,6 +490,62 @@ mod tests {
         assert_eq!(o.tracked_threads(), 0);
     }
 
+    /// Cost units the runtime charges for a given limit: 8 per 32 KiB page.
+    fn cost_units(limit_bytes: u32) -> u32 {
+        limit_bytes.div_ceil(LOADED_ACCOUNTS_PAGE_BYTES) * 8
+    }
+
+    /// The saving this exists for. Requesting nothing is charged the 64 MiB
+    /// default; a realistic thread loads a few hundred KiB.
+    #[test]
+    fn requesting_a_measured_limit_beats_the_runtime_default() {
+        // ~400 KiB of programs and accounts.
+        let limit = loaded_accounts_limit(400 * 1024, 2);
+
+        assert_eq!(cost_units(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES), 16_384);
+        assert_eq!(cost_units(limit), 120);
+    }
+
+    #[test]
+    fn a_measurement_is_rounded_up_to_a_whole_page() {
+        // One byte into a second page still occupies two, plus slack.
+        assert_eq!(
+            loaded_accounts_limit(LOADED_ACCOUNTS_PAGE_BYTES + 1, 0),
+            2 * LOADED_ACCOUNTS_PAGE_BYTES
+        );
+        assert_eq!(
+            loaded_accounts_limit(LOADED_ACCOUNTS_PAGE_BYTES, 0),
+            LOADED_ACCOUNTS_PAGE_BYTES,
+            "an exact page is not rounded to the next one"
+        );
+    }
+
+    #[test]
+    fn slack_is_added_in_whole_pages() {
+        let bare = loaded_accounts_limit(100 * 1024, 0);
+        let padded = loaded_accounts_limit(100 * 1024, 2);
+        assert_eq!(padded - bare, 2 * LOADED_ACCOUNTS_PAGE_BYTES);
+        assert_eq!(
+            cost_units(padded) - cost_units(bare),
+            16,
+            "two pages of headroom against the 16,384 that requesting nothing costs"
+        );
+    }
+
+    /// A measurement near the ceiling must not produce a limit above it, which
+    /// the runtime would reject.
+    #[test]
+    fn the_limit_never_exceeds_what_the_runtime_permits() {
+        assert_eq!(
+            loaded_accounts_limit(MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES, 2),
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES
+        );
+        assert_eq!(
+            loaded_accounts_limit(u32::MAX, 100),
+            MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES
+        );
+    }
+
     fn logs(lines: &[&str]) -> Vec<String> {
         lines.iter().map(|s| s.to_string()).collect()
     }
@@ -492,7 +571,10 @@ mod tests {
         ]))
         .expect("depth-1 frame present");
 
-        assert_eq!(usage.consumed, 45_678, "the inner 1,234 is already included");
+        assert_eq!(
+            usage.consumed, 45_678,
+            "the inner 1,234 is already included"
+        );
         assert_eq!(usage.budget, 199_850);
     }
 
@@ -606,8 +688,6 @@ mod tests {
             "Transaction simulation failed: Computational budget exceeded"
         ));
         assert!(!is_compute_exceeded("BlockhashNotFound"));
-        assert!(!is_compute_exceeded(
-            "WouldExceedMaxBlockCostLimit"
-        ));
+        assert!(!is_compute_exceeded("WouldExceedMaxBlockCostLimit"));
     }
 }

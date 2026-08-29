@@ -238,7 +238,10 @@ impl RpcSubscription {
     /// more slowly, and at the cost of an occasional overrun, but correctly.
     pub async fn subscribe_to_logs(&self, executor: Pubkey, cu_oracle: Arc<CuOracle>) {
         let ws_url = self.ws_url.clone();
-        debug!("[{}] Connecting to WebSocket for log subscription...", ws_url);
+        debug!(
+            "[{}] Connecting to WebSocket for log subscription...",
+            ws_url
+        );
 
         let (_, subscribe_msg) = build_logs_subscribe_request(&executor, &self.commitment);
 

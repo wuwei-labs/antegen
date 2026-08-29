@@ -410,10 +410,7 @@ mod tests {
             (TxVersion::V1, "\"v1\""),
         ] {
             assert_eq!(serde_json::to_string(&version).unwrap(), encoded);
-            assert_eq!(
-                serde_json::from_str::<TxVersion>(encoded).unwrap(),
-                version
-            );
+            assert_eq!(serde_json::from_str::<TxVersion>(encoded).unwrap(), version);
         }
     }
 }

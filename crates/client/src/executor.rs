@@ -34,6 +34,34 @@ use anyhow::{anyhow, Result};
 use log::{debug, warn};
 use std::sync::Arc;
 
+/// One transaction's worth of a thread's execution, as planned.
+#[derive(Debug, Default, Clone)]
+pub struct ExecBatch {
+    pub instructions: Vec<Instruction>,
+    pub priority_fee: u64,
+    /// Whether the chain still has work for this thread after this batch lands.
+    pub needs_continuation: bool,
+    /// Cursor the continuation batch starts from. Needed because an on-chain
+    /// Chain signal does not advance `fiber_cursor`.
+    pub next_fiber_cursor: Option<u8>,
+    /// Compute units observed by the batching simulation, but only when that
+    /// simulation covered the final instruction set. `None` when an instruction
+    /// was appended after the last simulate, in which case the caller must
+    /// estimate separately.
+    pub simulated_units: Option<u64>,
+    /// Account data bytes the simulation loaded. `None` when unmeasured, in
+    /// which case no limit is requested and the runtime's 64 MiB default
+    /// applies.
+    pub loaded_accounts_bytes: Option<u32>,
+}
+
+/// Compute and account-data footprint measured by a simulation.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SimulatedResources {
+    pub units: u64,
+    pub loaded_accounts_bytes: Option<u32>,
+}
+
 /// Executor logic for building thread execution transactions
 #[derive(Clone)]
 pub struct ExecutorLogic {
@@ -105,28 +133,15 @@ impl ExecutorLogic {
     /// `true`. The caller should submit this batch, confirm it, re-fetch the
     /// thread, and call this method again to build the next batch.
     ///
-    /// Returns (instructions, priority_fee, needs_continuation)
-    /// Build a single transaction batch to execute a thread.
-    ///
-    /// Returns (instructions, priority_fee, needs_continuation, next_fiber_cursor,
-    /// simulated_units).
-    ///
-    /// When `needs_continuation` is true, `next_fiber_cursor` holds the cursor
-    /// that the next batch should start from (needed because on-chain Chain
-    /// signal doesn't advance `fiber_cursor`).
-    ///
-    /// `simulated_units` carries the compute units observed by the batching
-    /// simulation, but only when that simulation covered the *final* instruction
-    /// set. It is `None` when the loop appended an instruction after its last
-    /// simulate, in which case the caller must estimate separately. Reusing it
-    /// saves a full simulate round trip on the single-fiber path, which is the
-    /// overwhelming majority of executions.
+    /// Reusing the batching simulation's measurements saves a full simulate
+    /// round trip on the single-fiber path, which is the overwhelming majority
+    /// of executions.
     pub async fn build_execute_transaction(
         &self,
         thread_pubkey: &Pubkey,
         thread: &Thread,
         override_fiber_cursor: Option<u8>,
-    ) -> Result<(Vec<Instruction>, u64, bool, Option<u8>, Option<u64>)> {
+    ) -> Result<ExecBatch> {
         // Log thread state for debugging
         self.log_thread_debug(thread, thread_pubkey);
 
@@ -135,9 +150,9 @@ impl ExecutorLogic {
         let mut ixs: Vec<Instruction> = Vec::new();
         let mut needs_continuation = false;
         let mut next_fiber_cursor: Option<u8> = None;
-        // Units from the most recent simulate, valid only while `ixs` is
+        // Measurements from the most recent simulate, valid only while `ixs` is
         // unchanged since. Cleared on every push.
-        let mut simulated_units: Option<u64> = None;
+        let mut simulated: Option<SimulatedResources> = None;
 
         // Track fiber_cursor through the chaining loop
         // Signal::Chain tells us to execute next fiber in sequence
@@ -160,7 +175,7 @@ impl ExecutorLogic {
         // Empty fiber — nothing to submit
         let Some(first_ix) = first_ix else {
             debug!("{}: first fiber is empty, nothing to submit", thread_pubkey);
-            return Ok((vec![], 0, false, None, None));
+            return Ok(ExecBatch::default());
         };
 
         debug!(
@@ -191,8 +206,8 @@ impl ExecutorLogic {
                 "Simulating transaction with {} instruction(s) to check for batching...",
                 ixs.len()
             );
-            let (signal, units) = self.simulate_transaction(&ixs, thread_pubkey).await?;
-            simulated_units = Some(units);
+            let (signal, resources) = self.simulate_transaction(&ixs, thread_pubkey).await?;
+            simulated = Some(resources);
             debug!(
                 "{}: fiber {} simulation signal={:?}",
                 thread_pubkey, current_fiber_cursor, signal
@@ -232,10 +247,10 @@ impl ExecutorLogic {
                     let trial_size = self.estimate_transaction_size_with_budget(&trial);
                     if trial_size <= self.tx_version.max_transaction_size() {
                         ixs.push(next_ix);
-                        // The batch grew; the estimate no longer covers it. If
-                        // the loop now exits on MAX_BATCHED_EXECS this stays
+                        // The batch grew; the measurement no longer covers it.
+                        // If the loop now exits on MAX_BATCHED_EXECS this stays
                         // None and the caller estimates properly.
-                        simulated_units = None;
+                        simulated = None;
                     } else {
                         // Doesn't fit — return what we have and signal continuation.
                         // The worker will submit this batch, confirm it, re-fetch
@@ -266,7 +281,7 @@ impl ExecutorLogic {
                     if self.would_fit_in_transaction(&trial) {
                         ixs.push(close_ix);
                         // close_ix was never simulated.
-                        simulated_units = None;
+                        simulated = None;
                     } else {
                         debug!(
                             "{}: transaction full ({} ix), close deferred to continuation",
@@ -322,13 +337,14 @@ impl ExecutorLogic {
             needs_continuation
         );
 
-        Ok((
-            ixs,
+        Ok(ExecBatch {
+            instructions: ixs,
             priority_fee,
             needs_continuation,
             next_fiber_cursor,
-            simulated_units,
-        ))
+            simulated_units: simulated.map(|s| s.units),
+            loaded_accounts_bytes: simulated.and_then(|s| s.loaded_accounts_bytes),
+        })
     }
 
     /// Fetch thread account from RPC and deserialize.
@@ -369,15 +385,15 @@ impl ExecutorLogic {
     }
 
     /// Estimate compute units for a set of instructions via simulation.
-    pub async fn estimate_compute_units(
+    pub async fn estimate_resources(
         &self,
         instructions: &[Instruction],
         thread_pubkey: &Pubkey,
-    ) -> Result<u64> {
-        let (_, units) = self
+    ) -> Result<SimulatedResources> {
+        let (_, resources) = self
             .simulate_transaction(instructions, thread_pubkey)
             .await?;
-        Ok(units)
+        Ok(resources)
     }
 
     /// Log thread state for debugging
@@ -688,7 +704,7 @@ impl ExecutorLogic {
         &self,
         instructions: &[Instruction],
         thread_pubkey: &Pubkey,
-    ) -> Result<(Signal, u64)> {
+    ) -> Result<(Signal, SimulatedResources)> {
         debug!(
             "Simulating transaction: thread={}, num_instructions={}",
             thread_pubkey,
@@ -794,9 +810,20 @@ impl ExecutorLogic {
             }
         }
 
-        // 4. Extract units_consumed (safely handles float)
-        let units_consumed = result.value.units_consumed.unwrap_or(0);
-        debug!("Simulation units_consumed: {}", units_consumed);
+        // 4. Extract the resource footprint (units_consumed safely handles float).
+        //
+        // `loaded_accounts_data_size` is what the transaction actually needed to
+        // load. Absent on older RPC versions, in which case no limit is
+        // requested and the runtime charges its 64 MiB default — the behaviour
+        // that applied before this was measured at all.
+        let resources = SimulatedResources {
+            units: result.value.units_consumed.unwrap_or(0),
+            loaded_accounts_bytes: result.value.loaded_accounts_data_size,
+        };
+        debug!(
+            "Simulation consumed {} CU, loaded {:?} bytes of account data",
+            resources.units, resources.loaded_accounts_bytes
+        );
 
         // 5. Extract signal from thread account
         let signal = if let Some(accounts) = &result.value.accounts {
@@ -840,7 +867,7 @@ impl ExecutorLogic {
             Signal::None
         };
 
-        Ok((signal, units_consumed))
+        Ok((signal, resources))
     }
 
     /// Fetch fiber account directly from RPC, bypassing cache.

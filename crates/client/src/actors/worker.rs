@@ -13,11 +13,12 @@ use crate::actors::messages::{ExecutionResult, ProcessorMessage, WorkerMessage};
 use crate::confirm::Confirmation;
 use crate::executor::ExecutorLogic;
 use crate::load_balancer::{LoadBalancer, ProcessDecision};
+use crate::resources::compute::{is_compute_exceeded, loaded_accounts_limit};
 use crate::resources::SharedResources;
 use crate::trace::{ExecTrace, SendPath};
+use crate::tx::{self, TxConfig};
 use antegen_thread_program::state::Thread;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
-use crate::tx::{self, TxConfig};
 use solana_sdk::{
     instruction::Instruction, pubkey::Pubkey, signature::Signature, transaction::Transaction,
 };
@@ -112,6 +113,13 @@ fn is_blockhash_expired(error: &str) -> bool {
 /// that keeps the signature stable for the retries that actually matter.
 const BLOCKHASH_MAX_AGE: Duration = Duration::from_secs(45);
 
+/// Pages of headroom added to the measured loaded-accounts size.
+///
+/// Simulation runs against a different bank, so an account may have grown by
+/// the time the transaction executes. A page costs 8 cost units against the
+/// 16,384 that requesting nothing costs, so headroom here is close to free
+/// while being short is a failed transaction.
+const LOADED_ACCOUNTS_SLACK_PAGES: u32 = 2;
 
 pub struct WorkerActor;
 
@@ -398,9 +406,7 @@ async fn execute_thread(
         }
 
         // Build batch — first iteration uses trigger retry, subsequent don't need it
-        let (ixs, priority_fee, needs_continuation, next_cursor, simulated_units) = if batch_num
-            == 1
-        {
+        let batch = if batch_num == 1 {
             // If we were released before the on-chain deadline, wait for it
             // rather than building a transaction the chain is certain to
             // reject with 6004. A rejected build costs a fiber fetch and a
@@ -549,8 +555,10 @@ async fn execute_thread(
         };
 
         trace.mark_built();
-        max_priority_fee = max_priority_fee.max(priority_fee);
-        pending_fiber_cursor = next_cursor;
+        let ixs = batch.instructions.clone();
+        let needs_continuation = batch.needs_continuation;
+        max_priority_fee = max_priority_fee.max(batch.priority_fee);
+        pending_fiber_cursor = batch.next_fiber_cursor;
 
         // Empty fiber — nothing to submit
         if ixs.is_empty() {
@@ -570,17 +578,17 @@ async fn execute_thread(
             needs_continuation
         );
 
-        // Reuse the compute units the batching simulation already measured.
-        // A separate estimate is only needed when that simulation did not cover
-        // the final instruction set.
-        let cu_estimate = match simulated_units {
-            Some(units) => units,
+        // Reuse what the batching simulation already measured. A separate
+        // estimate is only needed when that simulation did not cover the final
+        // instruction set.
+        let (cu_estimate, loaded_accounts_bytes) = match batch.simulated_units {
+            Some(units) => (units, batch.loaded_accounts_bytes),
             None => {
                 trace.count_rpc();
-                match executor.estimate_compute_units(&ixs, &thread_pubkey).await {
-                    Ok(units) => {
+                match executor.estimate_resources(&ixs, &thread_pubkey).await {
+                    Ok(resources) => {
                         trace.mark_simulated();
-                        units
+                        (resources.units, resources.loaded_accounts_bytes)
                     }
                     Err(e) => {
                         log::error!(
@@ -614,9 +622,26 @@ async fn execute_thread(
             cu_estimate,
             resources.cu_oracle.margin_bps(&thread_pubkey)
         );
-        let tx_config = TxConfig::new()
+        let mut tx_config = TxConfig::new()
             .with_compute_unit_limit(compute_units)
             .with_compute_unit_price(max_priority_fee);
+
+        // A transaction that requests no loaded-accounts limit is charged the
+        // runtime's 64 MiB default — 16,384 cost units, more than today's entire
+        // fee at the terminal resource-fee rate, for account data it never
+        // touches. Requested only when the simulation measured it: guessing low
+        // costs a failed transaction and a missed trigger window, and there is
+        // nothing to gain from guessing at all.
+        if let Some(measured) = loaded_accounts_bytes {
+            let limit = loaded_accounts_limit(measured, LOADED_ACCOUNTS_SLACK_PAGES);
+            log::debug!(
+                "{}: requesting {} B loaded-accounts limit (simulation loaded {} B)",
+                thread_pubkey,
+                limit,
+                measured
+            );
+            tx_config = tx_config.with_loaded_accounts_data_size_limit(limit);
+        }
 
         // Submit and confirm
         match submit_and_confirm_batch(
@@ -642,7 +667,7 @@ async fn execute_thread(
                 resources.cu_oracle.record_landed(&thread_pubkey);
             }
             Err((error, attempts)) => {
-                if crate::resources::compute::is_compute_exceeded(&error) {
+                if is_compute_exceeded(&error) {
                     resources.cu_oracle.record_exceeded(&thread_pubkey);
                     log::warn!(
                         "{}: exceeded its compute budget, margin raised to {} bps",
