@@ -16,6 +16,15 @@ antegen-thread-program = { workspace = true }
 # Internal crates
 solana-sdk = { workspace = true }
 solana-program = { workspace = true }
+# Granular solana crates. New code targets these directly; the remaining
+# solana-sdk imports are a separate sweep.
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-message = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-signature = { workspace = true }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 anyhow = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

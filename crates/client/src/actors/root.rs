@@ -88,7 +88,8 @@ impl Actor for RootSupervisor {
             Arc::new(keypair),
             resources.clone(),
             config.executor.forgo_commission,
-        );
+        )
+        .with_tx_version(config.transaction.version);
 
         // Create LoadBalancer with config values
         let load_balancer_config = LoadBalancerConfig {
@@ -150,6 +151,7 @@ impl Actor for RootSupervisor {
                 resources.clone(),
                 staging_ref.clone(),
                 geyser_receiver,
+                executor_pubkey,
             ),
             supervisor.clone(),
         )

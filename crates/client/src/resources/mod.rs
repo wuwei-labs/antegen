@@ -8,10 +8,12 @@
 //! - Deduplication of account updates via `put_if_newer()`
 
 mod cache;
+pub mod compute;
 mod ingest;
 pub mod latency;
 
 pub use cache::{AccountCache, CacheTriggerType, CachedAccount, FetchError};
+pub use compute::{CuOracle, CuOracleConfig};
 pub use ingest::{IngestSnapshot, IngestStats};
 
 use crate::config::{ClientConfig, EndpointRole};
@@ -47,6 +49,10 @@ pub struct SharedResources {
     /// Rolling execution-latency window, so the node reports its own
     /// percentiles instead of requiring logs to be shipped and parsed.
     pub latency_stats: Arc<latency::LatencyStats>,
+    /// Learned per-thread compute headroom. Shared so every worker's outcome
+    /// feeds the same estimate — a margin learned by one execution is worth
+    /// nothing if the next worker starts from the default again.
+    pub cu_oracle: Arc<CuOracle>,
     /// Commitment for the thread program subscription.
     pub commitment: Arc<str>,
     /// Commitment for the clock sysvar subscription.
@@ -130,6 +136,7 @@ impl SharedResources {
                 program_id: config.datasources.program_id,
                 ingest_stats: Arc::new(IngestStats::new()),
                 latency_stats: Arc::new(latency::LatencyStats::new()),
+                cu_oracle: Arc::new(CuOracle::new(config.compute.oracle())),
                 commitment: config.datasources.commitment.as_str().into(),
                 clock_commitment: config.datasources.clock_commitment.as_str().into(),
                 confirmations,
@@ -149,6 +156,7 @@ impl SharedResources {
             program_id: antegen_thread_program::ID,
             ingest_stats: Arc::new(IngestStats::new()),
             latency_stats: Arc::new(latency::LatencyStats::new()),
+            cu_oracle: Arc::new(CuOracle::default()),
             commitment: "confirmed".into(),
             clock_commitment: "processed".into(),
             confirmations: SignatureWatcher::spawn(rpc_client_for_watcher, None),

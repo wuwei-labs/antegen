@@ -14,13 +14,17 @@ use log::{debug, error, info, trace, warn};
 use ractor::ActorRef;
 use serde::Deserialize;
 use solana_sdk::{clock::Clock, pubkey::Pubkey, sysvar};
+use solana_signature::Signature;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::actors::messages::{ClockSource, RpcSourceMessage};
-use crate::resources::IngestStats;
+use crate::resources::compute::parse_compute_usage;
+use crate::resources::{CuOracle, IngestStats};
 use crate::rpc::response::decode_account_data;
-use crate::rpc::websocket::{build_account_subscribe_request, build_program_subscribe_request};
+use crate::rpc::websocket::{
+    build_account_subscribe_request, build_logs_subscribe_request, build_program_subscribe_request,
+};
 use crate::rpc::RpcPool;
 use crate::types::AccountUpdate;
 
@@ -221,6 +225,82 @@ impl RpcSubscription {
         }
     }
 
+    /// Subscribe to this executor's transaction logs and feed observed compute
+    /// usage back into the oracle.
+    ///
+    /// Filtered by `mentions`, so it also carries transactions in which the
+    /// executor merely appears rather than ones this node sent. The oracle
+    /// discards those: it resolves each notification against the signatures it
+    /// registered at submit time and ignores the rest.
+    ///
+    /// Purely an optimisation. If the subscription never connects, or logs are
+    /// dropped, the oracle keeps learning from landed-versus-exceeded outcomes —
+    /// more slowly, and at the cost of an occasional overrun, but correctly.
+    pub async fn subscribe_to_logs(&self, executor: Pubkey, cu_oracle: Arc<CuOracle>) {
+        let ws_url = self.ws_url.clone();
+        debug!("[{}] Connecting to WebSocket for log subscription...", ws_url);
+
+        let (_, subscribe_msg) = build_logs_subscribe_request(&executor, &self.commitment);
+
+        let builder = match antegen_ws::WsClient::builder(&ws_url) {
+            Ok(b) => b,
+            Err(e) => {
+                error!("[{}] Invalid WebSocket URL: {e}", ws_url);
+                return;
+            }
+        };
+
+        let url_on_connect = self.label.clone();
+        let mut handle = match builder
+            .keepalive(KEEPALIVE)
+            .on_connect(move |tx| {
+                let msg = subscribe_msg.clone();
+                let url = url_on_connect.clone();
+                async move {
+                    if let Err(e) = tx.send_text(msg).await {
+                        error!("[{}] Failed to send log subscription: {e}", url);
+                    }
+                    Ok(())
+                }
+            })
+            .build()
+            .await
+        {
+            Ok(h) => h,
+            Err(e) => {
+                // Not fatal. Execution does not depend on this subscription.
+                warn!(
+                    "[{}] Log subscription unavailable, compute margins will be \
+                     learned from outcomes instead: {e}",
+                    self.label
+                );
+                return;
+            }
+        };
+
+        while let Some(msg) = handle.recv().await {
+            let WsMessage::Text(text) = msg else {
+                continue;
+            };
+            let Some((signature, logs)) = parse_logs_notification(&text) else {
+                continue;
+            };
+            let Some(usage) = parse_compute_usage(&logs) else {
+                continue;
+            };
+            if let Some(thread) = cu_oracle.observe(&signature, usage) {
+                trace!(
+                    "[{}] {} consumed {} of {} CU, margin now {} bps",
+                    self.label,
+                    thread,
+                    usage.consumed,
+                    usage.budget,
+                    cu_oracle.margin_bps(&thread)
+                );
+            }
+        }
+    }
+
     /// Subscribe to clock sysvar. Auto-reconnects; the subscription is
     /// re-sent on every connect.
     pub async fn subscribe_to_clock(&self, actor_ref: ActorRef<RpcSourceMessage>) {
@@ -349,6 +429,56 @@ struct AccountNotificationResult {
 #[derive(Debug, Deserialize)]
 struct AccountNotificationValue {
     data: (String, String), // (base64_data, encoding)
+}
+
+// ============================================================================
+// Logs Notification Types (logsNotification)
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+struct LogsNotification {
+    method: Option<String>,
+    params: Option<LogsNotificationParams>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LogsNotificationParams {
+    result: LogsNotificationResult,
+}
+
+#[derive(Debug, Deserialize)]
+struct LogsNotificationResult {
+    value: LogsNotificationValue,
+}
+
+#[derive(Debug, Deserialize)]
+struct LogsNotificationValue {
+    signature: String,
+    /// Present and non-null when the transaction failed. A failed transaction's
+    /// logs stop where it failed, so its compute figures describe a partial
+    /// execution and must not be learned from.
+    err: Option<serde_json::Value>,
+    logs: Vec<String>,
+}
+
+/// Parse a logs notification into `(signature, logs)`.
+///
+/// Returns `None` for failed transactions: their logs are truncated at the
+/// point of failure, so the consumption they report is not what a successful
+/// execution of the same thread would have used.
+fn parse_logs_notification(text: &str) -> Option<(Signature, Vec<String>)> {
+    let notification: LogsNotification = serde_json::from_str(text).ok()?;
+
+    if notification.method.as_deref() != Some("logsNotification") {
+        return None;
+    }
+
+    let value = notification.params?.result.value;
+    if value.err.is_some_and(|e| !e.is_null()) {
+        return None;
+    }
+
+    Some((value.signature.parse().ok()?, value.logs))
 }
 
 /// Parse a program notification message

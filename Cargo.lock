@@ -484,7 +484,7 @@ version = "0.0.0"
 
 [[package]]
 name = "antegen-cli"
-version = "8.2.0"
+version = "8.3.0"
 dependencies = [
  "anchor-lang",
  "antegen-client",
@@ -518,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-client"
-version = "6.2.0"
+version = "6.3.0"
 dependencies = [
  "anchor-lang",
  "antegen-cron",
@@ -546,11 +546,18 @@ dependencies = [
  "solana-account-decoder",
  "solana-account-decoder-client-types",
  "solana-compute-budget-interface",
+ "solana-hash 3.1.0",
+ "solana-instruction",
+ "solana-message",
  "solana-program",
+ "solana-pubkey 3.0.0",
  "solana-rpc-client",
  "solana-sdk",
+ "solana-signature",
+ "solana-signer",
  "solana-system-interface 3.0.0",
  "solana-tpu-client-next",
+ "solana-transaction",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -570,7 +577,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-fiber-program"
-version = "6.0.0"
+version = "6.1.0"
 dependencies = [
  "anchor-lang",
  "borsh",
@@ -606,7 +613,7 @@ dependencies = [
 
 [[package]]
 name = "antegen-thread-program"
-version = "5.2.3"
+version = "6.0.0"
 dependencies = [
  "anchor-lang",
  "antegen-cron",

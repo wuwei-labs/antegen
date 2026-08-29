@@ -17,10 +17,9 @@ use crate::resources::SharedResources;
 use crate::trace::{ExecTrace, SendPath};
 use antegen_thread_program::state::Thread;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
-use solana_compute_budget_interface::ComputeBudgetInstruction;
+use crate::tx::{self, TxConfig};
 use solana_sdk::{
-    instruction::Instruction, message::Message, pubkey::Pubkey, signature::Signature,
-    transaction::Transaction,
+    instruction::Instruction, pubkey::Pubkey, signature::Signature, transaction::Transaction,
 };
 use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -113,20 +112,6 @@ fn is_blockhash_expired(error: &str) -> bool {
 /// that keeps the signature stable for the retries that actually matter.
 const BLOCKHASH_MAX_AGE: Duration = Duration::from_secs(45);
 
-/// Solana's per-transaction compute ceiling.
-const MAX_COMPUTE_UNITS: u32 = 1_400_000;
-
-/// Convert a simulated compute-unit measurement into the limit to request.
-///
-/// The simulation ran against the `processed` bank at a different clock and
-/// possibly different account state, so the estimate is indicative rather than
-/// exact. `ComputeBudgetExceeded` costs the whole trigger window plus a retry,
-/// which is far more expensive than slightly over-reserving — a request above
-/// what is consumed is not charged for the difference.
-fn compute_unit_limit(estimate: u64) -> u32 {
-    let scaled = (estimate as f64 * 1.25) as u64 + 10_000;
-    scaled.min(MAX_COMPUTE_UNITS as u64) as u32
-}
 
 pub struct WorkerActor;
 
@@ -615,21 +600,29 @@ async fn execute_thread(
             }
         };
 
-        // Prepend compute budget instructions
-        let compute_units = compute_unit_limit(cu_estimate);
-        let mut final_ixs = vec![ComputeBudgetInstruction::set_compute_unit_limit(
+        // Resource limits. Encoded as instructions or header fields depending
+        // on the format — the seam in `crate::tx` owns that decision.
+        //
+        // The compute limit comes from what this thread has historically needed
+        // rather than a fixed multiple of the simulation, because the limit is
+        // what gets billed once the SIMD-0553 resource fee ramps in.
+        let compute_units = resources.cu_oracle.limit(&thread_pubkey, cu_estimate);
+        log::debug!(
+            "{}: requesting {} CU (simulated {}, margin {} bps)",
+            thread_pubkey,
             compute_units,
-        )];
-        if max_priority_fee > 0 {
-            final_ixs.push(ComputeBudgetInstruction::set_compute_unit_price(
-                max_priority_fee,
-            ));
-        }
-        final_ixs.extend_from_slice(&ixs);
+            cu_estimate,
+            resources.cu_oracle.margin_bps(&thread_pubkey)
+        );
+        let tx_config = TxConfig::new()
+            .with_compute_unit_limit(compute_units)
+            .with_compute_unit_price(max_priority_fee);
 
         // Submit and confirm
         match submit_and_confirm_batch(
-            &final_ixs,
+            &ixs,
+            &tx_config,
+            cu_estimate,
             executor,
             resources,
             cancelled,
@@ -642,8 +635,21 @@ async fn execute_thread(
         {
             Ok(sig) => {
                 log::info!("{}: batch {} confirmed ({})", thread_pubkey, batch_num, sig);
+                // Landed inside the requested budget, so that budget was at
+                // least sufficient. Only landed executions are evidence: a
+                // transaction that never executed says nothing about how much
+                // compute it would have needed.
+                resources.cu_oracle.record_landed(&thread_pubkey);
             }
             Err((error, attempts)) => {
+                if crate::resources::compute::is_compute_exceeded(&error) {
+                    resources.cu_oracle.record_exceeded(&thread_pubkey);
+                    log::warn!(
+                        "{}: exceeded its compute budget, margin raised to {} bps",
+                        thread_pubkey,
+                        resources.cu_oracle.margin_bps(&thread_pubkey)
+                    );
+                }
                 return ExecutionResult::retryable(
                     thread_pubkey,
                     format!("Batch {} failed: {}", batch_num, error),
@@ -693,6 +699,8 @@ async fn execute_thread(
 /// Returns Ok(signature) on success, Err((error_msg, attempts)) on failure.
 async fn submit_and_confirm_batch(
     instructions: &[Instruction],
+    tx_config: &TxConfig,
+    simulated_units: u64,
     executor: &ExecutorLogic,
     resources: &SharedResources,
     cancelled: &AtomicBool,
@@ -760,11 +768,32 @@ async fn submit_and_confirm_batch(
                 }
             };
 
-            let message = Message::new(instructions, Some(&executor.pubkey()));
-            let tx = Transaction::new(&[executor.keypair().as_ref()], message, blockhash);
+            let tx = match tx::build_transaction(
+                executor.tx_version(),
+                &[executor.keypair().as_ref()],
+                &executor.pubkey(),
+                instructions,
+                tx_config,
+                blockhash,
+            ) {
+                Ok(tx) => tx,
+                Err(e) => {
+                    // A format the build path cannot emit is a configuration
+                    // problem, not a transient one. Retrying re-runs the same
+                    // encoding against the same config and fails identically,
+                    // so stop and say which format was asked for.
+                    return Err((format!("Failed to build transaction: {}", e), attempt));
+                }
+            };
             // Signature is captured up front: TPU submission is fire-and-forget,
             // so confirmation polling needs it before the send.
             let signature = tx.signatures[0];
+            // Registered before the send so the logs cannot arrive first. The
+            // estimate is recorded alongside, since the margin being learned is
+            // expressed relative to it and this is the last point that knows it.
+            resources
+                .cu_oracle
+                .register(signature, *thread_pubkey, simulated_units);
             trace.mark_signed();
             signed = Some((tx, signature, Instant::now()));
         }
@@ -1015,24 +1044,8 @@ mod tests {
         assert!(!is_blockhash_expired(CUSTOM_6004));
     }
 
-    #[test]
-    fn compute_unit_limit_adds_headroom() {
-        // Headroom must exceed the estimate, since the simulate ran against a
-        // different bank state.
-        assert!(compute_unit_limit(200_000) > 200_000);
-        assert_eq!(compute_unit_limit(200_000), 260_000);
-
-        // A trivial estimate still gets a usable floor.
-        assert_eq!(compute_unit_limit(0), 10_000);
-    }
-
-    #[test]
-    fn compute_unit_limit_is_clamped_to_the_chain_maximum() {
-        // Scaling a near-ceiling estimate must not request more than Solana
-        // permits, which would be rejected outright.
-        assert_eq!(compute_unit_limit(1_400_000), MAX_COMPUTE_UNITS);
-        assert_eq!(compute_unit_limit(u64::MAX / 2), MAX_COMPUTE_UNITS);
-    }
+    // Compute-limit headroom and its ceiling clamp now live with the oracle
+    // that learns them — see `resources::compute`.
 
     #[test]
     fn blockhash_reuse_window_stays_inside_validity() {

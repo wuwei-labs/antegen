@@ -63,6 +63,31 @@ pub fn build_account_subscribe_request(pubkey: &Pubkey, commitment: &str) -> (u6
     (subscription_id, request.to_string())
 }
 
+/// Build a `logsSubscribe` request filtered to one address, returning
+/// `(id, json)`.
+///
+/// Used to recover what each execution actually consumed. `getSignatureStatuses`
+/// — what the confirmation path already polls — carries no compute figure, and
+/// `getTransaction` would mean an extra round trip per landed execution. Logs
+/// arrive over a subscription that is already open, at no marginal cost per
+/// transaction, and carry both the units consumed and the budget they were
+/// measured against.
+pub fn build_logs_subscribe_request(mentions: &Pubkey, commitment: &str) -> (u64, String) {
+    let subscription_id = SUBSCRIPTION_COUNTER.fetch_add(1, Ordering::SeqCst);
+
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": subscription_id,
+        "method": "logsSubscribe",
+        "params": [
+            { "mentions": [mentions.to_string()] },
+            { "commitment": commitment },
+        ],
+    });
+
+    (subscription_id, request.to_string())
+}
+
 /// High-level helpers around `antegen-ws`.
 pub struct WsClient;
 

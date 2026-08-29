@@ -11,6 +11,7 @@
 use crate::exec_ix::{build_thread_exec_instruction, thread_exec_base_accounts, ThreadExecParams};
 use crate::resources::SharedResources;
 use crate::rpc::response::decode_account_data;
+use crate::tx::{self, TxConfig, TxVersion};
 use anchor_lang::{AccountDeserialize, AnchorDeserialize, InstructionData};
 use antegen_thread_program::fiber::{decompile_instruction, CompiledInstructionV0, Fiber};
 use antegen_thread_program::state::PAYER_PUBKEY;
@@ -18,7 +19,6 @@ use antegen_thread_program::{
     instruction::ExecThread,
     state::{Signal, Thread, ThreadConfig},
 };
-use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
     account::Account,
     hash::Hash,
@@ -27,16 +27,12 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    transaction::Transaction,
 };
 use std::collections::HashSet;
 
 use anyhow::{anyhow, Result};
 use log::{debug, warn};
 use std::sync::Arc;
-
-/// Maximum serialized transaction size in bytes (Solana's PACKET_DATA_SIZE)
-const MAX_TRANSACTION_SIZE: usize = 1232;
 
 /// Executor logic for building thread execution transactions
 #[derive(Clone)]
@@ -49,6 +45,10 @@ pub struct ExecutorLogic {
     forgo_executor_commission: bool,
     /// Thread program ID (configurable)
     program_id: Pubkey,
+    /// Message format to build. Governs both the size ceiling batching aims at
+    /// and how resource limits are encoded, which is why it is held here rather
+    /// than read at each build site.
+    tx_version: TxVersion,
 }
 
 impl ExecutorLogic {
@@ -64,7 +64,23 @@ impl ExecutorLogic {
             resources,
             forgo_executor_commission,
             program_id,
+            tx_version: TxVersion::default(),
         }
+    }
+
+    /// Select the message format to build.
+    ///
+    /// Separate from `new` so the existing constructor keeps its signature —
+    /// the default is legacy, which is what every caller was getting before the
+    /// format became selectable.
+    pub fn with_tx_version(mut self, tx_version: TxVersion) -> Self {
+        self.tx_version = tx_version;
+        self
+    }
+
+    /// Message format this executor builds.
+    pub fn tx_version(&self) -> TxVersion {
+        self.tx_version
     }
 
     /// Get executor pubkey
@@ -214,7 +230,7 @@ impl ExecutorLogic {
                     let mut trial = ixs.clone();
                     trial.push(next_ix.clone());
                     let trial_size = self.estimate_transaction_size_with_budget(&trial);
-                    if trial_size <= MAX_TRANSACTION_SIZE {
+                    if trial_size <= self.tx_version.max_transaction_size() {
                         ixs.push(next_ix);
                         // The batch grew; the estimate no longer covers it. If
                         // the loop now exits on MAX_BATCHED_EXECS this stays
@@ -232,7 +248,7 @@ impl ExecutorLogic {
                             current_size,
                             current_fiber_cursor,
                             trial_size,
-                            MAX_TRANSACTION_SIZE
+                            self.tx_version.max_transaction_size()
                         );
                         needs_continuation = true;
                         next_fiber_cursor = Some(current_fiber_cursor);
@@ -334,26 +350,22 @@ impl ExecutorLogic {
             .map_err(|e| anyhow!("Failed to deserialize thread {}: {}", thread_pubkey, e))
     }
 
-    /// Estimate serialized transaction size for a set of instructions.
-    /// Uses Message::new for accurate account deduplication + bincode size.
-    fn estimate_transaction_size(&self, instructions: &[Instruction]) -> usize {
-        let message = Message::new(instructions, Some(&self.keypair.pubkey()));
-        bincode::serialized_size(&message).unwrap_or(0) as usize + 65 // +64 sig +1 compact-u16
-    }
-
-    /// Estimate transaction size including compute budget instructions.
+    /// Estimate transaction size including the compute budget overhead the
+    /// worker will prepend later.
     fn estimate_transaction_size_with_budget(&self, instructions: &[Instruction]) -> usize {
-        let mut trial = vec![
-            ComputeBudgetInstruction::set_compute_unit_limit(1_400_000),
-            ComputeBudgetInstruction::set_compute_unit_price(1_000_000),
-        ];
-        trial.extend_from_slice(instructions);
-        self.estimate_transaction_size(&trial)
+        tx::estimate_size(
+            self.tx_version,
+            &self.keypair.pubkey(),
+            instructions,
+            &TxConfig::reserving_limits(),
+        )
+        .unwrap_or(usize::MAX)
     }
 
     /// Check if instructions (plus compute budget overhead) would fit in one transaction.
     fn would_fit_in_transaction(&self, instructions: &[Instruction]) -> bool {
-        self.estimate_transaction_size_with_budget(instructions) <= MAX_TRANSACTION_SIZE
+        self.estimate_transaction_size_with_budget(instructions)
+            <= self.tx_version.max_transaction_size()
     }
 
     /// Estimate compute units for a set of instructions via simulation.
@@ -710,10 +722,18 @@ impl ExecutorLogic {
         // validator substitutes its own and ignores whatever we send. Fetching
         // one here was a round trip on the critical path whose result was
         // discarded server-side.
-        let mut sim_ixs = vec![ComputeBudgetInstruction::set_compute_unit_limit(1_400_000)];
-        sim_ixs.extend_from_slice(instructions);
-        let message = Message::new(&sim_ixs, Some(&self.keypair.pubkey()));
-        let tx = Transaction::new(&[self.keypair.as_ref()], message, Hash::default());
+        //
+        // The simulation runs in whatever format the executor is configured to
+        // emit. Simulating in one format and submitting in another would hide
+        // exactly the class of failure that changing format introduces.
+        let tx = tx::build_transaction(
+            self.tx_version,
+            &[self.keypair.as_ref()],
+            &self.keypair.pubkey(),
+            instructions,
+            &TxConfig::new().with_compute_unit_limit(tx::MAX_COMPUTE_UNITS),
+            Hash::default(),
+        )?;
 
         // 2. Simulate via RPC pool (handles failover, returns result with accounts)
         let result = match self

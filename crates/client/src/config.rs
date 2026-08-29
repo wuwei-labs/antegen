@@ -25,6 +25,85 @@ pub struct ClientConfig {
     pub observability: ObservabilityConfig,
     #[serde(default)]
     pub tpu: TpuConfig,
+    #[serde(default)]
+    pub transaction: TransactionConfig,
+    #[serde(default)]
+    pub compute: ComputeConfig,
+}
+
+/// Compute-budget configuration.
+///
+/// Every value here is a lever on what the node *requests*, which under
+/// SIMD-0553 is what it pays for. Exposed rather than hardcoded because the
+/// right margin depends on the fibers a node actually serves, and the cost of
+/// getting it wrong moves in opposite directions on either side.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ComputeConfig {
+    /// Margin a thread's compute request starts at, in basis points over the
+    /// simulated estimate. The historical unconditional pad was 2,500.
+    #[serde(default = "default_initial_margin_bps")]
+    pub initial_margin_bps: u32,
+    /// Floor the margin decays toward as executions land.
+    #[serde(default = "default_min_margin_bps")]
+    pub min_margin_bps: u32,
+    /// Ceiling the margin climbs to after repeated overruns.
+    #[serde(default = "default_max_margin_bps")]
+    pub max_margin_bps: u32,
+    /// Absolute compute units added on top of the proportional margin.
+    #[serde(default = "default_floor_units")]
+    pub floor_units: u32,
+}
+
+fn default_initial_margin_bps() -> u32 {
+    2_500
+}
+
+fn default_min_margin_bps() -> u32 {
+    300
+}
+
+fn default_max_margin_bps() -> u32 {
+    10_000
+}
+
+fn default_floor_units() -> u32 {
+    3_000
+}
+
+impl Default for ComputeConfig {
+    fn default() -> Self {
+        Self {
+            initial_margin_bps: default_initial_margin_bps(),
+            min_margin_bps: default_min_margin_bps(),
+            max_margin_bps: default_max_margin_bps(),
+            floor_units: default_floor_units(),
+        }
+    }
+}
+
+impl ComputeConfig {
+    pub fn oracle(&self) -> crate::resources::CuOracleConfig {
+        crate::resources::CuOracleConfig {
+            initial_margin_bps: self.initial_margin_bps,
+            min_margin_bps: self.min_margin_bps,
+            max_margin_bps: self.max_margin_bps,
+            floor_units: self.floor_units,
+            ..crate::resources::CuOracleConfig::default()
+        }
+    }
+}
+
+/// Transaction encoding configuration.
+///
+/// Separate from the executor so the format can be rolled forward — or rolled
+/// back — on a node without touching anything else about how it executes.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct TransactionConfig {
+    /// Message format to emit. `legacy` today; `v0` unlocks address lookup
+    /// tables, `v1` (SIMD-0385) moves resource limits into the header and
+    /// raises the size ceiling to 4096 bytes.
+    #[serde(default)]
+    pub version: crate::tx::TxVersion,
 }
 
 /// Executor configuration
@@ -478,6 +557,38 @@ impl ClientConfig {
             anyhow::bail!("max_concurrent_threads must be greater than 0");
         }
 
+        // A margin band that cannot contain its own starting point would have
+        // the oracle clamp on its first adjustment, silently ignoring the
+        // configured start.
+        let compute = &self.compute;
+        if compute.min_margin_bps > compute.max_margin_bps {
+            anyhow::bail!(
+                "compute.min_margin_bps ({}) must not exceed compute.max_margin_bps ({})",
+                compute.min_margin_bps,
+                compute.max_margin_bps
+            );
+        }
+        if compute.initial_margin_bps < compute.min_margin_bps
+            || compute.initial_margin_bps > compute.max_margin_bps
+        {
+            anyhow::bail!(
+                "compute.initial_margin_bps ({}) must fall within [{}, {}]",
+                compute.initial_margin_bps,
+                compute.min_margin_bps,
+                compute.max_margin_bps
+            );
+        }
+
+        // Refuse an unimplemented transaction format at startup. Left to the
+        // execution path it would surface as every thread failing to build,
+        // with nothing in the error naming the config line that caused it.
+        if !self.transaction.version.is_implemented() {
+            anyhow::bail!(
+                "transaction version '{}' is not implemented yet; use 'legacy'",
+                self.transaction.version
+            );
+        }
+
         Ok(())
     }
 }
@@ -510,6 +621,8 @@ impl Default for ClientConfig {
             load_balancer: LoadBalancerConfigFile::default(),
             observability: ObservabilityConfig::default(),
             tpu: TpuConfig::default(),
+            transaction: TransactionConfig::default(),
+            compute: ComputeConfig::default(),
         }
     }
 }

@@ -15,6 +15,7 @@ use crate::datasources::RpcSubscription;
 use crate::resources::SharedResources;
 use crate::types::AccountUpdate;
 use ractor::{Actor, ActorProcessingErr, ActorRef, SupervisionEvent};
+use solana_pubkey::Pubkey;
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
@@ -44,12 +45,13 @@ impl Actor for DatasourceSupervisor {
         SharedResources,
         ActorRef<StagingMessage>,
         Option<mpsc::Receiver<AccountUpdate>>,
+        Pubkey,
     );
 
     async fn pre_start(
         &self,
         myself: ActorRef<Self::Msg>,
-        (config, resources, staging_ref, geyser_receiver): Self::Arguments,
+        (config, resources, staging_ref, geyser_receiver, executor): Self::Arguments,
     ) -> Result<Self::State, Box<dyn Error + Send + Sync>> {
         log::debug!("DatasourceSupervisor starting...");
 
@@ -67,7 +69,12 @@ impl Actor for DatasourceSupervisor {
                 let (rpc_ref, _handle) = Actor::spawn_linked(
                     Some(actor_name.clone()),
                     RpcSourceActor,
-                    (endpoint.clone(), resources.clone(), staging_ref.clone()),
+                    (
+                        endpoint.clone(),
+                        resources.clone(),
+                        staging_ref.clone(),
+                        executor,
+                    ),
                     supervisor.clone(),
                 )
                 .await
@@ -302,12 +309,17 @@ pub struct RpcSourceState {
 impl Actor for RpcSourceActor {
     type Msg = RpcSourceMessage;
     type State = RpcSourceState;
-    type Arguments = (RpcEndpoint, SharedResources, ActorRef<StagingMessage>);
+    type Arguments = (
+        RpcEndpoint,
+        SharedResources,
+        ActorRef<StagingMessage>,
+        Pubkey,
+    );
 
     async fn pre_start(
         &self,
         myself: ActorRef<Self::Msg>,
-        (endpoint, resources, staging_ref): Self::Arguments,
+        (endpoint, resources, staging_ref, executor): Self::Arguments,
     ) -> Result<Self::State, Box<dyn Error + Send + Sync>> {
         let ws_url = endpoint.get_ws_url();
         let label = crate::config::redact_endpoint(&ws_url);
@@ -345,6 +357,7 @@ impl Actor for RpcSourceActor {
             cancel_token.clone(),
             Duration::ZERO,
         );
+        spawn_logs_subscription(&ws_url, &resources, executor, cancel_token.clone());
 
         Ok(RpcSourceState {
             label,
@@ -606,6 +619,34 @@ fn spawn_program_subscription(
     tokio::spawn(async move {
         let _ = handle.await;
         let _ = actor_ref.send_message(RpcSourceMessage::SubscriptionDied("program".to_string()));
+    });
+}
+
+/// Feed observed compute usage back into the oracle.
+///
+/// Unmonitored, unlike the program and clock subscriptions. Those carry the
+/// data execution depends on, so losing one has to restart it; this one only
+/// makes compute estimates converge faster. If it dies the node keeps executing
+/// and the oracle falls back to learning from outcomes, which is exactly what it
+/// does on a node that never had the subscription at all.
+fn spawn_logs_subscription(
+    ws_url: &str,
+    resources: &SharedResources,
+    executor: Pubkey,
+    cancel_token: CancellationToken,
+) {
+    let logs_ws_url = ws_url.to_string();
+    let sub_resources = resources.clone();
+    let cu_oracle = resources.cu_oracle.clone();
+
+    tokio::spawn(async move {
+        let subscription = RpcSubscription::from_resources(logs_ws_url, &sub_resources);
+        tokio::select! {
+            _ = subscription.subscribe_to_logs(executor, cu_oracle) => {}
+            _ = cancel_token.cancelled() => {
+                log::debug!("Logs subscription cancelled");
+            }
+        }
     });
 }
 

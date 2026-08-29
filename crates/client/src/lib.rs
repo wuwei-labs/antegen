@@ -30,6 +30,7 @@ pub mod resources;
 pub mod rpc;
 pub mod tpu;
 pub mod trace;
+pub mod tx;
 pub mod types;
 
 /// Version of the executor runtime linked into the calling binary.
@@ -49,6 +50,7 @@ pub use resources::{AccountCache, CachedAccount, SharedResources};
 pub use rpc::RpcPool;
 pub use tpu::{TpuClient, TpuClientConfig};
 pub use trace::{ExecTrace, Outcome, SendPath};
+pub use tx::{TxConfig, TxVersion};
 pub use types::{AccountUpdate, DurableTransactionMessage, ProcessorMessage, TransactionMessage};
 
 use anyhow::Result;
