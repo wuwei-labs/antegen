@@ -3,10 +3,8 @@
 use antegen_client::rpc::RpcPool;
 use antegen_client::ClientConfig;
 use anyhow::{Context, Result};
-use solana_sdk::message::Message;
 use solana_sdk::native_token::LAMPORTS_PER_SOL;
 use solana_sdk::signature::{read_keypair_file, Signer};
-use solana_sdk::transaction::Transaction;
 use std::path::PathBuf;
 
 /// Expand ~ in path to home directory
@@ -91,24 +89,20 @@ pub(crate) async fn fund(
     println!("  To (executor):     {}", destination);
 
     // Create and send transfer
-    let (recent_blockhash, _) = client
-        .get_latest_blockhash()
-        .await
-        .context("Failed to get recent blockhash")?;
-
     let transfer_ix = solana_system_interface::instruction::transfer(
         &funding_keypair.pubkey(),
         &destination,
         lamports,
     );
 
-    let message = Message::new(&[transfer_ix], Some(&funding_keypair.pubkey()));
-    let tx = Transaction::new(&[&funding_keypair], message, recent_blockhash);
-
-    let signature = client
-        .send_and_confirm_transaction(&tx)
-        .await
-        .context("Failed to send transaction")?;
+    let signature = crate::tx::send(
+        &client,
+        &[transfer_ix],
+        &funding_keypair.pubkey(),
+        &[&funding_keypair],
+        "send transaction",
+    )
+    .await?;
 
     let new_balance = client
         .get_balance(&destination)
@@ -201,21 +195,17 @@ pub(crate) async fn withdraw(
     println!("  To (CLI wallet): {}", destination);
 
     // Create and send transfer
-    let (recent_blockhash, _) = client
-        .get_latest_blockhash()
-        .await
-        .context("Failed to get recent blockhash")?;
-
     let transfer_ix =
         solana_system_interface::instruction::transfer(&executor_pubkey, &destination, lamports);
 
-    let message = Message::new(&[transfer_ix], Some(&executor_pubkey));
-    let tx = Transaction::new(&[&executor_keypair], message, recent_blockhash);
-
-    let signature = client
-        .send_and_confirm_transaction(&tx)
-        .await
-        .context("Failed to send transaction")?;
+    let signature = crate::tx::send(
+        &client,
+        &[transfer_ix],
+        &executor_pubkey,
+        &[&executor_keypair],
+        "send transaction",
+    )
+    .await?;
 
     // Get new balances
     let new_executor_balance = client

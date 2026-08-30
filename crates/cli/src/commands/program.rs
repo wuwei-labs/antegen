@@ -6,10 +6,7 @@ use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
 use antegen_client::rpc::RpcPool;
 use antegen_thread_program::state::ThreadConfig;
 use anyhow::{anyhow, Result};
-use solana_sdk::{
-    instruction::Instruction, message::Message, pubkey::Pubkey, signer::Signer,
-    transaction::Transaction,
-};
+use solana_sdk::{instruction::Instruction, pubkey::Pubkey, signer::Signer};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
@@ -356,15 +353,14 @@ pub(crate) async fn config_init(rpc: Option<String>, keypair_path: Option<PathBu
         data,
     };
 
-    // Send transaction
-    let (blockhash, _) = client.get_latest_blockhash().await?;
-    let message = Message::new(&[ix], Some(&admin.pubkey()));
-    let tx = Transaction::new(&[&admin], message, blockhash);
-
-    let sig = client
-        .send_and_confirm_transaction(&tx)
-        .await
-        .map_err(|e| anyhow!("Failed to initialize config: {}", e))?;
+    let sig = crate::tx::send(
+        &client,
+        &[ix],
+        &admin.pubkey(),
+        &[&admin],
+        "initialize config",
+    )
+    .await?;
 
     println!("\nThreadConfig initialized successfully!");
     println!("Transaction: {}", sig);

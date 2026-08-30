@@ -10,7 +10,6 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signer;
 #[cfg(feature = "dev")]
 use solana_sdk::signature::{read_keypair_file, Keypair};
-use solana_sdk::transaction::Transaction;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -150,16 +149,7 @@ pub(crate) async fn exec(
         forgo_commission: false,
     });
 
-    let (blockhash, _) = client
-        .get_latest_blockhash()
-        .await
-        .map_err(|e| anyhow!("Failed to fetch blockhash: {}", e))?;
-    let tx = Transaction::new_signed_with_payer(
-        &[ix],
-        Some(&executor.pubkey()),
-        &[&executor],
-        blockhash,
-    );
+    let tx = crate::tx::build(&client, &[ix], &executor.pubkey(), &[&executor]).await?;
 
     if !send {
         println!("\n=== Simulation (use --send to submit) ===");
@@ -324,9 +314,7 @@ pub async fn admin_delete(
     keypair_path: Option<std::path::PathBuf>,
 ) -> Result<()> {
     use anchor_lang::{InstructionData, ToAccountMetas};
-    use solana_sdk::{
-        instruction::Instruction, message::Message, signer::Signer, transaction::Transaction,
-    };
+    use solana_sdk::{instruction::Instruction, signer::Signer};
 
     let thread_pubkey =
         Pubkey::from_str(&address).map_err(|e| anyhow!("Invalid pubkey '{}': {}", address, e))?;
@@ -362,19 +350,7 @@ pub async fn admin_delete(
         data,
     };
 
-    // Build and send transaction
-    let (blockhash, _) = client
-        .get_latest_blockhash()
-        .await
-        .map_err(|e| anyhow!("Failed to get blockhash: {}", e))?;
-
-    let message = Message::new(&[ix], Some(&admin.pubkey()));
-    let tx = Transaction::new(&[&admin], message, blockhash);
-
-    let sig = client
-        .send_and_confirm_transaction(&tx)
-        .await
-        .map_err(|e| anyhow!("Failed to delete thread: {}", e))?;
+    let sig = crate::tx::send(&client, &[ix], &admin.pubkey(), &[&admin], "delete thread").await?;
 
     println!("\n✓ Thread deleted successfully!");
     println!("Signature: {}", sig);
@@ -393,10 +369,7 @@ mod test_commands {
     use antegen_thread_program::state::{SerializableInstruction, Signal, Trigger};
     use chrono::Utc;
     use serde::{Deserialize, Serialize};
-    use solana_sdk::{
-        instruction::Instruction, message::Message, native_token::LAMPORTS_PER_SOL, signer::Signer,
-        transaction::Transaction,
-    };
+    use solana_sdk::{instruction::Instruction, native_token::LAMPORTS_PER_SOL, signer::Signer};
     use std::collections::HashMap;
 
     /// Registry for tracking managed test threads
@@ -797,14 +770,14 @@ mod test_commands {
             build_fiber_create_instruction(payer, authority, thread_pubkey, fiber_index, signal);
 
         // Send transaction
-        let (blockhash, _) = client.get_latest_blockhash().await?;
-        let message = Message::new(&[ix], Some(&payer.pubkey()));
-        let tx = Transaction::new(&[payer, authority], message, blockhash);
-
-        let sig = client
-            .send_and_confirm_transaction(&tx)
-            .await
-            .map_err(|e| anyhow!("Failed to create fiber {}: {}", fiber_index, e))?;
+        let sig = crate::tx::send(
+            client,
+            &[ix],
+            &payer.pubkey(),
+            &[payer, authority],
+            &format!("create fiber {}", fiber_index),
+        )
+        .await?;
 
         println!("  Fiber {} created: {}", fiber_index, sig);
 
@@ -1229,17 +1202,15 @@ mod test_commands {
                             .await;
                         }
 
-                        let blockhash = match client.get_latest_blockhash().await {
-                            Ok((bh, _)) => bh,
-                            Err(e) => {
-                                last = e.to_string();
-                                continue;
-                            }
-                        };
-                        let message = Message::new(&[ix.clone()], Some(&payer.pubkey()));
-                        let tx = Transaction::new(&[payer, authority], message, blockhash);
-
-                        match client.send_and_confirm_transaction(&tx).await {
+                        match crate::tx::send(
+                            client,
+                            &[ix.clone()],
+                            &payer.pubkey(),
+                            &[payer, authority],
+                            "create thread",
+                        )
+                        .await
+                        {
                             Ok(_) => return Ok(()),
                             Err(e) => last = e.to_string(),
                         }
@@ -1390,18 +1361,18 @@ mod test_commands {
         }
 
         // Send all instructions in a single transaction
-        let (blockhash, _) = client.get_latest_blockhash().await?;
-        let message = Message::new(&instructions, Some(&payer.pubkey()));
-        let tx = Transaction::new(&[payer, authority], message, blockhash);
-
         println!(
             "Sending transaction with {} instructions...",
             instructions.len()
         );
-        let sig = client
-            .send_and_confirm_transaction(&tx)
-            .await
-            .map_err(|e| anyhow!("Failed to send transaction: {}", e))?;
+        let sig = crate::tx::send(
+            client,
+            &instructions,
+            &payer.pubkey(),
+            &[payer, authority],
+            "send transaction",
+        )
+        .await?;
 
         println!("Thread and {} fibers created: {}", fiber_count, sig);
 
@@ -1464,15 +1435,15 @@ mod test_commands {
         };
 
         // Send transaction - authority must sign, payer pays
-        let (blockhash, _) = client.get_latest_blockhash().await?;
-        let message = Message::new(&[ix], Some(&payer.pubkey()));
-        let tx = Transaction::new(&[payer, authority], message, blockhash);
-
         println!("Sending transaction...");
-        let sig = client
-            .send_and_confirm_transaction(&tx)
-            .await
-            .map_err(|e| anyhow!("Failed to send transaction: {}", e))?;
+        let sig = crate::tx::send(
+            client,
+            &[ix],
+            &payer.pubkey(),
+            &[payer, authority],
+            "send transaction",
+        )
+        .await?;
 
         println!("Transaction confirmed: {}", sig);
         println!("\nTest thread deleted successfully!");
@@ -1536,14 +1507,14 @@ mod test_commands {
             data: data_a,
         };
 
-        let (blockhash, _) = client.get_latest_blockhash().await?;
-        let message = Message::new(&[ix_a], Some(&payer.pubkey()));
-        let tx = Transaction::new(&[payer, authority], message, blockhash);
-
-        let sig = client
-            .send_and_confirm_transaction(&tx)
-            .await
-            .map_err(|e| anyhow!("Failed to create Thread A: {}", e))?;
+        let sig = crate::tx::send(
+            client,
+            &[ix_a],
+            &payer.pubkey(),
+            &[payer, authority],
+            "create Thread A",
+        )
+        .await?;
         println!("Thread A created: {}", sig);
 
         // Create Thread B with account trigger watching Thread A
@@ -1589,14 +1560,14 @@ mod test_commands {
             data: data_b,
         };
 
-        let (blockhash, _) = client.get_latest_blockhash().await?;
-        let message = Message::new(&[ix_b], Some(&payer.pubkey()));
-        let tx = Transaction::new(&[payer, authority], message, blockhash);
-
-        let sig = client
-            .send_and_confirm_transaction(&tx)
-            .await
-            .map_err(|e| anyhow!("Failed to create Thread B: {}", e))?;
+        let sig = crate::tx::send(
+            client,
+            &[ix_b],
+            &payer.pubkey(),
+            &[payer, authority],
+            "create Thread B",
+        )
+        .await?;
         println!("Thread B created: {}", sig);
 
         println!("\n=== Account Trigger Test Created ===");
@@ -1666,14 +1637,14 @@ mod test_commands {
             data,
         };
 
-        let (blockhash, _) = client.get_latest_blockhash().await?;
-        let message = Message::new(&[ix], Some(&payer.pubkey()));
-        let tx = Transaction::new(&[payer, authority], message, blockhash);
-
-        let sig = client
-            .send_and_confirm_transaction(&tx)
-            .await
-            .map_err(|e| anyhow!("Failed to create thread: {}", e))?;
+        let sig = crate::tx::send(
+            client,
+            &[ix],
+            &payer.pubkey(),
+            &[payer, authority],
+            "create thread",
+        )
+        .await?;
         println!("Thread created: {}", sig);
 
         // Create fiber 1 that chains to next fiber
@@ -1914,14 +1885,14 @@ mod test_commands {
         };
 
         // Send transaction
-        let (blockhash, _) = client.get_latest_blockhash().await?;
-        let message = Message::new(&[ix], Some(&payer.pubkey()));
-        let tx = Transaction::new(&[payer, authority], message, blockhash);
-
-        let sig = client
-            .send_and_confirm_transaction(&tx)
-            .await
-            .map_err(|e| anyhow!("Failed to delete fiber: {}", e))?;
+        let sig = crate::tx::send(
+            client,
+            &[ix],
+            &payer.pubkey(),
+            &[payer, authority],
+            "delete fiber",
+        )
+        .await?;
 
         println!("Fiber {} deleted: {}", fiber_index, sig);
 
