@@ -17,7 +17,7 @@ use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
 use solana_signature::Signature;
 use solana_signer::Signer;
-use solana_transaction::Transaction;
+use solana_transaction::versioned::VersionedTransaction;
 
 /// Message format CLI commands emit.
 ///
@@ -47,7 +47,7 @@ pub(crate) async fn build(
     instructions: &[Instruction],
     payer: &Pubkey,
     signers: &[&dyn Signer],
-) -> Result<Transaction> {
+) -> Result<VersionedTransaction> {
     let (blockhash, _) = client
         .get_latest_blockhash()
         .await

@@ -22,7 +22,7 @@ use ractor::{Actor, ActorProcessingErr, ActorRef};
 use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
 use solana_signature::Signature;
-use solana_transaction::Transaction;
+use solana_transaction::versioned::VersionedTransaction;
 use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -745,7 +745,7 @@ async fn submit_and_confirm_batch(
     // land, the executor pays twice, and for a chained batch the ordering is no
     // longer guaranteed. Resending an identical transaction is idempotent at the
     // validator; resending a re-signed one is not.
-    let mut signed: Option<(Transaction, Signature, Instant)> = None;
+    let mut signed: Option<(VersionedTransaction, Signature, Instant)> = None;
 
     while attempt < MAX_ATTEMPTS {
         attempt += 1;

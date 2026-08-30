@@ -662,7 +662,9 @@ mod tests {
     fn observations_are_attributed_by_signature() {
         let o = oracle();
         let thread = Pubkey::new_unique();
-        let sig = Signature::new_unique();
+        // Constructed rather than randomised: `Signature::new_unique` needs the
+        // `rand` feature, and the value only has to be distinct.
+        let sig = Signature::from([7u8; 64]);
         let usage = ComputeUsage {
             consumed: 212_000,
             budget: 250_000,
@@ -676,7 +678,7 @@ mod tests {
 
         // The subscription is filtered by executor address, so it also carries
         // transactions this node never sent.
-        assert_eq!(o.observe(&Signature::new_unique(), usage), None);
+        assert_eq!(o.observe(&Signature::from([9u8; 64]), usage), None);
     }
 
     #[test]

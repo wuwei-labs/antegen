@@ -17,10 +17,9 @@
 //! builder happened to produce. So the encoding decision lives here, once,
 //! rather than at each of the dozen call sites that used to hand-roll it.
 //!
-//! Only legacy encoding is implemented here. v0 needs the send paths to carry
-//! `VersionedTransaction` and lands next; v1 additionally waits on solana-sdk,
-//! which has no v1 message type (`solana-message-3.0.0/src/versions` carries
-//! legacy and v0 only) while the SIMD sits in Review with no feature gate
+//! Legacy and v0 are implemented; v1 waits on solana-sdk, whose message crate
+//! at the pinned version carries `versions/{legacy, v0}` only — v1 arrives in
+//! the 4.x line — while the SIMD itself sits in Review with no feature gate
 //! activated. What *is* implemented for v1 is the decision about what it must
 //! not contain, so the invariant is asserted by a test today rather than
 //! discovered on mainnet later.
@@ -29,10 +28,10 @@ use serde::{Deserialize, Serialize};
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_hash::Hash;
 use solana_instruction::Instruction;
-use solana_message::Message;
+use solana_message::{legacy::Message, v0, VersionedMessage};
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
-use solana_transaction::Transaction;
+use solana_transaction::versioned::VersionedTransaction;
 use thiserror::Error;
 
 /// Solana's per-transaction compute ceiling.
@@ -55,6 +54,14 @@ pub enum TxError {
     /// operator would see normal-looking execution with none of the benefit.
     #[error("transaction {0} encoding is not implemented yet")]
     UnsupportedVersion(TxVersion),
+    /// The instructions could not be compiled into a message — too many
+    /// accounts for the format, or a lookup table that does not cover what the
+    /// instructions reference.
+    #[error("failed to compile message: {0}")]
+    Compile(String),
+    /// Signing failed, most often because a required signer was not supplied.
+    #[error("failed to sign transaction: {0}")]
+    Sign(String),
 }
 
 /// Which message format to encode into.
@@ -66,12 +73,13 @@ pub enum TxError {
 pub enum TxVersion {
     #[default]
     Legacy,
-    /// Address lookup tables, same 1232-byte ceiling. Lands once the send and
-    /// confirm paths carry `VersionedTransaction`.
+    /// Address lookup tables, same 1232-byte ceiling. Compiled with no lookup
+    /// tables today, which makes it legacy plus two bytes — what it buys is the
+    /// versioned send path v1 also needs, and somewhere for lookup tables to go.
     V0,
     /// SIMD-0385: resource limits move into the message header and the ceiling
-    /// rises to 4096. No lookup tables. Waits on solana-sdk support and on the
-    /// feature gate activating.
+    /// rises to 4096. No lookup tables. Waits on the solana-message 4.x line and
+    /// on the feature gate activating.
     V1,
 }
 
@@ -108,7 +116,7 @@ impl TxVersion {
     /// selects one gets a single clear error instead of every execution
     /// failing for a reason that looks unrelated.
     pub fn is_implemented(&self) -> bool {
-        matches!(self, TxVersion::Legacy)
+        matches!(self, TxVersion::Legacy | TxVersion::V0)
     }
 }
 
@@ -217,18 +225,30 @@ pub fn instructions_with_limits(
     all
 }
 
-/// Build an unsigned message.
+/// Build an unsigned message carrying `blockhash`.
+///
+/// v0 is compiled with no address lookup tables. Without them it is legacy plus
+/// a version byte, which is the point: nothing in the executor uses lookup
+/// tables yet, and what v0 buys today is the versioned send path that v1 also
+/// needs. Lookup table support becomes a change to this function alone.
 pub fn build_message(
     version: TxVersion,
     payer: &Pubkey,
     instructions: &[Instruction],
     config: &TxConfig,
-) -> Result<Message, TxError> {
+    blockhash: Hash,
+) -> Result<VersionedMessage, TxError> {
+    let instructions = instructions_with_limits(version, config, instructions);
+
     match version {
-        TxVersion::Legacy => Ok(Message::new(
-            &instructions_with_limits(version, config, instructions),
+        TxVersion::Legacy => Ok(VersionedMessage::Legacy(Message::new_with_blockhash(
+            &instructions,
             Some(payer),
-        )),
+            &blockhash,
+        ))),
+        TxVersion::V0 => v0::Message::try_compile(payer, &instructions, &[], blockhash)
+            .map(VersionedMessage::V0)
+            .map_err(|e| TxError::Compile(e.to_string())),
         other => Err(TxError::UnsupportedVersion(other)),
     }
 }
@@ -241,9 +261,10 @@ pub fn build_transaction(
     instructions: &[Instruction],
     config: &TxConfig,
     blockhash: Hash,
-) -> Result<Transaction, TxError> {
-    let message = build_message(version, payer, instructions, config)?;
-    Ok(Transaction::new(&signers.to_vec(), message, blockhash))
+) -> Result<VersionedTransaction, TxError> {
+    let message = build_message(version, payer, instructions, config, blockhash)?;
+    VersionedTransaction::try_new(message, &signers.to_vec())
+        .map_err(|e| TxError::Sign(e.to_string()))
 }
 
 /// Serialized size of the transaction these inputs would produce.
@@ -259,7 +280,9 @@ pub fn estimate_size(
     instructions: &[Instruction],
     config: &TxConfig,
 ) -> Result<usize, TxError> {
-    let message = build_message(version, payer, instructions, config)?;
+    // A default blockhash is exact for sizing: it occupies the same 32 bytes as
+    // a real one, and nothing else in the message depends on its value.
+    let message = build_message(version, payer, instructions, config, Hash::default())?;
     // +64 signature, +1 compact-u16 length prefix.
     Ok(bincode::serialized_size(&message).unwrap_or(0) as usize + 65)
 }
@@ -392,14 +415,82 @@ mod tests {
     #[test]
     fn unimplemented_versions_are_refused_not_downgraded() {
         let payer = Pubkey::new_unique();
-        for version in [TxVersion::V0, TxVersion::V1] {
-            assert!(!version.is_implemented());
-            assert!(matches!(
-                build_message(version, &payer, &payload(), &TxConfig::new()),
-                Err(TxError::UnsupportedVersion(_))
-            ));
-        }
+
+        assert!(!TxVersion::V1.is_implemented());
+        assert!(matches!(
+            build_message(
+                TxVersion::V1,
+                &payer,
+                &payload(),
+                &TxConfig::new(),
+                Hash::default()
+            ),
+            Err(TxError::UnsupportedVersion(_))
+        ));
+
         assert!(TxVersion::Legacy.is_implemented());
+        assert!(TxVersion::V0.is_implemented());
+    }
+
+    /// Each version compiles to its own message variant. A v0 selection that
+    /// quietly produced a legacy message would land successfully and teach the
+    /// operator that the flip worked.
+    #[test]
+    fn each_version_compiles_to_its_own_variant() {
+        let payer = Pubkey::new_unique();
+        let config = TxConfig::new().with_compute_unit_limit(200_000);
+
+        assert!(matches!(
+            build_message(
+                TxVersion::Legacy,
+                &payer,
+                &payload(),
+                &config,
+                Hash::default()
+            ),
+            Ok(VersionedMessage::Legacy(_))
+        ));
+        assert!(matches!(
+            build_message(TxVersion::V0, &payer, &payload(), &config, Hash::default()),
+            Ok(VersionedMessage::V0(_))
+        ));
+    }
+
+    /// With no lookup tables, v0 costs two bytes over legacy: the version
+    /// prefix, and the length prefix on an address-table-lookups vector that is
+    /// empty.
+    ///
+    /// Worth pinning, because it is the honest statement of what v0 buys today.
+    /// The gain is the versioned send path that v1 also needs, and the room for
+    /// lookup tables later — not a smaller transaction.
+    #[test]
+    fn v0_without_lookup_tables_costs_two_bytes_over_legacy() {
+        let payer = Pubkey::new_unique();
+        let config = TxConfig::new().with_compute_unit_limit(200_000);
+
+        let legacy = estimate_size(TxVersion::Legacy, &payer, &payload(), &config).unwrap();
+        let v0 = estimate_size(TxVersion::V0, &payer, &payload(), &config).unwrap();
+
+        assert_eq!(v0, legacy + 2);
+        assert!(v0 <= TxVersion::V0.max_transaction_size());
+    }
+
+    /// The blockhash lives in the message for a versioned transaction, so
+    /// building must carry it rather than applying it at signing time.
+    #[test]
+    fn the_message_carries_the_blockhash_it_was_built_with() {
+        let payer = Pubkey::new_unique();
+        let blockhash = Hash::new_from_array([3u8; 32]);
+
+        for version in [TxVersion::Legacy, TxVersion::V0] {
+            let message =
+                build_message(version, &payer, &payload(), &TxConfig::new(), blockhash).unwrap();
+            assert_eq!(
+                *message.recent_blockhash(),
+                blockhash,
+                "{version} lost its blockhash"
+            );
+        }
     }
 
     #[test]

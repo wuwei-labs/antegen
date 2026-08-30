@@ -15,7 +15,7 @@ use serde_json::json;
 use solana_hash::Hash;
 use solana_pubkey::Pubkey;
 use solana_signature::Signature;
-use solana_transaction::Transaction;
+use solana_transaction::versioned::VersionedTransaction;
 
 use super::config::{EndpointConfig, LoadBalanceStrategy, RpcPoolConfig};
 use super::endpoint::{EndpointHealth, EndpointState};
@@ -262,7 +262,7 @@ impl RpcPool {
     }
 
     /// Send a transaction
-    pub async fn send_transaction(&self, transaction: &Transaction) -> Result<Signature> {
+    pub async fn send_transaction(&self, transaction: &VersionedTransaction) -> Result<Signature> {
         let tx_bytes = bincode::serialize(transaction)?;
         let tx_base64 = BASE64_STANDARD.encode(&tx_bytes);
 
@@ -296,7 +296,7 @@ impl RpcPool {
     /// Polls signature status until confirmed or timeout (30 seconds).
     pub async fn send_and_confirm_transaction(
         &self,
-        transaction: &Transaction,
+        transaction: &VersionedTransaction,
     ) -> Result<Signature> {
         let signature = self.send_transaction(transaction).await?;
 
@@ -499,7 +499,7 @@ impl RpcPool {
     /// Simulate a transaction and return accounts
     pub async fn simulate_transaction(
         &self,
-        transaction: &Transaction,
+        transaction: &VersionedTransaction,
         account_addresses: &[Pubkey],
     ) -> Result<SafeSimulationResult> {
         let tx_bytes = bincode::serialize(transaction)?;

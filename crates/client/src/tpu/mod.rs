@@ -42,7 +42,7 @@ use solana_tpu_client_next::{
     send_transaction_stats::SendTransactionStats,
     transaction_batch::TransactionBatch,
 };
-use solana_transaction::Transaction;
+use solana_transaction::versioned::VersionedTransaction;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
@@ -173,7 +173,7 @@ impl TpuClient {
     /// Returns an error if:
     /// - Transaction serialization fails
     /// - The internal channel is closed (scheduler has stopped)
-    pub async fn send_transaction(&self, transaction: &Transaction) -> Result<()> {
+    pub async fn send_transaction(&self, transaction: &VersionedTransaction) -> Result<()> {
         let wire_tx = bincode::serialize(transaction)?;
         let batch = TransactionBatch::new(vec![wire_tx]);
 

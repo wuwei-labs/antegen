@@ -15,7 +15,7 @@
 use crate::rpc::RpcPool;
 use crate::tpu::TpuClient;
 use solana_signature::Signature;
-use solana_transaction::Transaction;
+use solana_transaction::versioned::VersionedTransaction;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -43,7 +43,7 @@ pub enum Confirmation {
 }
 
 struct Pending {
-    transaction: Transaction,
+    transaction: VersionedTransaction,
     deadline: Instant,
     last_rebroadcast: Instant,
     reply: oneshot::Sender<Confirmation>,
@@ -75,7 +75,7 @@ impl SignatureWatcher {
     pub async fn wait(
         &self,
         signature: Signature,
-        transaction: Transaction,
+        transaction: VersionedTransaction,
         timeout: Duration,
     ) -> Confirmation {
         let (reply, rx) = oneshot::channel();
@@ -211,7 +211,7 @@ mod tests {
         let got = watcher
             .wait(
                 Signature::default(),
-                Transaction::default(),
+                VersionedTransaction::default(),
                 Duration::from_secs(1),
             )
             .await;
@@ -226,7 +226,7 @@ mod tests {
         pending.insert(
             Signature::default(),
             Pending {
-                transaction: Transaction::default(),
+                transaction: VersionedTransaction::default(),
                 // Already past its deadline.
                 deadline: Instant::now() - Duration::from_secs(1),
                 last_rebroadcast: Instant::now(),
