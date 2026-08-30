@@ -26,6 +26,7 @@ pub mod datasources;
 pub mod exec_ix;
 pub mod executor;
 pub mod load_balancer;
+pub mod probe;
 pub mod resources;
 pub mod rpc;
 pub mod tpu;

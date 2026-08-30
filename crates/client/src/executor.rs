@@ -9,6 +9,7 @@
 //! - Other signals → no batching needed
 
 use crate::exec_ix::{build_thread_exec_instruction, thread_exec_base_accounts, ThreadExecParams};
+use crate::probe::FormatGuard;
 use crate::resources::SharedResources;
 use crate::rpc::response::decode_account_data;
 use crate::tx::{self, TxConfig, TxVersion};
@@ -71,10 +72,11 @@ pub struct ExecutorLogic {
     forgo_executor_commission: bool,
     /// Thread program ID (configurable)
     program_id: Pubkey,
-    /// Message format to build. Governs both the size ceiling batching aims at
-    /// and how resource limits are encoded, which is why it is held here rather
-    /// than read at each build site.
-    tx_version: TxVersion,
+    /// Message format to build, and the guard that falls back to legacy if the
+    /// cluster turns out not to accept it. Held here rather than read at each
+    /// build site because it governs both the size ceiling batching aims at and
+    /// how resource limits are encoded.
+    format: FormatGuard,
 }
 
 impl ExecutorLogic {
@@ -90,7 +92,7 @@ impl ExecutorLogic {
             resources,
             forgo_executor_commission,
             program_id,
-            tx_version: TxVersion::default(),
+            format: FormatGuard::new(TxVersion::default()),
         }
     }
 
@@ -100,13 +102,24 @@ impl ExecutorLogic {
     /// the default is legacy, which is what every caller was getting before the
     /// format became selectable.
     pub fn with_tx_version(mut self, tx_version: TxVersion) -> Self {
-        self.tx_version = tx_version;
+        self.format = FormatGuard::new(tx_version);
         self
     }
 
     /// Message format this executor builds.
     pub fn tx_version(&self) -> TxVersion {
-        self.tx_version
+        self.format.version()
+    }
+
+    /// Account for a submission failure, falling back to legacy if the cluster
+    /// has now rejected this encoding often enough to call it settled.
+    pub fn record_submission_failure(&self, error: &str) {
+        self.format.record_failure(error);
+    }
+
+    /// A transaction reached the cluster, so no rejection streak is in progress.
+    pub fn record_submission_accepted(&self) {
+        self.format.record_accepted();
     }
 
     /// Get executor pubkey
@@ -243,7 +256,7 @@ impl ExecutorLogic {
                     let mut trial = ixs.clone();
                     trial.push(next_ix.clone());
                     let trial_size = self.estimate_transaction_size_with_budget(&trial);
-                    if trial_size <= self.tx_version.max_transaction_size() {
+                    if trial_size <= self.tx_version().max_transaction_size() {
                         ixs.push(next_ix);
                         // The batch grew; the measurement no longer covers it.
                         // If the loop now exits on MAX_BATCHED_EXECS this stays
@@ -261,7 +274,7 @@ impl ExecutorLogic {
                             current_size,
                             current_fiber_cursor,
                             trial_size,
-                            self.tx_version.max_transaction_size()
+                            self.tx_version().max_transaction_size()
                         );
                         needs_continuation = true;
                         next_fiber_cursor = Some(current_fiber_cursor);
@@ -368,7 +381,7 @@ impl ExecutorLogic {
     /// worker will prepend later.
     fn estimate_transaction_size_with_budget(&self, instructions: &[Instruction]) -> usize {
         tx::estimate_size(
-            self.tx_version,
+            self.tx_version(),
             &self.keypair.pubkey(),
             instructions,
             &TxConfig::reserving_limits(),
@@ -379,7 +392,7 @@ impl ExecutorLogic {
     /// Check if instructions (plus compute budget overhead) would fit in one transaction.
     fn would_fit_in_transaction(&self, instructions: &[Instruction]) -> bool {
         self.estimate_transaction_size_with_budget(instructions)
-            <= self.tx_version.max_transaction_size()
+            <= self.tx_version().max_transaction_size()
     }
 
     /// Estimate compute units for a set of instructions via simulation.
@@ -741,7 +754,7 @@ impl ExecutorLogic {
         // emit. Simulating in one format and submitting in another would hide
         // exactly the class of failure that changing format introduces.
         let tx = tx::build_transaction(
-            self.tx_version,
+            self.tx_version(),
             &[self.keypair.as_ref()],
             &self.keypair.pubkey(),
             instructions,

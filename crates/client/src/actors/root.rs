@@ -83,13 +83,28 @@ impl Actor for RootSupervisor {
         let executor_pubkey = keypair.pubkey();
         log::info!("Executor pubkey: {}", executor_pubkey);
 
+        // Prove the configured message format before any thread depends on it.
+        //
+        // A format the cluster will not accept fails every execution, and does
+        // so with rejections that read like transport trouble. Falling back here
+        // costs one legacy node; not falling back costs every thread it serves.
+        let keypair = Arc::new(keypair);
+        let mut tx_version = config.transaction.version;
+        if let Err(e) =
+            crate::probe::probe_format(tx_version, &resources.rpc_client, &keypair).await
+        {
+            log::error!(
+                "Falling back to legacy transactions: {}. Fix the cause or set \
+                 `[transaction] version = \"legacy\"` to stop probing for it.",
+                e
+            );
+            tx_version = crate::tx::TxVersion::Legacy;
+        }
+
         // Create ExecutorLogic
-        let executor = ExecutorLogic::new(
-            Arc::new(keypair),
-            resources.clone(),
-            config.executor.forgo_commission,
-        )
-        .with_tx_version(config.transaction.version);
+        let executor =
+            ExecutorLogic::new(keypair, resources.clone(), config.executor.forgo_commission)
+                .with_tx_version(tx_version);
 
         // Create LoadBalancer with config values
         let load_balancer_config = LoadBalancerConfig {

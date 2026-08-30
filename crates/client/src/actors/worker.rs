@@ -852,9 +852,15 @@ async fn submit_and_confirm_batch(
                 // than crediting whichever path happened to be tried first.
                 trace.mark_sent(SendPath::Rpc);
                 sent = true;
+                executor.record_submission_accepted();
                 log::debug!("{}: sent via RPC ({})", thread_pubkey, sig);
             }
-            Err(e) => log::debug!("RPC send failed: {}", e),
+            Err(e) => {
+                // The RPC's rejection is the one that names the message format;
+                // the TPU path is fire-and-forget and never reports why.
+                executor.record_submission_failure(&e.to_string());
+                log::debug!("RPC send failed: {}", e);
+            }
         }
 
         if !sent {
