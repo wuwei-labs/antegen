@@ -14,14 +14,16 @@ readme = "../../README.md"
 antegen-cron = { workspace = true }
 antegen-thread-program = { workspace = true }
 # Internal crates
-solana-sdk = { workspace = true }
 solana-program = { workspace = true }
-# Granular solana crates. New code targets these directly; the remaining
-# solana-sdk imports are a separate sweep.
+# Granular solana crates in place of the solana-sdk umbrella.
+solana-account = { workspace = true }
+solana-clock = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
 solana-message = { workspace = true }
 solana-pubkey = { workspace = true }
+solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true }

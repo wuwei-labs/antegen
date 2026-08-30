@@ -6,7 +6,9 @@ use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
 use antegen_client::rpc::RpcPool;
 use antegen_thread_program::state::ThreadConfig;
 use anyhow::{anyhow, Result};
-use solana_sdk::{instruction::Instruction, pubkey::Pubkey, signer::Signer};
+use solana_instruction::Instruction;
+use solana_pubkey::Pubkey;
+use solana_signer::Signer;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
@@ -31,7 +33,7 @@ fn detect_program(program_id: &Option<String>, binary_path: &Path) -> DetectedPr
         // Could be a pubkey string or a keypair file path
         let pubkey = Pubkey::from_str(id_str).ok().or_else(|| {
             // Try reading as keypair file → extract pubkey
-            solana_sdk::signature::read_keypair_file(id_str)
+            solana_keypair::read_keypair_file(id_str)
                 .ok()
                 .map(|kp| kp.pubkey())
         });

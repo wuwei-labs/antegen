@@ -1,8 +1,9 @@
 //! Command implementations, plus the helpers shared across them.
 
 use anyhow::{anyhow, Context, Result};
-use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::{read_keypair_file, Keypair, Signer};
+use solana_keypair::{read_keypair_file, Keypair};
+use solana_pubkey::Pubkey;
+use solana_signer::Signer;
 use std::path::{Path, PathBuf};
 
 /// Minimum lamports required for executor operation (0.001 SOL)

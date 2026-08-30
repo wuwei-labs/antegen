@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use log::{debug, info};
-use solana_sdk::pubkey::Pubkey;
+use solana_pubkey::Pubkey;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;

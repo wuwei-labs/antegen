@@ -3,8 +3,9 @@
 use antegen_client::ClientConfig;
 use anyhow::Result;
 use serde::Serialize;
-use solana_sdk::native_token::LAMPORTS_PER_SOL;
-use solana_sdk::signature::{read_keypair_file, Signer};
+use solana_keypair::read_keypair_file;
+use solana_native_token::LAMPORTS_PER_SOL;
+use solana_signer::Signer;
 use std::path::PathBuf;
 
 /// Base URL for an agent's status page.

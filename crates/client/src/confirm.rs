@@ -14,7 +14,8 @@
 
 use crate::rpc::RpcPool;
 use crate::tpu::TpuClient;
-use solana_sdk::{signature::Signature, transaction::Transaction};
+use solana_signature::Signature;
+use solana_transaction::Transaction;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

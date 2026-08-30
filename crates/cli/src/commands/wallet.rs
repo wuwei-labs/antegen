@@ -3,8 +3,9 @@
 use antegen_client::rpc::RpcPool;
 use antegen_client::ClientConfig;
 use anyhow::{Context, Result};
-use solana_sdk::native_token::LAMPORTS_PER_SOL;
-use solana_sdk::signature::{read_keypair_file, Signer};
+use solana_keypair::read_keypair_file;
+use solana_native_token::LAMPORTS_PER_SOL;
+use solana_signer::Signer;
 use std::path::PathBuf;
 
 /// Expand ~ in path to home directory
@@ -14,7 +15,7 @@ fn expand_path(path: &str) -> Result<PathBuf> {
 }
 
 /// Load keypair from config's keypair_path
-fn load_keypair_from_config(config: &ClientConfig) -> Result<solana_sdk::signature::Keypair> {
+fn load_keypair_from_config(config: &ClientConfig) -> Result<solana_keypair::Keypair> {
     let keypair_path = expand_path(&config.executor.keypair_path)?;
     read_keypair_file(&keypair_path)
         .map_err(|e| anyhow::anyhow!("Failed to read keypair from {:?}: {}", keypair_path, e))

@@ -12,7 +12,7 @@
 //! All timings are `Instant`s: monotonic, immune to wall-clock adjustment, and
 //! ~20ns to record.
 
-use solana_sdk::pubkey::Pubkey;
+use solana_pubkey::Pubkey;
 use std::fmt::Write as _;
 use std::time::Instant;
 

@@ -1,7 +1,9 @@
 //! Core types used throughout the client
 
 use serde::{Deserialize, Serialize};
-use solana_sdk::{clock::Clock, instruction::Instruction, pubkey::Pubkey};
+use solana_clock::Clock;
+use solana_instruction::Instruction;
+use solana_pubkey::Pubkey;
 
 /// Account update message sent from datasources to processor
 #[derive(Debug, Clone)]

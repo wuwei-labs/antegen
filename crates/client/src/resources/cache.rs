@@ -13,7 +13,7 @@ use antegen_thread_program::state::{Schedule, Thread, Trigger};
 use moka::future::Cache;
 use moka::notification::RemovalCause;
 use moka::policy::Expiry;
-use solana_sdk::pubkey::Pubkey;
+use solana_pubkey::Pubkey;
 use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -390,7 +390,7 @@ impl Default for AccountCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use solana_sdk::pubkey::Pubkey;
+    use solana_pubkey::Pubkey;
 
     #[tokio::test]
     async fn test_cache_put_and_get() {

@@ -34,7 +34,6 @@
 
 use anyhow::{anyhow, Result};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::transaction::Transaction;
 use solana_tpu_client_next::{
     connection_workers_scheduler::{
         BindTarget, ConnectionWorkersScheduler, ConnectionWorkersSchedulerConfig, Fanout,
@@ -43,6 +42,7 @@ use solana_tpu_client_next::{
     send_transaction_stats::SendTransactionStats,
     transaction_batch::TransactionBatch,
 };
+use solana_transaction::Transaction;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};

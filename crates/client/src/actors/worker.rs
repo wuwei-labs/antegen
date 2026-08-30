@@ -19,9 +19,10 @@ use crate::trace::{ExecTrace, SendPath};
 use crate::tx::{self, TxConfig};
 use antegen_thread_program::state::Thread;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
-use solana_sdk::{
-    instruction::Instruction, pubkey::Pubkey, signature::Signature, transaction::Transaction,
-};
+use solana_instruction::Instruction;
+use solana_pubkey::Pubkey;
+use solana_signature::Signature;
+use solana_transaction::Transaction;
 use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

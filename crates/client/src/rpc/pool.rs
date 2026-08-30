@@ -12,7 +12,10 @@ use anyhow::{anyhow, Result};
 use base64::prelude::*;
 use reqwest::Client;
 use serde_json::json;
-use solana_sdk::{hash::Hash, pubkey::Pubkey, signature::Signature, transaction::Transaction};
+use solana_hash::Hash;
+use solana_pubkey::Pubkey;
+use solana_signature::Signature;
+use solana_transaction::Transaction;
 
 use super::config::{EndpointConfig, LoadBalanceStrategy, RpcPoolConfig};
 use super::endpoint::{EndpointHealth, EndpointState};

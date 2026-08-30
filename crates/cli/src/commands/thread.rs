@@ -6,10 +6,10 @@ use antegen_client::rpc::RpcPool;
 use antegen_thread_program::fiber::{CompiledInstructionV0, Fiber};
 use antegen_thread_program::state::{Thread, ThreadConfig};
 use anyhow::{anyhow, Result};
-use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::Signer;
 #[cfg(feature = "dev")]
-use solana_sdk::signature::{read_keypair_file, Keypair};
+use solana_keypair::{read_keypair_file, Keypair};
+use solana_pubkey::Pubkey;
+use solana_signer::Signer;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -314,7 +314,8 @@ pub async fn admin_delete(
     keypair_path: Option<std::path::PathBuf>,
 ) -> Result<()> {
     use anchor_lang::{InstructionData, ToAccountMetas};
-    use solana_sdk::{instruction::Instruction, signer::Signer};
+    use solana_instruction::Instruction;
+    use solana_signer::Signer;
 
     let thread_pubkey =
         Pubkey::from_str(&address).map_err(|e| anyhow!("Invalid pubkey '{}': {}", address, e))?;
@@ -369,7 +370,9 @@ mod test_commands {
     use antegen_thread_program::state::{SerializableInstruction, Signal, Trigger};
     use chrono::Utc;
     use serde::{Deserialize, Serialize};
-    use solana_sdk::{instruction::Instruction, native_token::LAMPORTS_PER_SOL, signer::Signer};
+    use solana_instruction::Instruction;
+    use solana_native_token::LAMPORTS_PER_SOL;
+    use solana_signer::Signer;
     use std::collections::HashMap;
 
     /// Registry for tracking managed test threads
@@ -463,7 +466,7 @@ mod test_commands {
     /// This keypair is used as authority for all CLI test threads,
     /// allowing create/delete operations without using the main Solana keypair.
     fn get_or_create_test_keypair() -> Result<Keypair> {
-        use solana_sdk::signature::Keypair;
+        use solana_keypair::Keypair;
 
         let config_dir = dirs::config_dir()
             .ok_or_else(|| anyhow!("Could not find config directory"))?
@@ -1386,7 +1389,7 @@ mod test_commands {
         authority: &Keypair,
         thread_pubkey: Pubkey,
     ) -> Result<()> {
-        use solana_sdk::instruction::AccountMeta;
+        use solana_instruction::AccountMeta;
 
         println!("\nDeleting test thread...");
 

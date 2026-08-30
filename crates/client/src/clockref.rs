@@ -17,7 +17,7 @@
 //! Used read-only for latency measurement first; it becomes the firing primitive
 //! once scheduling moves onto a timer.
 
-use solana_sdk::clock::Clock;
+use solana_clock::Clock;
 use std::time::{Duration, Instant};
 
 /// How far a tick's slot may sit below the highest slot seen and still be

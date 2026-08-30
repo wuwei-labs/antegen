@@ -21,7 +21,7 @@ use crate::confirm::SignatureWatcher;
 use crate::rpc::{EndpointConfig, RpcPool, RpcPoolConfig};
 use crate::tpu::{TpuClient, TpuClientConfig};
 use anyhow::Result;
-use solana_sdk::pubkey::Pubkey;
+use solana_pubkey::Pubkey;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 

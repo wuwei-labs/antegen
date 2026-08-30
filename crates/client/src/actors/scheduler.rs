@@ -31,7 +31,7 @@
 //! are deliberately separate: backoff after a failure is a property of this node,
 //! not of the chain.
 
-use solana_sdk::pubkey::Pubkey;
+use solana_pubkey::Pubkey;
 use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 

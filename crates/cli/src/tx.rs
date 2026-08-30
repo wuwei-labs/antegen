@@ -13,10 +13,11 @@
 use antegen_client::rpc::RpcPool;
 use antegen_client::tx::{self, TxConfig, TxVersion};
 use anyhow::{anyhow, Result};
-use solana_sdk::instruction::Instruction;
-use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::{Signature, Signer};
-use solana_sdk::transaction::Transaction;
+use solana_instruction::Instruction;
+use solana_pubkey::Pubkey;
+use solana_signature::Signature;
+use solana_signer::Signer;
+use solana_transaction::Transaction;
 
 /// Message format CLI commands emit.
 ///

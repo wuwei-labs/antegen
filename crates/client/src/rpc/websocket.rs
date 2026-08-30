@@ -7,7 +7,7 @@
 
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
-use solana_sdk::pubkey::Pubkey;
+use solana_pubkey::Pubkey;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 

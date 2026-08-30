@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use solana_sdk::pubkey::Pubkey;
+use solana_pubkey::Pubkey;
 use std::fs;
 use std::path::Path;
 
@@ -254,7 +254,7 @@ fn default_program_id() -> Pubkey {
 
 mod pubkey_string {
     use serde::{self, Deserialize, Deserializer, Serializer};
-    use solana_sdk::pubkey::Pubkey;
+    use solana_pubkey::Pubkey;
     use std::str::FromStr;
 
     pub fn serialize<S>(pubkey: &Pubkey, serializer: S) -> Result<S::Ok, S::Error>

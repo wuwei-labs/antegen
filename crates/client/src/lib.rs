@@ -241,7 +241,7 @@ mod tests {
         if let Ok(handle) = PluginHandle::spawn(config).await {
             // Test sending an update
             let update =
-                AccountUpdate::new(solana_sdk::pubkey::Pubkey::new_unique(), vec![1, 2, 3], 100);
+                AccountUpdate::new(solana_pubkey::Pubkey::new_unique(), vec![1, 2, 3], 100);
             assert!(handle.try_send_update(update).is_ok());
         }
     }

@@ -17,9 +17,9 @@ use antegen_thread_program::fiber::CompiledInstructionV0;
 use antegen_thread_program::instruction::ExecThread;
 use antegen_thread_program::state::Thread;
 use antegen_thread_program::state::PAYER_PUBKEY;
-use solana_sdk::instruction::{AccountMeta, Instruction};
-use solana_sdk::pubkey::Pubkey;
-use solana_sdk::sysvar;
+use solana_instruction::{AccountMeta, Instruction};
+use solana_pubkey::Pubkey;
+use solana_sdk_ids::sysvar;
 
 /// Everything needed to assemble a `thread_exec`, already fetched.
 pub struct ThreadExecParams<'a> {

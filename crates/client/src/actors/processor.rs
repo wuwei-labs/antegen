@@ -20,7 +20,7 @@ use crate::resources::SharedResources;
 use crate::trace::Outcome;
 use log::warn;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
-use solana_sdk::pubkey::Pubkey;
+use solana_pubkey::Pubkey;
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::sync::Arc;

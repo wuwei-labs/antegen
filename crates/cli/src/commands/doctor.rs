@@ -33,7 +33,7 @@ use antegen_thread_program::state::Thread;
 use antegen_thread_program::state::{SerializableInstruction, SEED_THREAD_FIBER};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use solana_sdk::pubkey::Pubkey;
+use solana_pubkey::Pubkey;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::str::FromStr;

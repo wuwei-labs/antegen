@@ -3,7 +3,8 @@
 use crate::actors::scheduler::Outcome;
 use crate::trace::ExecTrace;
 use crate::types::AccountUpdate;
-use solana_sdk::{clock::Clock, pubkey::Pubkey};
+use solana_clock::Clock;
+use solana_pubkey::Pubkey;
 use tokio::sync::oneshot;
 
 // ============================================================================

@@ -19,15 +19,13 @@ use antegen_thread_program::{
     instruction::ExecThread,
     state::{Signal, Thread, ThreadConfig},
 };
-use solana_sdk::{
-    account::Account,
-    hash::Hash,
-    instruction::{AccountMeta, Instruction},
-    message::Message,
-    pubkey::Pubkey,
-    signature::Keypair,
-    signer::Signer,
-};
+use solana_account::Account;
+use solana_hash::Hash;
+use solana_instruction::{AccountMeta, Instruction};
+use solana_keypair::Keypair;
+use solana_message::Message;
+use solana_pubkey::Pubkey;
+use solana_signer::Signer;
 use std::collections::HashSet;
 
 use anyhow::{anyhow, Result};

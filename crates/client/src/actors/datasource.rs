@@ -329,7 +329,7 @@ impl Actor for RpcSourceActor {
             ws_url
         );
         log::debug!("  - Thread program: {}", resources.program_id);
-        log::debug!("  - Clock sysvar: {}", solana_sdk::sysvar::clock::ID);
+        log::debug!("  - Clock sysvar: {}", solana_sdk_ids::sysvar::clock::ID);
 
         let cancel_token = CancellationToken::new();
         let last_subscription_clock = Arc::new(Mutex::new(Instant::now()));
@@ -726,7 +726,7 @@ fn spawn_clock_fallback(
                 }
             }
 
-            let account = match rpc.get_account(&solana_sdk::sysvar::clock::ID).await {
+            let account = match rpc.get_account(&solana_sdk_ids::sysvar::clock::ID).await {
                 Ok(Some(a)) => a,
                 Ok(None) => {
                     log::error!("[{}] Clock sysvar not found", label);
@@ -747,7 +747,7 @@ fn spawn_clock_fallback(
                     }
                 };
 
-            match bincode::deserialize::<solana_sdk::clock::Clock>(&data) {
+            match bincode::deserialize::<solana_clock::Clock>(&data) {
                 Ok(clock) => {
                     if actor_ref
                         .send_message(RpcSourceMessage::ClockReceived(clock, ClockSource::Poll))
@@ -865,8 +865,8 @@ impl Actor for GeyserSourceActor {
                         //
                         // It is deliberately not cached: it changes every slot, so
                         // caching it only churns a no-TTL entry.
-                        if update.pubkey == solana_sdk::sysvar::clock::ID {
-                            match bincode::deserialize::<solana_sdk::clock::Clock>(&update.data) {
+                        if update.pubkey == solana_sdk_ids::sysvar::clock::ID {
+                            match bincode::deserialize::<solana_clock::Clock>(&update.data) {
                                 Ok(clock) => {
                                     if let Err(e) =
                                         staging.send_message(StagingMessage::ClockTick(clock))

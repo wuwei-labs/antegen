@@ -11,8 +11,9 @@ use antegen_client::rpc::websocket::WsClient;
 use antegen_client::rpc::RpcPool;
 use antegen_client::ClientConfig;
 use anyhow::{Context, Result};
-use solana_sdk::native_token::LAMPORTS_PER_SOL;
-use solana_sdk::signature::{read_keypair_file, Signer};
+use solana_keypair::read_keypair_file;
+use solana_native_token::LAMPORTS_PER_SOL;
+use solana_signer::Signer;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 

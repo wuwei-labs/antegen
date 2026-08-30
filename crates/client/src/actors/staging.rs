@@ -26,7 +26,8 @@ use anchor_lang::{AccountDeserialize, Discriminator};
 use antegen_thread_program::state::{Schedule, Thread, Trigger};
 use log::{debug, info, warn};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
-use solana_sdk::{clock::Clock, pubkey::Pubkey};
+use solana_clock::Clock;
+use solana_pubkey::Pubkey;
 use std::collections::HashSet;
 use std::error::Error;
 use std::sync::Arc;
@@ -794,7 +795,7 @@ impl StagingActor {
     /// Classify account type
     fn classify_account(&self, data: &[u8], pubkey: &Pubkey) -> AccountType {
         // Check if it's the clock sysvar
-        if *pubkey == solana_sdk::sysvar::clock::ID {
+        if *pubkey == solana_sdk_ids::sysvar::clock::ID {
             return AccountType::Clock;
         }
 
