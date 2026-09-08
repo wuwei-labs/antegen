@@ -243,6 +243,7 @@ fn make_config() -> ThreadConfig {
         core_team_bps: 1000,
         grace_period_seconds: 5,
         fee_decay_seconds: 295,
+        fee_model: Default::default(),
     }
 }
 
@@ -277,9 +278,10 @@ fn test_commission_expired() {
 #[test]
 fn test_payment_normal() {
     let config = make_config();
-    let payments = config.calculate_payments(0, -5000, false);
-    // Within grace, full commission
-    assert_eq!(payments.fee_payer_reimbursement, 5000); // abs(-5000)
+    let payments = config.calculate_payments(0, -5000, false, 5000);
+    // The transaction fee plus the lamports the inner instruction drained.
+    // These are separate costs and an execution that incurs both returns both.
+    assert_eq!(payments.fee_payer_reimbursement, 10_000);
     assert!(payments.executor_commission > 0);
     assert!(payments.core_team_fee > 0);
 }
@@ -287,7 +289,7 @@ fn test_payment_normal() {
 #[test]
 fn test_payment_forgo_commission() {
     let config = make_config();
-    let payments = config.calculate_payments(0, -5000, true); // forgo
+    let payments = config.calculate_payments(0, -5000, true, 5000); // forgo
     assert_eq!(payments.executor_commission, 0);
     assert!(payments.core_team_fee > 0); // core team always gets paid
 }
@@ -296,7 +298,7 @@ fn test_payment_forgo_commission() {
 fn test_payment_no_payment_positive_balance() {
     let config = make_config();
     // Positive balance change means inner instruction already paid
-    let payments = config.calculate_payments(0, 5000, false);
+    let payments = config.calculate_payments(0, 5000, false, 5000);
     assert_eq!(payments.fee_payer_reimbursement, 0);
     assert_eq!(payments.executor_commission, 0);
     // Core team fee still calculated

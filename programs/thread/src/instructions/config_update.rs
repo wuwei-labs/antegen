@@ -11,6 +11,14 @@ pub struct ConfigUpdateParams {
     pub core_team_bps: Option<u64>,
     pub grace_period_seconds: Option<i64>,
     pub fee_decay_seconds: Option<i64>,
+    /// Replaces the whole fee model at once.
+    ///
+    /// Whole rather than field-by-field because its fields are not independent:
+    /// the inclusion fee drops from 5000 to 2500 at the same moment the
+    /// resource rate becomes non-zero, and applying either half alone prices
+    /// executions against a world that does not exist. One value means the
+    /// transition is a single atomic edit.
+    pub fee_model: Option<FeeModel>,
 }
 
 /// Accounts required by the `config_update` instruction.
@@ -23,15 +31,29 @@ pub struct ConfigUpdate<'info> {
     )]
     pub admin: Signer<'info>,
 
-    /// The config account to update
+    /// The config account to update.
+    ///
+    /// The `realloc` is the migration. A config written before the fee model
+    /// existed is too short to hold it: reading works, because `Trailing`
+    /// yields defaults once the bytes run out, but writing the struct back
+    /// would not fit. Sizing to `ThreadConfig::space()` here grows it on the
+    /// next update and is a no-op on every update after that, so the migration
+    /// is "run `config_update` once" rather than an instruction of its own that
+    /// someone has to remember exists.
     #[account(
         mut,
         seeds = [SEED_CONFIG],
         bump = config.bump,
+        realloc = ThreadConfig::space(),
+        realloc::payer = admin,
+        realloc::zero = false,
         constraint = config.to_account_info().owner == &crate::ID
             @ AntegenThreadError::InvalidAccountOwner,
     )]
     pub config: Account<'info, ThreadConfig>,
+
+    /// Funds the account growth on the first update after the fee model landed.
+    pub system_program: Program<'info, System>,
 }
 
 pub fn config_update(ctx: Context<ConfigUpdate>, params: ConfigUpdateParams) -> Result<()> {
@@ -91,6 +113,35 @@ pub fn config_update(ctx: Context<ConfigUpdate>, params: ConfigUpdateParams) -> 
         );
         config.fee_decay_seconds = decay_period;
         msg!("Fee decay period updated to: {} seconds", decay_period);
+    }
+
+    if let Some(fee_model) = params.fee_model {
+        require!(
+            fee_model.resource_rate_den > 0,
+            AntegenThreadError::InvalidFeeRate
+        );
+        // The published ramp ends at 0.5 lamports per cost unit, so a rate
+        // above 1 is a misplaced decimal point rather than a policy. Catching
+        // it here costs nothing and saves `max_reimbursement_per_exec` from
+        // silently absorbing it on every execution until someone notices.
+        require!(
+            fee_model.resource_rate_num <= fee_model.resource_rate_den,
+            AntegenThreadError::InvalidFeeRate
+        );
+        require!(
+            fee_model.max_slack_bps as u64 <= 10_000,
+            AntegenThreadError::InvalidFeePercentage
+        );
+        msg!(
+            "Fee model updated: inclusion {} lamports, rate {}/{} per unit, slack cap {} bps, \
+             ceiling {} lamports",
+            fee_model.inclusion_fee_lamports,
+            fee_model.resource_rate_num,
+            fee_model.resource_rate_den,
+            fee_model.max_slack_bps,
+            fee_model.max_reimbursement_per_exec,
+        );
+        config.fee_model = fee_model.into();
     }
 
     // Validate that total fees equal 100%

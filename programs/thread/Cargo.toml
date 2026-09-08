@@ -29,6 +29,12 @@ custom-panic = []
 antegen-cron = { workspace = true }
 antegen-fiber-program = { workspace = true }
 solana-nonce = { workspace = true }
+# For `sol_remaining_compute_units`, which reimbursement is measured from.
+# Anchor's `solana_program` shim re-exports granular crates and does not carry
+# the compute-meter syscall, so the umbrella is pulled in directly. Pinned to
+# what the workspace already resolves, so its granular re-exports unify with
+# Anchor's rather than introducing a second copy of `Pubkey` and friends.
+solana-program = { workspace = true }
 anchor-lang = { workspace = true, features = ["init-if-needed"] }
 chrono = { workspace = true }
 solana-security-txt = { workspace = true }

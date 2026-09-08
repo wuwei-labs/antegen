@@ -152,6 +152,12 @@ pub enum AntegenThreadError {
 
     #[msg("Close target must not be the account being closed")]
     InvalidCloseTarget,
+
+    // Appended rather than inserted: Anchor numbers these by position, so
+    // placing a new variant among the existing ones would renumber every code
+    // after it and break every client matching on them.
+    #[msg("Invalid resource fee rate - numerator and denominator must be set together, denominator must be non-zero, and the rate must not exceed 1 lamport per cost unit")]
+    InvalidFeeRate,
 }
 
 /// Alias for AntegenThreadError

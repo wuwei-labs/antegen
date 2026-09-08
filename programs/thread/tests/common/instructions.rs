@@ -40,6 +40,7 @@ pub fn build_update_config(
         accounts: antegen_thread_program::accounts::ConfigUpdate {
             admin: *admin,
             config: *config,
+            system_program: solana_system_interface::program::ID,
         }
         .to_account_metas(None),
         data: antegen_thread_program::instruction::UpdateConfig { params }.data(),

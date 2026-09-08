@@ -7,6 +7,7 @@ use anchor_lang::{
     prelude::*,
     solana_program::program::{get_return_data, invoke_signed},
 };
+use solana_program::compute_units::sol_remaining_compute_units;
 use antegen_fiber_program::state::{Fiber, FiberInstructionProcessor};
 
 /// Accounts required by the `thread_exec` instruction.
@@ -82,6 +83,15 @@ pub fn thread_exec<'info>(
     forgo_commission: bool,
     fiber_cursor: u8,
 ) -> Result<()> {
+    // The compute meter, read before anything else has had a chance to move it.
+    //
+    // Two things come out of this reading and its partner further down: what
+    // the execution burned, which is what the thread owes, and how much budget
+    // went unused, which caps how much of the executor's margin the thread will
+    // pay for. Taken first because everything between here and the second
+    // reading is work the executor is being charged for.
+    let compute_at_start = sol_remaining_compute_units();
+
     // ── Setup ──
     // Collect all named AccountInfos before taking mutable field borrows.
     // Avoids Anchor's lifetime-invariance conflict when building CPI account lists.
@@ -227,33 +237,77 @@ pub fn thread_exec<'info>(
         signal
     };
 
-    // ── Payments (when chain ends) ──
-    if signal.ne(&Signal::Chain) {
-        let balance_change = (executor.lamports() as i64)
-            .checked_sub(executor_lamports_start as i64)
-            .ok_or(AntegenThreadError::InvalidThreadState)?;
-        let payments =
-            config.calculate_payments(time_since_ready, balance_change, forgo_commission);
+    // ── Payments ──
+    //
+    // The meter is read here rather than at the end of the handler because
+    // everything below this point is bookkeeping the reimbursement arithmetic
+    // itself needs; what it misses is accounted for by
+    // `FeeModel::execution_overhead_units`.
+    let compute_at_end = sol_remaining_compute_units();
 
-        if forgo_commission && payments.executor_commission.eq(&0) {
-            let effective_commission = config.calculate_effective_commission(time_since_ready);
-            let forgone = config.calculate_executor_fee(effective_commission);
-            msg!(
-                "Executed {}s after trigger, forgoing {} commission",
-                time_since_ready,
-                forgone
-            );
-        } else {
-            msg!("Executed {}s after trigger", time_since_ready);
-        }
+    // What this transaction cost the executor. On a config that predates the
+    // fee model, the flat amount the program has always assumed; once an admin
+    // has filled it in, a figure measured from the compute actually burned.
+    let transaction_fee = config.transaction_fee(compute_at_start, compute_at_end);
 
-        thread.distribute_payments(
-            &thread.to_account_info(),
-            &executor.to_account_info(),
-            &ctx.accounts.admin.to_account_info(),
-            &payments,
-        )?;
+    let balance_change = (executor.lamports() as i64)
+        .checked_sub(executor_lamports_start as i64)
+        .ok_or(AntegenThreadError::InvalidThreadState)?;
+    let mut payments =
+        config.calculate_payments(time_since_ready, balance_change, forgo_commission, transaction_fee);
+
+    // A chain is several transactions, and only the last one ends the work —
+    // but every one of them paid its own fee. So commission settles once, when
+    // the chain finishes, while reimbursement settles every time. Leaving
+    // intermediate steps unreimbursed was survivable at a flat 5000 and is not
+    // once the fee scales with the fiber's own compute.
+    let chaining = signal.eq(&Signal::Chain);
+    if chaining {
+        payments.executor_commission = 0;
+        payments.core_team_fee = 0;
     }
+
+    // A thread can owe more than it holds now that reimbursement tracks
+    // compute. Paying what is there beats failing: the fiber has already run
+    // and its side effects are already committed, so a revert here would take
+    // the executor's fee, give back nothing, and leave the same trap set for
+    // whoever tries next.
+    //
+    // This is the backstop, not the mechanism. Executors decide whether a
+    // thread can afford them *before* spending a transaction on it, so a thread
+    // that runs low simply stops being picked up — it goes idle on its own and
+    // resumes when its authority funds it, with nobody having to intervene.
+    // What reaches here is the race: a balance that moved between that check
+    // and this settlement.
+    let thread_account = thread.to_account_info();
+    let rent_floor = Rent::get()?.minimum_balance(thread_account.data_len());
+    let available = thread_account.lamports().saturating_sub(rent_floor);
+    let underfunded = payments.clamp_to(available);
+
+    if underfunded {
+        msg!(
+            "Thread could not cover {} lamports; paid {}",
+            transaction_fee,
+            payments.total()
+        );
+    } else if forgo_commission && payments.executor_commission.eq(&0) {
+        let effective_commission = config.calculate_effective_commission(time_since_ready);
+        let forgone = config.calculate_executor_fee(effective_commission);
+        msg!(
+            "Executed {}s after trigger, forgoing {} commission",
+            time_since_ready,
+            forgone
+        );
+    } else {
+        msg!("Executed {}s after trigger", time_since_ready);
+    }
+
+    thread.distribute_payments(
+        &thread.to_account_info(),
+        &executor.to_account_info(),
+        &ctx.accounts.admin.to_account_info(),
+        &payments,
+    )?;
 
     // ── Apply signal to thread state ──
     // Capture original trigger before signal processing may change it
