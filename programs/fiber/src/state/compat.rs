@@ -38,6 +38,16 @@ impl<T> From<T> for Trailing<T> {
     }
 }
 
+/// Occupies exactly as much room as the value it wraps.
+///
+/// Needed so `#[derive(InitSpace)]` can size an account carrying a `Trailing`
+/// field. The wrapper adds no bytes of its own — it changes only what happens
+/// when the bytes run out — so the account's new size is the plain sum, and an
+/// account created before the field existed is simply shorter than that.
+impl<T: Space> Space for Trailing<T> {
+    const INIT_SPACE: usize = T::INIT_SPACE;
+}
+
 impl<T: AnchorSerialize> AnchorSerialize for Trailing<T> {
     fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
         self.0.serialize(writer)
