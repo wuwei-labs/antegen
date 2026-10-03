@@ -39,11 +39,14 @@ use solana_tpu_client_next::{
     connection_workers_scheduler::{
         BindTarget, ConnectionWorkersScheduler, ConnectionWorkersSchedulerConfig, Fanout,
     },
-    leader_updater::create_leader_updater,
+    leader_updater::LeaderUpdater,
+    node_address_service::LeaderTpuCacheServiceConfig,
     send_transaction_stats::SendTransactionStats,
-    transaction_batch::TransactionBatch,
+    websocket_node_address_service::WebsocketNodeAddressService,
+    WireTransaction,
 };
 use std::net::SocketAddr;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -59,7 +62,7 @@ use tokio_util::sync::CancellationToken;
 /// The internal `mpsc::Sender` allows multiple concurrent callers to queue
 /// transactions for submission.
 pub struct TpuClient {
-    tx_sender: mpsc::Sender<TransactionBatch>,
+    tx_sender: mpsc::Sender<WireTransaction>,
     stats: Arc<SendTransactionStats>,
     cancel: CancellationToken,
 }
@@ -100,17 +103,22 @@ impl TpuClient {
         // Uses same endpoint URL as our custom RpcPool
         let rpc_client = Arc::new(RpcClient::new(config.rpc_url.clone()));
 
-        let leader_updater = create_leader_updater(rpc_client, config.websocket_url, None)
-            .await
-            .map_err(|e| anyhow!("Failed to create leader updater: {:?}", e))?;
+        let cancel = CancellationToken::new();
 
-        let (tx_sender, tx_receiver) =
-            mpsc::channel::<TransactionBatch>(config.worker_channel_size);
+        let leader_updater = WebsocketNodeAddressService::run(
+            rpc_client,
+            config.websocket_url,
+            LeaderTpuCacheServiceConfig::default(),
+            cancel.clone(),
+        )
+        .await
+        .map_err(|e| anyhow!("Failed to create leader updater: {:?}", e))?;
+        let leader_updater: Box<dyn LeaderUpdater> = Box::new(leader_updater);
+
+        let (tx_sender, tx_receiver) = mpsc::channel::<WireTransaction>(config.worker_channel_size);
 
         // Watch channel for stake identity updates (None = unstaked connection)
         let (_identity_sender, identity_receiver) = watch::channel(None);
-
-        let cancel = CancellationToken::new();
 
         let scheduler = ConnectionWorkersScheduler::new(
             leader_updater,
@@ -124,14 +132,15 @@ impl TpuClient {
         let scheduler_config = ConnectionWorkersSchedulerConfig {
             bind: BindTarget::Address(SocketAddr::from(([0, 0, 0, 0], 0))),
             stake_identity: None,
-            num_connections: config.num_connections,
-            skip_check_transaction_age: false,
+            num_connections: NonZeroUsize::new(config.num_connections)
+                .ok_or_else(|| anyhow!("num_connections must be non-zero"))?,
             worker_channel_size: config.worker_channel_size,
             max_reconnect_attempts: 4,
             leaders_fanout: Fanout {
                 send: config.leaders_fanout,
                 connect: config.leaders_fanout + 2,
             },
+            override_initial_congestion_window: None,
         };
 
         // Spawn scheduler in background
@@ -174,11 +183,10 @@ impl TpuClient {
     /// - Transaction serialization fails
     /// - The internal channel is closed (scheduler has stopped)
     pub async fn send_transaction(&self, transaction: &Transaction) -> Result<()> {
-        let wire_tx = bincode::serialize(transaction)?;
-        let batch = TransactionBatch::new(vec![wire_tx]);
+        let wire_tx: WireTransaction = bincode::serialize(transaction)?.into();
 
         self.tx_sender
-            .send(batch)
+            .send(wire_tx)
             .await
             .map_err(|_| anyhow!("TPU channel closed"))?;
 

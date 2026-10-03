@@ -21,6 +21,9 @@ codegen-units = 1
 
 [workspace]
 resolver = "2"
+
+metadata.cli = { solana = "4.3.0" }
+
 members = [
     "crates/*",
     "plugin/geyser",
@@ -70,15 +73,15 @@ antegen-thread-program = { version = "6.0.0", path = "programs/thread", features
 ] }
 
 # Anchor
-anchor-lang = "=1.0.0-rc.5"
-anchor-spl = { version = "=1.0.0-rc.5", features = ["mint", "token"] }
-borsh = "=1.6.0"
+anchor-lang = "=1.2.0"
+anchor-spl = { version = "=1.2.0", features = ["mint", "token"] }
+borsh = "=1.8.1"
 
 # Agave Geyser
-agave-geyser-plugin-interface = "=3.1.4"
+agave-geyser-plugin-interface = "=4.3.0"
 
 # Core dependencies
-anyhow = "=1.0.100"
+anyhow = "=1.0.104"
 async-trait = "=0.1.89"
 base64 = "=0.22.1"
 bincode = "=1.3.3"
@@ -90,13 +93,13 @@ dirs = "=5.0.1"
 dirs-next = "=2.0.0"
 env_logger = "=0.10.2"
 flate2 = "=1.1.5"
-futures = "=0.3.31"
+futures = "=0.3.34"
 getrandom = { version = "=0.2.16", features = ["custom"] }
 hex = "=0.4.3"
 hyper = { version = "=0.14.32", features = ["server", "tcp", "http1"] }
 lazy_static = "=1.5.0"
 loa-core = "=3.0.0"
-log = "=0.4.29"
+log = "=0.4.34"
 moka = { version = "=0.12.11", features = ["future"] }
 nom = "=7.1.3"
 once_cell = "=1.21.3"
@@ -117,8 +120,8 @@ rust-embed = { version = "=8.9.0", features = [
 ] }
 rustc_version = "=0.4.1"
 seahash = "=4.1.0"
-serde = "=1.0.228"
-serde_json = "=1.0.145"
+serde = "=1.0.229"
+serde_json = "=1.0.151"
 serde_yaml = "=0.9.34"
 shellexpand = "=3.1.1"
 signal-hook = "=0.3.18"
@@ -126,8 +129,8 @@ signal-hook-tokio = { version = "=0.3.1", features = ["futures-v0_3"] }
 tar = "=0.4.44"
 tempfile = "=3.23.0"
 termcolor = "=1.4.1"
-thiserror = "=2.0.17"
-tokio = "=1.48.0"
+thiserror = "=2.0.21"
+tokio = "=1.53.2"
 tokio-test = "=0.4.4"
 tokio-tungstenite = { version = "=0.28.0", default-features = false, features = [
     "connect",
@@ -135,35 +138,37 @@ tokio-tungstenite = { version = "=0.28.0", default-features = false, features = 
 ] }
 toml = "=0.8.23"
 toml_datetime = "=0.6.11"
-url = "=2.5.7"
+url = "=2.5.8"
 uuid = { version = "=1.19.0", features = ["v4", "serde"] }
 
 # Solana dependencies - pinned to resolved versions
-solana-account-decoder = "=3.1.4"
-solana-account-decoder-client-types = "=3.1.4"
-solana-cli-config = "=3.1.4"
-solana-compute-budget-interface = "=3.0.0"
-solana-logger = "=3.0.0"
-solana-nonce = "=3.0.0"
-solana-program = "=3.0.0"
-solana-sdk = "=3.0.0"
+solana-account-decoder = "4.3.0"
+solana-account-decoder-client-types = "4.3.0"
+solana-cli-config = "4.3.0"
+solana-compute-budget-interface = "3.0.0"
+solana-logger = "3.0.0"
+solana-nonce = "3.0.0"
+solana-program = "4.1.0"
+solana-sdk = "4.1.0"
 # Emits the on-chain `security.txt` blob read by explorers. Default features
 # only (the `parser` feature pulls thiserror/memchr and is for readers, not
 # for the programs that publish the section).
 solana-security-txt = { version = "=1.1.3", default-features = false }
-solana-system-interface = { version = "=3.0.0", features = ["bincode"] }
-solana-transaction-status = "=3.1.4"
+solana-system-interface = { version = "3.1.0", features = ["bincode"] }
+solana-transaction-status = "4.3.0"
 
 # SPL tokens - these resolve to interface crates
 spl-associated-token-account = "=6.0.0"
 spl-token = "=7.0.0"
 
 # TPU client for direct validator transaction submission
-solana-tpu-client-next = { version = "=3.1.4", features = [
+solana-tpu-client-next = { version = "4.3.0", features = [
     "agave-unstable-api",
+    "websocket-node-address-service",
 ] }
-solana-rpc-client = "=3.1.4"
+solana-rpc-client = "4.3.0"
 tokio-util = "=0.7"
 
 [patch.crates-io]
 service-manager = { git = "https://github.com/wuwei-labs/service-manager-rs", branch = "fix/launchd-status-detection" }
+
