@@ -11,9 +11,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RUST_TOOLCHAIN: "1.94.1"
-  ANCHOR_VERSION: "1.0.0-rc.5"
-  SOLANA_VERSION: "v3.0.0"
+  RUST_TOOLCHAIN: "1.97.1"
+  ANCHOR_VERSION: "1.2.0"
+  SOLANA_VERSION: "v4.3.0"
 
 permissions:
   contents: read
