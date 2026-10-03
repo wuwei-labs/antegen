@@ -34,8 +34,8 @@ chrono = { workspace = true }
 solana-security-txt = { workspace = true }
 
 [dev-dependencies]
-litesvm = { git = "https://github.com/wuwei-labs/litesvm.git", branch = "fix/durable-nonce-slot-warp" }
-litesvm-token = { git = "https://github.com/wuwei-labs/litesvm.git", branch = "fix/durable-nonce-slot-warp" }
+litesvm = { git = "https://github.com/wuwei-labs/litesvm.git", branch = "rebase/durable-nonce-on-0.17.0" }
+litesvm-token = { git = "https://github.com/wuwei-labs/litesvm.git", branch = "rebase/durable-nonce-on-0.17.0" }
 solana-sdk = { workspace = true }
 solana-system-interface = { workspace = true }
 anchor-lang = { workspace = true }
