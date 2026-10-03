@@ -89,9 +89,14 @@ jobs:
         run: cargo install --git https://github.com/coral-xyz/anchor --tag v${{ env.ANCHOR_VERSION }} anchor-cli --locked
 
       - name: anchor build (programs)
-        # Integration tests `include_bytes!` the program `.so` artifacts.
-        # Build them before `cargo test` compiles the test binaries.
-        run: anchor build --ignore-keys
+        # Two passes, and the order is load-bearing. Integration tests
+        # `include_bytes!` the program `.so` artifacts, and anchor 1.2.0's IDL
+        # build compiles test targets — so on a clean checkout a single
+        # `anchor build` fails reading a `.so` it has not produced yet. The
+        # `--no-idl` pass writes them, then the full pass can compile the tests.
+        run: |
+          anchor build --ignore-keys --no-idl
+          anchor build --ignore-keys
 
       - name: cargo test
         run: cargo test --workspace --locked
@@ -125,7 +130,11 @@ jobs:
         run: cargo install --git https://github.com/coral-xyz/anchor --tag v${{ env.ANCHOR_VERSION }} anchor-cli --locked
 
       - name: anchor build (programs)
-        run: anchor build --ignore-keys
+        # See the Test stage: the `--no-idl` pass has to write the `.so` files
+        # before the IDL build compiles the tests that embed them.
+        run: |
+          anchor build --ignore-keys --no-idl
+          anchor build --ignore-keys
 
       - name: cargo build CLI (mainnet)
         run: cargo build -p antegen-cli --release --features prod --locked
