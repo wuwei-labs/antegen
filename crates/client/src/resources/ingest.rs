@@ -170,12 +170,12 @@ impl IngestStats {
                     accounts_won: v.accounts_won.load(Ordering::Relaxed),
                     clocks_seen,
                     clocks_won,
-                    clock_lag_avg_ms: if lost == 0 { 0 } else { lag_total / lost },
+                    clock_lag_avg_ms: lag_total.checked_div(lost).unwrap_or(0),
                     clock_lag_max_ms: v.clock_lag_max_ms.load(Ordering::Relaxed),
                 }
             })
             .collect();
-        out.sort_by(|a, b| b.clocks_won.cmp(&a.clocks_won));
+        out.sort_by_key(|e| std::cmp::Reverse(e.clocks_won));
         out
     }
 
