@@ -1,5 +1,16 @@
 # Changelog
 
+## [7.0.0](https://github.com/wuwei-labs/antegen/compare/antegen-client-v6.3.0...antegen-client-v7.0.0) (2026-10-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **client:** move to the Agave 4.3 crate line and the tpu-client-next 4.3 API
+
+### Features
+
+* **client:** move to the Agave 4.3 crate line and the tpu-client-next 4.3 API ([ddf6370](https://github.com/wuwei-labs/antegen/commit/ddf637067989b112c71fab1ff605d1896cf61106))
+
 ## [6.3.0](https://github.com/wuwei-labs/antegen/compare/antegen-client-v6.2.0...antegen-client-v6.3.0) (2026-08-26)
 
 
